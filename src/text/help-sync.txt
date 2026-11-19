@@ -1,0 +1,5 @@
+Usage: __ME__ sync [USER@]NAME SRC [DEST]
+
+rsync the directory SRC to the worker (DEST defaults to SRC's basename in
+the user's home). Mirrors with --delete and skips target/, .direnv/ and
+result.

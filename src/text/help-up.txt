@@ -1,0 +1,39 @@
+Usage: __ME__ up [--ttl DURATION] [--flavor FLAVOR] [--disk GIB] [--profile PROFILE] [--scratch] [--ssh]
+          [--nix-cache|--no-nix-cache] [--no-niks3-token] [--topic TEXT] [-l USER]
+
+Create an ad-hoc worker, wait until it is reachable (usually 1-4 min) and
+print it as JSON (name, ip, host_key, user, expires_at, builder).
+
+  --ttl DURATION   lifetime, e.g. 90m, 3h, 1h30m (default 2h). A worker that
+                   is still in use when it expires stays until it has been
+                   idle for 1h, up to its maximum lifetime.
+  --flavor FLAVOR  s1.large (8 vCPU/16 GiB), s1.xlarge (16/32, default),
+                   s1.2xlarge (32/64)
+  --disk GIB       volume size (default 150)
+  --profile NAME   standard (default), browser-daemon or large-builder
+  --scratch        scratch host: maximum lifetime 7 days instead of 24 h
+  --nix-cache      push the S3 cache settings (the default when this host's
+                   Nix has an s3:// cache; fails loudly when it has none)
+  --no-nix-cache   do not give the worker this host's S3 cache settings and
+                   read-only key (see: __ME__ help nix-cache). Without it they
+                   are pushed whenever this host's Nix has an s3:// cache.
+  --no-niks3-token do not give the worker a niks3 push token. By default it
+                   gets its own, valid as long as the worker is (renewed by
+                   extend); the `niks3` command on the worker uses it
+                   (see: __ME__ help niks3-token). The browser-daemon profile
+                   has none.
+  --ssh            log in (as agent) as soon as it is ready
+  -l USER          with --ssh: log in as USER (pschmitt, nix-remote-builder)
+  --topic TEXT     what it is for (shown by ls and inspect; none unless
+                   given)
+  --agent-id ID    the creating agent's id (its Concord agent id; also read
+                   from RWORKER_AGENT_ID or CONCORD_AGENT_ID)
+  --quiet-topic-warning  do not warn when --topic is missing
+
+The worker also records its creator: owner ($USER@host), the agent
+process (claude, codex, agy, opencode, ... and its PID), the agent id, the
+agent session id and the working directory. ls -o wide shows them; on the worker they are
+in /run/rworker/metadata.json.
+
+Example:
+  w=$(__ME__ up --ttl 3h --flavor s1.2xlarge | jq -r .name)

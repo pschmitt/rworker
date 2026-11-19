@@ -1,0 +1,3 @@
+Usage: __ME__ profiles [--json]
+
+List profiles and their resources.

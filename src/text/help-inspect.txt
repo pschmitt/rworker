@@ -1,0 +1,8 @@
+Usage: __ME__ inspect NAME [--boot]
+
+Show everything the control host knows about a worker: kind, status,
+owner, who created it (agent, PID, session, topic, cwd), flavor, IP, host
+key, created/expiry/grace/maximum lifetime and all server metadata.
+
+  --boot   also show what the worker recorded at boot
+           (/run/rworker/metadata.json, read over SSH)

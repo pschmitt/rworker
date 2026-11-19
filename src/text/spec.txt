@@ -1,0 +1,111 @@
+action start start a registered job
+action jobs list registered jobs
+action ps show processes of running jobs
+action logs show job logs on one or all workers
+action events stream worker and job lifecycle events
+action register register an existing log file
+action up create a worker and wait until it is ready
+action profiles list available worker profiles
+action ls list all workers (ad-hoc and pool)
+action exec create a worker, run a command on it, delete it
+action down delete an ad-hoc worker
+action prune delete several ad-hoc workers (default: your own)
+action extend move the expiry of an ad-hoc worker
+action topic change what an ad-hoc worker is for
+action claim take over an ad-hoc worker: new agent, agent id and topic
+action niks3-token (re)issue a worker's short-lived niks3 push token
+action ssh ssh to a worker (pinned host key)
+action sync rsync a directory to a worker
+action builder print a Nix builders line for a worker
+action nix-cache let a worker substitute from this host's S3 cache
+action cp copy files from or to a worker (NAME:PATH)
+action inspect show everything known about a worker
+action help show the help of an action
+flag start --name=job name the registered job
+flag start --workdir=path working directory on the worker
+flag ps --long show full process command lines
+flag logs --lines=count number of lines per job
+flag logs --follow follow all jobs on all workers
+flag logs -f short for --follow
+flag logs -q short for --quiet
+flag logs --no-events suppress lifecycle events while following
+flag logs --quiet suppress all status messages (timestamped, italic) while following
+flag logs --topic=topic limit to workers whose topic matches this regex (prefix with ! to invert)
+flag logs --agent=agent limit to workers whose creating agent matches this regex (prefix with ! to invert)
+flag events --interval=interval event polling interval
+flag events --topic=topic limit to workers whose topic matches this regex (prefix with ! to invert)
+flag events --agent=agent limit to workers whose creating agent matches this regex (prefix with ! to invert)
+flag register --log=path absolute path to an existing log file
+values job
+values count 50 200 1000
+values interval 1 2 5 10
+flag up --ttl=duration lifetime, e.g. 90m or 2h
+flag up --flavor=flavor OpenStack flavor
+flag up --disk=size volume size in GiB
+flag up --scratch scratch host, may live up to 7 days
+flag up --ssh log in as soon as it is ready
+flag up --quiet-topic-warning do not warn when no --topic is given
+flag up --nix-cache push this host's S3 cache settings (default when it has any)
+flag up --no-nix-cache keep the S3 cache credentials off the worker
+flag exec --nix-cache push this host's S3 cache settings (default when it has any)
+flag exec --no-nix-cache keep the S3 cache credentials off the worker
+flag up --no-niks3-token do not give the worker a niks3 push token
+flag exec --no-niks3-token do not give the worker a niks3 push token
+flag extend --no-niks3-token extend without renewing the niks3 token
+flag niks3-token --force reissue the token of someone else's worker
+flag nix-cache --dry-run only show what would be pushed
+flag nix-cache -n short for --dry-run
+flag up -l=user log in as this user (with --ssh; default agent)
+flag up --topic=topic what the worker is for (none unless given)
+flag up --profile=profile worker profile (standard, browser-daemon or large-builder)
+flag exec --topic=topic what the worker is for (none unless given)
+flag exec --profile=profile worker profile (standard, browser-daemon or large-builder)
+flag ls -o=format output format (wide adds PID, flavor, IP and cwd)
+flag inspect --boot also show the worker's own boot metadata (over SSH)
+flag exec --ttl=duration lifetime of the worker
+flag exec --flavor=flavor OpenStack flavor
+flag exec --disk=size volume size in GiB
+flag exec --scratch scratch host, may live up to 7 days
+flag exec --sync=path copy a directory to the worker first (SRC[:DEST])
+flag exec --fetch=path copy a path back afterwards (REMOTE[:LOCAL])
+flag exec --keep keep the worker afterwards
+flag exec --keep-on-failure keep the worker if the command fails
+flag ssh --create create a worker first (same as up --ssh; up's options follow)
+flag ssh --profile=profile worker image profile when creating
+flag ssh -l=user log in as this user (like ssh -l)
+flag ls --watch redraw in place, marking changes
+flag ls -w short for --watch
+flag ls --interval=seconds refresh interval in seconds (with --watch; same as -n)
+flag ls -n=interval refresh interval in seconds (with --watch)
+flag extend --ttl=duration new lifetime from now
+flag prune --all every ad-hoc worker, whoever owns it
+flag down --force delete someone else's worker or a pool worker
+flag extend --force extend someone else's worker
+flag topic --force change the topic of someone else's worker
+flag claim --force claim someone else's worker
+flag claim --topic=topic what the worker is for now
+flag claim --agent-id=id your agent id (Concord)
+flag up --agent-id=id the creating agent's id (Concord)
+flag exec --agent-id=id the creating agent's id (Concord)
+flag ls --topic=topic only workers whose topic matches this regex (prefix with ! to invert)
+flag ls --agent=agent only workers whose creating agent matches this regex (prefix with ! to invert)
+flag ls --agent-id=id only workers whose agent id matches this regex (prefix with ! to invert)
+flag logs --agent-id=id limit to workers whose agent id matches this regex (prefix with ! to invert)
+flag events --agent-id=id limit to workers whose agent id matches this regex (prefix with ! to invert)
+flag prune --yes do not ask
+flag prune -y short for --yes
+flag prune -n short for --dry-run
+flag prune --dry-run only show what would be deleted
+values duration 30m 1h 2h 4h 8h 24h
+values flavor s1.large s1.xlarge s1.2xlarge
+values profile standard browser-daemon large-builder
+values size 100 150 250 500
+values path
+values format json wide
+values topic
+values agent claude codex agy opencode gemini copilot shell nixbot
+values user agent pschmitt nix-remote-builder
+values interval 2 5 10 30
+worker down extend topic claim niks3-token ssh sync builder prune inspect nix-cache start jobs ps logs register
+global --json force JSON output
+global -j short for --json

@@ -1,0 +1,2 @@
+Usage: __ME__ logs [WORKER [JOB]] [--lines N] [--follow] [--no-events] [--quiet] [--topic REGEX] [--agent REGEX] [--agent-id REGEX]
+       __ME__ logs [-f] [--topic REGEX] [--agent REGEX] [--agent-id REGEX]  # follow jobs and events on all (or matching) workers

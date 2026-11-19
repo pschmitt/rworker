@@ -1,0 +1,8 @@
+Usage: __ME__ prune [NAME...] [--all] [-y|--yes] [-n|--dry-run]
+
+Delete several ad-hoc workers at once: the named ones, or else all of yours
+(owner $USER@$(hostname)); --all deletes every ad-hoc worker, whoever owns
+it. nixbot's pool workers are never pruned.
+
+Lists the workers and asks first; --yes skips the question (required
+without a terminal). --dry-run only lists them.

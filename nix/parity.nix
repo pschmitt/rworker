@@ -1,0 +1,51 @@
+# The differential parity harness (tests/parity) as a flake check: the bash
+# reference client and the Rust binary over the same corpus, once with a
+# realistic ssh and once with one that leaves stdin alone.
+{
+  lib,
+  runCommand,
+  rworker,
+  bashInteractive,
+  coreutils,
+  gawk,
+  gnugrep,
+  gnused,
+  hostname,
+  jq,
+  ncurses,
+  openssh,
+  procps,
+  python3,
+  util-linux,
+}:
+runCommand "rworker-parity"
+  {
+    nativeBuildInputs = [
+      bashInteractive
+      coreutils
+      gawk
+      gnugrep
+      gnused
+      hostname
+      jq
+      ncurses
+      openssh
+      procps
+      python3
+      util-linux
+    ];
+    src = lib.fileset.toSource {
+      root = ./..;
+      fileset = ../tests/parity;
+    };
+  }
+  ''
+    cp -r $src/tests .
+    chmod -R u+w tests
+    patchShebangs tests
+    export PARITY_DIR=$TMPDIR/parity
+    unwrapped=${rworker}/bin/.rworker-wrapped
+    FAKE_SSH_STDIN=0 python3 tests/parity/run.py $unwrapped
+    python3 tests/parity/run.py $unwrapped
+    touch $out
+  ''

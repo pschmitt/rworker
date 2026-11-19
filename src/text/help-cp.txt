@@ -1,0 +1,11 @@
+Usage: __ME__ cp [USER@]NAME:REMOTE LOCAL
+       __ME__ cp LOCAL [USER@]NAME:REMOTE
+
+Copy a file or directory from a worker to this host, or the other way
+round, like scp but with rsync (directories without -r, resumable, pinned
+host key). REMOTE is relative to the user's home on the worker.
+
+Examples:
+  __ME__ cp adhoc-1234abcd:rbw/target/release/rbw ./rbw
+  __ME__ cp adhoc-1234abcd:build/logs/ ./logs/
+  __ME__ cp ./patch.diff pschmitt@adhoc-1234abcd:/tmp/

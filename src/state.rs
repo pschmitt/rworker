@@ -1,0 +1,357 @@
+//! The control host connection, the `ls` cache and what this host knows
+//! about each worker: its state file and its pinned SSH host key.
+
+use crate::ctx::{Ctx, Fail, R};
+use crate::jq;
+use crate::paint;
+use crate::proc;
+use serde_json::{Value, json};
+use std::fs;
+use std::io::Write;
+use std::net::{TcpStream, ToSocketAddrs};
+use std::process::Command;
+use std::time::Duration;
+
+/// `ssh CONTROL rworker ARGS...` over one shared connection (kept 10 min):
+/// repeated calls (ls --watch, the completions' refresh) skip the handshake.
+pub fn control_cmd<S: AsRef<str>>(ctx: &Ctx, args: &[S]) -> Command {
+    let _ = fs::create_dir_all(&ctx.state_dir);
+    let mut cmd = Command::new("ssh");
+    cmd.args(["-q", "-o", "BatchMode=yes"]);
+    if ctx.control_master {
+        cmd.args(["-o", "ControlMaster=auto", "-o", "ControlPersist=10m"]);
+        cmd.arg("-o").arg(format!(
+            "ControlPath={}/control-%C",
+            ctx.state_dir.display()
+        ));
+    } else {
+        cmd.args(["-o", "ControlMaster=no", "-o", "ControlPath=none"]);
+    }
+    cmd.arg(&ctx.control_host);
+    cmd.arg(format!("rworker {}", proc::quote_words(args)));
+    cmd
+}
+
+/// `out=$(remote ARGS) || return 1`.
+pub fn remote<S: AsRef<str>>(ctx: &Ctx, args: &[S]) -> R<String> {
+    proc::capture_ok(ctx, &mut control_cmd(ctx, args))
+}
+
+/// `remote ARGS > /dev/null`, its status.
+pub fn remote_quiet<S: AsRef<str>>(ctx: &Ctx, args: &[S]) -> R<i32> {
+    proc::run_quiet_stdout(ctx, &mut control_cmd(ctx, args))
+}
+
+/// `remote ls`, keeping the answer in the cache for the completions.
+pub fn remote_ls(ctx: &Ctx) -> R<String> {
+    let out = remote(ctx, &["ls"])?;
+    if fs::create_dir_all(&ctx.state_dir).is_ok() {
+        let tmp = ctx.state_dir.join(".ls.json.tmp");
+        if fs::write(&tmp, format!("{out}\n")).is_ok() {
+            let _ = fs::rename(&tmp, ctx.ls_cache());
+        }
+    }
+    Ok(out)
+}
+
+/// Parse JSON the client got from somewhere; a parse error fails like jq.
+pub fn parse(ctx: &Ctx, text: &str) -> R<Value> {
+    serde_json::from_str(text).map_err(|e| {
+        ctx.err(&format!("jq: error (at <stdin>:0): {e}"));
+        Fail(1)
+    })
+}
+
+/// `.[]` of a parsed answer, failing like jq on a scalar.
+pub fn items<'a>(ctx: &Ctx, v: &'a Value) -> R<Vec<&'a Value>> {
+    jq::items(v).ok_or_else(|| {
+        ctx.err(&format!(
+            "jq: error (at <stdin>:0): Cannot iterate over {}",
+            jq::raw(v)
+        ));
+        Fail(5)
+    })
+}
+
+/// `.[] | select(.name == $n)`: the first match.
+pub fn find<'a>(ctx: &Ctx, list: &'a Value, name: &str) -> R<Option<&'a Value>> {
+    Ok(items(ctx, list)?
+        .into_iter()
+        .find(|w| jq::get(w, "name").as_str() == Some(name)))
+}
+
+fn append_known_host(ctx: &Ctx, line: &str) -> R {
+    let mut f = fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(ctx.known_hosts())
+        .map_err(|e| {
+            ctx.err(&format!("{}: {}: {e}", ctx.me, ctx.known_hosts().display()));
+            Fail(1)
+        })?;
+    writeln!(f, "{line}").map_err(|_| Fail(1))
+}
+
+fn write_state(ctx: &Ctx, name: &str, v: &Value) -> R {
+    fs::write(ctx.state_file(name), format!("{}\n", jq::compact(v))).map_err(|e| {
+        ctx.err(&format!(
+            "{}: {}: {e}",
+            ctx.me,
+            ctx.state_file(name).display()
+        ));
+        Fail(1)
+    })
+}
+
+/// Remember a worker `up` just created.
+pub fn remember_created(ctx: &Ctx, name: &str, info: &Value) -> R {
+    let state = jq::merge(info, &[("user", json!("agent")), ("kind", json!("adhoc"))]);
+    write_state(ctx, name, &state)?;
+    let ip = jq::raw(jq::get(info, "ip"));
+    let key = jq::raw(jq::get(info, "host_key"));
+    append_known_host(ctx, &format!("{ip} {key}"))
+}
+
+/// Fetch a worker this host did not create (another host's, or nixbot's
+/// pool) from the control host, pin its host key and remember it.
+pub fn adopt(ctx: &Ctx, name: &str) -> R {
+    let out = remote_ls(ctx)?;
+    let list = parse(ctx, &out)?;
+    let Some(info) = find(ctx, &list, name)? else {
+        ctx.err(&format!("No worker named {}", paint::vm(ctx, name)));
+        return Err(Fail(1));
+    };
+    if jq::or_empty(jq::get(info, "ip")).is_empty()
+        || jq::or_empty(jq::get(info, "host_key")).is_empty()
+    {
+        paint::status_msg(
+            ctx,
+            &format!(
+                "{} has no IP or host key yet (still booting?)",
+                paint::vm(ctx, name)
+            ),
+        );
+        return Err(Fail(1));
+    }
+    // agent's keys are the creator's; everyone else logs in as themselves.
+    let mut user = ctx.user.clone();
+    if jq::get(info, "kind").as_str() == Some("adhoc")
+        && jq::raw(jq::get(info, "owner")) == ctx.owner()
+    {
+        user = "agent".to_string();
+    }
+    fs::create_dir_all(&ctx.state_dir).map_err(|_| Fail(1))?;
+    let state = json!({
+        "name": jq::get(info, "name"),
+        "ip": jq::get(info, "ip"),
+        "ips": jq::get(info, "ips"),
+        "host_key": jq::get(info, "host_key"),
+        "user": user,
+        "kind": jq::get(info, "kind"),
+    });
+    write_state(ctx, name, &state)?;
+    append_known_host(
+        ctx,
+        &format!(
+            "{} {}",
+            jq::raw(jq::get(info, "ip")),
+            jq::raw(jq::get(info, "host_key"))
+        ),
+    )
+}
+
+fn read_state(ctx: &Ctx, name: &str) -> R<Value> {
+    let path = ctx.state_file(name);
+    let text = fs::read_to_string(&path).map_err(|e| {
+        ctx.err(&format!(
+            "jq: error: Could not open {}: {e}",
+            path.display()
+        ));
+        Fail(2)
+    })?;
+    parse(ctx, &text).map_err(|_| Fail(2))
+}
+
+/// One field of a worker's state file, adopting the worker first when this
+/// host does not know it. A null field fails (`jq -e`).
+pub fn worker_field(ctx: &Ctx, name: &str, field: &str) -> R<String> {
+    if name.is_empty() {
+        ctx.err("Missing worker name");
+        return Err(Fail(2));
+    }
+    if !ctx.state_file(name).is_file() {
+        adopt(ctx, name)?;
+    }
+    let state = read_state(ctx, name)?;
+    let v = jq::get(&state, field);
+    if !jq::truthy(v) {
+        return Err(Fail(1));
+    }
+    Ok(jq::raw(v))
+}
+
+fn probe_timeout() -> Duration {
+    let raw = crate::ctx::env_or("RWORKER_PROBE_TIMEOUT", "4");
+    let (num, mult) = match raw.chars().last() {
+        Some('s') => (&raw[..raw.len() - 1], 1.0),
+        Some('m') => (&raw[..raw.len() - 1], 60.0),
+        Some('h') => (&raw[..raw.len() - 1], 3600.0),
+        Some('d') => (&raw[..raw.len() - 1], 86400.0),
+        _ => (raw.as_str(), 1.0),
+    };
+    Duration::from_secs_f64(num.parse::<f64>().unwrap_or(4.0).max(0.0) * mult)
+}
+
+/// Does anything answer on port 22 within the probe timeout?
+fn ssh_port_open(ip: &str, timeout: Duration) -> bool {
+    let deadline = std::time::Instant::now() + timeout;
+    let Ok(addrs) = (ip, 22).to_socket_addrs() else {
+        return false;
+    };
+    for addr in addrs {
+        let left = deadline.saturating_duration_since(std::time::Instant::now());
+        if left.is_zero() {
+            return false;
+        }
+        if TcpStream::connect_timeout(&addr, left).is_ok() {
+            return true;
+        }
+    }
+    false
+}
+
+/// The address to reach a worker at. Workers join NetBird and Tailscale;
+/// one overlay can be down while the other works, so probe SSH on each
+/// known address (the recorded one first) and use the first that answers.
+/// Falls back to the recorded address, so ssh reports its own error.
+pub fn worker_ip(ctx: &Ctx, name: &str) -> R<String> {
+    worker_field(ctx, name, "ip").map_err(|_| Fail(1))?;
+    let mut state = read_state(ctx, name).map_err(|_| Fail(1))?;
+    // A state file from before the overlays has only the recorded address:
+    // ask the control host once.
+    if !jq::truthy(jq::get(&state, "ips")) {
+        let ips = ctx.muted(|| -> Option<Value> {
+            let out = remote_ls(ctx).ok()?;
+            let list: Value = serde_json::from_str(&out).ok()?;
+            let w = jq::items(&list)?
+                .into_iter()
+                .find(|w| jq::get(w, "name").as_str() == Some(name))?;
+            let ips = jq::get(w, "ips");
+            jq::truthy(ips).then(|| ips.clone())
+        });
+        if let Some(ips) = ips {
+            state = jq::merge(&state, &[("ips", ips)]);
+            let _ = write_state(ctx, name, &state);
+        }
+    }
+    let mut candidates: Vec<String> = Vec::new();
+    for v in [
+        jq::get(&state, "ip"),
+        jq::alt(jq::path(&state, &["ips", "netbird"]), &jq::NULL),
+        jq::alt(jq::path(&state, &["ips", "tailscale"]), &jq::NULL),
+    ] {
+        if v.is_null() || v.as_str() == Some("") || v == &Value::Bool(false) {
+            continue;
+        }
+        let s = jq::raw(v);
+        if !candidates.contains(&s) {
+            candidates.push(s);
+        }
+    }
+    if candidates.is_empty() {
+        return Err(Fail(1));
+    }
+    if candidates.len() > 1 {
+        let timeout = probe_timeout();
+        for ip in &candidates {
+            if ssh_port_open(ip, timeout) {
+                // Remember the address that works: the next call tries it
+                // first and does not wait for the dead overlay again.
+                if ip != &candidates[0] {
+                    let updated = jq::merge(&state, &[("ip", json!(ip))]);
+                    let _ = write_state(ctx, name, &updated);
+                }
+                return Ok(ip.clone());
+            }
+        }
+    }
+    Ok(candidates[0].clone())
+}
+
+/// SSH options for a worker. Host keys are pinned per worker *name*
+/// (HostKeyAlias): NetBird reuses IPs, and a stale entry must fail loudly
+/// rather than reach whichever worker holds that IP now. A failure leaves
+/// no options, as `mapfile < <(ssh_opts ...)` did (see PARITY.md).
+pub fn ssh_opts(ctx: &Ctx, name: &str) -> Vec<String> {
+    let Ok(key) = worker_field(ctx, name, "host_key") else {
+        return Vec::new();
+    };
+    let line = format!("{name} {key}");
+    let known = fs::read_to_string(ctx.known_hosts()).unwrap_or_default();
+    if !known.lines().any(|l| l == line) {
+        let _ = append_known_host(ctx, &line);
+    }
+    vec![
+        "-q".to_string(),
+        "-o".to_string(),
+        format!("UserKnownHostsFile={}", ctx.known_hosts().display()),
+        "-o".to_string(),
+        format!("HostKeyAlias={name}"),
+        "-o".to_string(),
+        "StrictHostKeyChecking=yes".to_string(),
+        "-o".to_string(),
+        "BatchMode=yes".to_string(),
+    ]
+}
+
+/// Drop a deleted worker: from the completions' cache right away, and its
+/// state file and IP host key.
+pub fn forget(ctx: &Ctx, name: &str) {
+    let cache = ctx.ls_cache();
+    let writable = fs::metadata(&cache)
+        .map(|m| !m.permissions().readonly())
+        .unwrap_or(false);
+    if writable
+        && let Ok(text) = fs::read_to_string(&cache)
+        && let Ok(Value::Array(list)) = serde_json::from_str::<Value>(&text)
+    {
+        let kept: Vec<Value> = list
+            .into_iter()
+            .filter(|w| jq::get(w, "name").as_str() != Some(name))
+            .collect();
+        let tmp = ctx.state_dir.join(".ls.json.tmp");
+        if fs::write(&tmp, format!("{}\n", jq::compact(&Value::Array(kept)))).is_ok() {
+            let _ = fs::rename(&tmp, &cache);
+        }
+    }
+    let Ok(ip) = ctx.muted(|| worker_field(ctx, name, "ip")) else {
+        return;
+    };
+    if ctx.known_hosts().is_file() {
+        let _ = Command::new("ssh-keygen")
+            .arg("-R")
+            .arg(&ip)
+            .arg("-f")
+            .arg(ctx.known_hosts())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status();
+    }
+    let _ = fs::remove_file(ctx.state_file(name));
+}
+
+/// `ssh OPTS USER@IP ARGS...` for a worker.
+pub fn worker_ssh(opts: &[String], login: &str) -> Command {
+    let mut cmd = Command::new("ssh");
+    cmd.args(opts).arg(login);
+    cmd
+}
+
+/// rsync's `-e`: the ssh command line with the pinned options.
+pub fn rsync_e(opts: &[String]) -> String {
+    let mut s = "ssh".to_string();
+    // "ssh ${opts[*]}": a space even when there are no options.
+    s.push(' ');
+    s.push_str(&opts.join(" "));
+    s
+}

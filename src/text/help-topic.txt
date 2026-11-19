@@ -1,0 +1,6 @@
+Usage: __ME__ topic NAME TEXT... [--force]
+
+Change what an ad-hoc worker is for: the topic that ls shows, set with --topic
+when the worker was created. Update it when you reuse a worker for other
+work, so ls stays truthful. An empty TEXT clears it. Workers of another owner
+are refused unless --force.

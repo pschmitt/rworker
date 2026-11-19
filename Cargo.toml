@@ -1,0 +1,22 @@
+[package]
+name = "rworker"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.88"
+description = "Client for ad-hoc build workers: disposable, encrypted OpenStack VMs created on request by a control host"
+license = "GPL-3.0-only"
+repository = "https://github.com/pschmitt/rworker"
+readme = "README.md"
+
+[dependencies]
+jiff = "0.2"
+libc = "0.2"
+regex = "1"
+serde_json = { version = "1", features = ["preserve_order"] }
+signal-hook = "0.3"
+unicode-width = "0.2"
+
+[profile.release]
+codegen-units = 1
+lto = true
+strip = true

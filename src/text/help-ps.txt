@@ -1,0 +1,2 @@
+Usage: __ME__ ps [WORKER] [--long]
+  --long shows full command lines, including arguments

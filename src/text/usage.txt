@@ -1,0 +1,55 @@
+Usage: __ME__ ACTION [ARGS] [-j|--json]
+       __ME__ ACTION --help   (or: help ACTION)
+
+-j, --json prints JSON instead of the human-readable output; every action
+but ssh takes it (scripts and the MCP server use it).
+
+Actions:
+  start NAME [--name JOB] [--workdir DIR] -- CMD
+                       start a registered job
+  jobs NAME            list registered jobs
+  ps [NAME] [--long]   show processes of running jobs on one or all workers
+  logs [NAME [JOB]] [--lines N] [--follow] [--no-events] [--quiet]
+       [--topic REGEX] [--agent REGEX]
+                       show logs; follow includes lifecycle events and a worker
+                       count status line (every 5 min, once when none) by default
+  events [--interval SECONDS] [--topic REGEX] [--agent REGEX]
+                       stream worker and job lifecycle events
+  register NAME JOB --log PATH
+                       register an existing log file
+  profiles             list available worker profiles
+  up [--ttl 2h] [--flavor s1.xlarge] [--disk 150] [--topic TEXT]
+     [--no-nix-cache] [--no-niks3-token] [--ssh [-l USER]]
+                       create a worker and wait until it is ready
+  ls [-o json|wide] [--watch [-n SECONDS]]
+                       list all workers (ad-hoc and nixbot's pool)
+  exec [UP_OPTIONS] [--sync SRC[:DEST]] [--fetch REMOTE[:LOCAL]] [--keep] -- CMD
+                       one-shot: create a worker, run CMD, delete the worker
+  inspect NAME [--boot]
+                       show everything known about a worker
+  down NAME            delete a worker
+  prune [NAME...] [--all] [-y] [-n]
+                       delete several ad-hoc workers (default: your own)
+  extend NAME --ttl D  move the expiry to now + D (max 24h)
+  topic NAME TEXT...   change what the worker is for (shown by ls)
+  niks3-token NAME     (re)issue the worker's niks3 push token
+  ssh [-l USER | USER@]NAME [SSH_ARGS...]
+                       ssh to the worker (pinned host key); options such as
+                       -L/-A and a command go straight to ssh
+  ssh --create [-l USER] [UP_OPTIONS]
+                       create a worker and log in (same as up --ssh)
+  sync [USER@]NAME SRC [DEST]
+                       rsync SRC to the worker (default ~/SRC basename)
+  cp [USER@]NAME:REMOTE LOCAL | cp LOCAL [USER@]NAME:REMOTE
+                       copy files or directories from/to a worker
+  builder NAME         print a Nix builders line for the worker
+  nix-cache NAME [--dry-run]
+                       let the worker substitute from this host's S3 cache
+
+Workers this host did not create (nixbot's pool, other hosts' ad-hoc
+workers) are looked up on the control host on first use; you log in as
+yourself there, as agent on your own ad-hoc workers.
+
+Environment: RWORKER_HOST (default rofl-10), RWORKER_KEY (public key file,
+default ~/.ssh/id_ed25519.pub), RWORKER_USER (SSH user override),
+RWORKER_ICONS=0 (no Nerd Font glyphs for the agent), NO_COLOR.

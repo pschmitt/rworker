@@ -1,0 +1,8 @@
+Usage: __ME__ extend NAME --ttl DURATION [--force]
+
+Set the expiry of an ad-hoc worker to now + DURATION (e.g. 2h), capped at
+its maximum lifetime (24 h, or 7 days for --scratch workers). Workers of
+another owner are refused unless --force.
+
+A worker that has a niks3 push token gets a new one for the new expiry;
+--no-niks3-token skips that (the old token then runs out with the old expiry).

@@ -1,0 +1,21 @@
+Usage: __ME__ ssh [-l USER | USER@]NAME [SSH_ARGS...]
+       __ME__ ssh --create [-l USER] [UP_OPTIONS]
+
+SSH to a worker over NetBird with its pinned host key. Everything after the
+name goes to ssh, so options and a command both work.
+
+Default user: agent on ad-hoc workers this host created, yourself on all
+others (RWORKER_USER overrides). Workers this host does not know yet are
+looked up on the control host.
+
+--create makes a new worker and logs in, like `up --ssh`; up's options
+(--ttl, --flavor, --disk, --profile, --scratch, --topic) follow it. -l USER picks the
+login user, as with ssh (agent by default on a new worker).
+
+Examples:
+  __ME__ ssh --create --ttl 4h
+  __ME__ ssh adhoc-1234abcd
+  __ME__ ssh pschmitt@adhoc-1234abcd sudo journalctl -b
+  __ME__ ssh --create -l pschmitt
+  __ME__ ssh adhoc-1234abcd -L 8080:localhost:8080
+  __ME__ ssh adhoc-1234abcd 'cd src && nix develop -c cargo build'

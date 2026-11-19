@@ -1,0 +1,20 @@
+Usage: __ME__ exec [UP_OPTIONS] [--sync SRC[:DEST]]... [--fetch REMOTE[:LOCAL]]...
+          [--keep|--keep-on-failure] [--] CMD...
+
+One-shot build: create an ad-hoc worker, optionally copy directories to it,
+run CMD there as agent (live output; its exit code becomes ours), copy
+results back and delete the worker again - also on errors and Ctrl-C.
+Status messages go to stderr, the command's output to stdout.
+
+  --ttl, --flavor, --disk, --profile, --scratch, --topic, --agent-id, --nix-cache, --no-nix-cache, --no-niks3-token   as for up
+  --sync SRC[:DEST]      rsync SRC to the worker before running (DEST
+                         defaults to SRC's basename); repeatable
+  --fetch REMOTE[:LOCAL] rsync REMOTE (relative to agent's home) back
+                         afterwards, even if CMD failed; repeatable
+  --keep                 do not delete the worker
+  --keep-on-failure      keep it only when CMD fails (for debugging)
+  --json                 print {name, exit_code, stdout, stderr} instead
+
+Examples:
+  __ME__ exec --sync .:src -- 'cd src && nix develop -c cargo build --release'
+  __ME__ exec --flavor s1.2xlarge --sync .:app --fetch app/out:./out -- 'cd app && ./build.sh'

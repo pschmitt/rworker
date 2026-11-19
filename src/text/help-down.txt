@@ -1,0 +1,9 @@
+Usage: __ME__ down NAME [--force]
+
+Delete a worker with its volume and NetBird peer. Nothing on it survives;
+copy results off first.
+
+Workers of another owner ($USER@host, see ls) are refused unless --force.
+So are nixbot's pool workers (KIND pool): builds running on one fail; the
+autoscaler replaces it from the current image when there is demand (handy
+for a pool worker on an outdated image).

@@ -1,0 +1,8 @@
+Usage: __ME__ claim NAME --topic TEXT --agent-id ID [--force]
+
+Take over an ad-hoc worker that you reuse for other work: replaces its
+creator info with yours (agent, agent PID, session, working directory),
+the agent id (your Concord agent id, also read from RWORKER_AGENT_ID or
+CONCORD_AGENT_ID) and the topic. Do this whenever you reuse a worker, so ls
+and logs --agent/--agent-id stay truthful. Workers of another owner are
+refused unless --force.

@@ -1,0 +1,4 @@
+Usage: __ME__ builder NAME
+
+Print a Nix builders line for the worker, e.g.:
+  nix build --max-jobs 0 --builders "$(__ME__ builder NAME)" .#pkg
