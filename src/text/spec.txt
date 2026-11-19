@@ -20,6 +20,7 @@ action builder print a Nix builders line for a worker
 action nix-cache let a worker substitute from this host's S3 cache
 action cp copy files from or to a worker (NAME:PATH)
 action inspect show everything known about a worker
+action completions print the zsh or bash completion script
 action help show the help of an action
 flag start --name=job name the registered job
 flag start --workdir=path working directory on the worker

@@ -13,6 +13,9 @@ Actions, flags, output, JSON and exit statuses are the same; see
   that have them (`rworker logs -f --topic rwor<TAB>`). The filters of `ls`,
   `logs` and `events` get them as escaped regexes; a leading `!` stays.
 
+- `rworker completions zsh|bash` prints the completion scripts, which are
+  compiled into the binary; the Nix package installs them from there.
+
 ### Fixed
 
 - Job commands (`logs`, `jobs`, `ps`, `logs -f`) on a worker seen for the

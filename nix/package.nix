@@ -1,5 +1,6 @@
 {
   lib,
+  stdenv,
   runCommand,
   # crane's library for this nixpkgs (`crane.mkLib pkgs`).
   craneLib,
@@ -93,8 +94,14 @@ craneLib.buildPackage (
       wrapProgram $out/bin/rworker \
         --prefix PATH : ${runtimePath} \
         ${lib.optionalString (!sshControlMaster) "--set RWORKER_SSH_CONTROL_MASTER 0"}
-      installShellCompletion --zsh ${../completions/_rworker}
-      installShellCompletion --bash --name rworker ${../completions/rworker.bash}
+    ''
+    # The completion scripts are part of the binary (`rworker completions`),
+    # so they always match the commands it has.
+    + lib.optionalString (stdenv.buildPlatform.canExecute stdenv.hostPlatform) ''
+      $out/bin/rworker completions zsh > _rworker
+      $out/bin/rworker completions bash > rworker.bash
+      installShellCompletion --zsh _rworker
+      installShellCompletion --bash --name rworker rworker.bash
     '';
 
     passthru = { inherit mcp; };

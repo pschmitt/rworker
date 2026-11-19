@@ -1,0 +1,8 @@
+Usage: __ME__ completions SHELL
+
+Print the completion script for SHELL (zsh or bash). The scripts ask
+`__ME__ __spec` for the actions, flags and values, and the ls cache for
+worker names, topics and agents, so TAB never waits on the network.
+
+  zsh:  __ME__ completions zsh > "${fpath[1]}/___ME__"
+  bash: source <(__ME__ completions bash)

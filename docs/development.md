@@ -15,7 +15,12 @@ nix flake check                 # package, parity harness, MCP test (on a build 
 completions read it through `rworker __spec`. Value sets named on its
 `dynamic` line (topics, agents, agent ids) are completed from the cached
 worker list through `rworker __values SET`; the `-re` sets are regex
-filters and get escaped values. A unit test checks that the
+filters and get escaped values.
+
+The completion scripts (`src/completions/`) are compiled into the binary
+and printed by `rworker completions zsh|bash`; the Nix package installs
+what the built binary prints. A unit test checks every flag they name
+against the spec. A unit test checks that the
 spec, the dispatch and the per-action help (`src/text/help-*.txt`) list the
 same actions and flags, so a new flag needs all three.
 

@@ -23,7 +23,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
-      - run: shellcheck -s bash src/jobs.sh completions/rworker.bash
+      - run: shellcheck -s bash src/jobs.sh src/completions/rworker.bash
   msrv:
     runs-on: ubuntu-latest
     steps:

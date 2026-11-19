@@ -45,6 +45,7 @@ Actions:
   builder NAME         print a Nix builders line for the worker
   nix-cache NAME [--dry-run]
                        let the worker substitute from this host's S3 cache
+  completions zsh|bash print the shell completion script
 
 Workers this host did not create (nixbot's pool, other hosts' ad-hoc
 workers) are looked up on the control host on first use; you log in as

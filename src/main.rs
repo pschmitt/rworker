@@ -41,7 +41,11 @@ pub const ACTIONS: &[&str] = &[
     "nix-cache",
     "inspect",
     "cp",
+    "completions",
 ];
+
+pub const ZSH_COMPLETION: &str = include_str!("completions/_rworker");
+pub const BASH_COMPLETION: &str = include_str!("completions/rworker.bash");
 
 /// A worker name may be abbreviated: an exact name wins, else a unique
 /// prefix, else a unique substring. A name this host already knows (state
@@ -227,6 +231,20 @@ fn dispatch(ctx: &Ctx, action: &str, args: &[String]) -> R {
         "nix-cache" => cmd::nix_cache::cmd_nix_cache(ctx, args),
         "inspect" => cmd::inspect::cmd_inspect(ctx, args),
         "cp" => cmd::files::cmd_cp(ctx, args),
+        "completions" => match args {
+            [shell] if shell == "zsh" => {
+                ctx::out(ZSH_COMPLETION);
+                Ok(())
+            }
+            [shell] if shell == "bash" => {
+                ctx::out(BASH_COMPLETION);
+                Ok(())
+            }
+            _ => {
+                help::show(ctx, "completions");
+                Err(Fail(2))
+            }
+        },
         _ => {
             ctx.err(&format!("Unknown action: {action}"));
             help::show(ctx, "");
@@ -335,6 +353,64 @@ mod tests {
             .filter_map(|l| l.strip_prefix(&format!("{kind} ")))
             .map(String::from)
             .collect()
+    }
+
+    /// Every flag the completion scripts name exists in the spec, and both
+    /// skip exactly the value-taking flags of `logs` when they look for its
+    /// worker: the scripts cannot drift from the commands they complete.
+    #[test]
+    fn completions_follow_the_spec() {
+        let flags: Vec<String> = spec_lines("flag")
+            .iter()
+            .map(|l| {
+                l.split(' ')
+                    .nth(1)
+                    .unwrap()
+                    .split('=')
+                    .next()
+                    .unwrap()
+                    .to_string()
+            })
+            .chain(["--help".to_string()])
+            .collect();
+        let re = regex::Regex::new(r"(^|[^-\w])(--[a-z][a-z-]*)").unwrap();
+        for (name, script) in [("zsh", ZSH_COMPLETION), ("bash", BASH_COMPLETION)] {
+            let code: String = script
+                .lines()
+                .filter(|l| !l.trim_start().starts_with('#'))
+                .collect::<Vec<_>>()
+                .join("\n");
+            for c in re.captures_iter(&code) {
+                assert!(
+                    flags.contains(&c[2].to_string()),
+                    "{name} completion names unknown flag {}",
+                    &c[2]
+                );
+            }
+        }
+        let mut logs_value_flags: Vec<String> = spec_lines("flag")
+            .iter()
+            .filter(|l| l.starts_with("logs ") && l.split(' ').nth(1).unwrap().contains('='))
+            .map(|l| {
+                l.split(' ')
+                    .nth(1)
+                    .unwrap()
+                    .split('=')
+                    .next()
+                    .unwrap()
+                    .to_string()
+            })
+            .collect();
+        logs_value_flags.sort();
+        assert_eq!(
+            logs_value_flags,
+            ["--agent", "--agent-id", "--lines", "--topic"],
+            "logs gained or lost a value flag: update the worker detection of both completion scripts"
+        );
+        assert!(ZSH_COMPLETION.contains("--lines|--topic|--agent|--agent-id) skipval=1"));
+        assert!(BASH_COMPLETION.contains(
+            r#"[[ "$w" == --lines || "$w" == --topic || "$w" == --agent || "$w" == --agent-id ]]"#
+        ));
     }
 
     /// The command spec (read by the completions), the dispatch and the

@@ -36,7 +36,9 @@ NOW = int(time.time())  # reset at the start of every case
 # with FAKE_SSH_STDIN=0 every case must match.
 STDIN_BUG = "PARITY.md bug 2: bash's control-host ssh swallows a list or script meant for later"
 ACCEPTED = {
-    "spec": "CHANGELOG: dynamic value sets (topics, agents, agent ids) for the completions",
+    "spec": "CHANGELOG: dynamic value sets for the completions, the completions action",
+    **{case: "CHANGELOG: the usage lists the completions action" for case in
+       ("usage-empty", "help", "help-flag", "help-bogus", "unknown-action")},
     "prune-yes-all-mine": STDIN_BUG,
     "logs-all": STDIN_BUG,
     "logs-follow": STDIN_BUG,
