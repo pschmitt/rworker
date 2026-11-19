@@ -12,7 +12,10 @@ nix flake check                 # package, parity harness, MCP test (on a build 
 ## The command spec
 
 `src/text/spec.txt` lists every action, flag and value set; the shell
-completions read it through `rworker __spec`. A unit test checks that the
+completions read it through `rworker __spec`. Value sets named on its
+`dynamic` line (topics, agents, agent ids) are completed from the cached
+worker list through `rworker __values SET`; the `-re` sets are regex
+filters and get escaped values. A unit test checks that the
 spec, the dispatch and the per-action help (`src/text/help-*.txt`) list the
 same actions and flags, so a new flag needs all three.
 

@@ -247,6 +247,10 @@ fn run(ctx: &Ctx, argv: &[String]) -> R {
             let _ = cmd::workers::cmd_workers(ctx, &second);
             return Ok(());
         }
+        "__values" => {
+            let _ = cmd::workers::cmd_values(ctx, &second);
+            return Ok(());
+        }
         "__jobs" => {
             if second.is_empty() {
                 return Ok(());

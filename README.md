@@ -33,8 +33,9 @@ when its time runs out.
   gone workers; `--topic`, `--agent` and `--agent-id` filter by regex.
 - **Scripting**: `--json` on every action but `ssh`; an MCP server
   (`rworker-mcp`) exposes the same actions to agents.
-- **Shell completions**: zsh and bash, for actions, flags and worker names,
-  answered from a local cache so TAB never waits on the network.
+- **Shell completions**: zsh and bash, for actions, flags, worker names and
+  the topics, agents and agent ids of the current workers, answered from a
+  local cache so TAB never waits on the network.
 
 ## Install
 

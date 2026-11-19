@@ -25,6 +25,33 @@ _rworker_workers() {
   _describe -t workers 'worker' workers
 }
 
+# Topics, agents and agent ids of the cached workers (rworker __values SET),
+# with the workers that have them. A leading ! (invert the filter) stays.
+_rworker_values() {
+  # _arguments puts its compadd options (-J GROUP ...) first.
+  local set="${@[-1]}" line value desc
+  local -a values
+  for line in "${(@f)$(rworker __values "$set" 2>/dev/null)}"
+  do
+    [[ -n "$line" ]] || continue
+    value="${line%%$'\t'*}"
+    desc="${line#*$'\t'}"
+    # _describe reads backslashes as escapes: keep a regex's \( and \.
+    value="${value//\\/\\\\}"
+    if [[ -n "$desc" ]]
+    then
+      values+=("${value//:/\\:}:${desc//:/\\:}")
+    else
+      values+=("${value//:/\\:}")
+    fi
+  done
+  if [[ "$set" == *-re ]]
+  then
+    compset -P '!'
+  fi
+  _describe -t values "${set%-re}" values
+}
+
 _rworker_jobs() {
   local worker="${_rworker_job_worker:-}"
   local -a jobs
@@ -35,7 +62,7 @@ _rworker_jobs() {
 _rworker() {
   _rworker_spec
   local line action
-  local -a actions flags takes_worker
+  local -a actions flags takes_worker dynamic
   for line in "${_rworker_spec_cache[@]}"
   do
     case "${line%% *}" in
@@ -45,6 +72,9 @@ _rworker() {
         ;;
       worker)
         takes_worker=(${=line#worker })
+        ;;
+      dynamic)
+        dynamic=(${=line#dynamic })
         ;;
     esac
   done
@@ -147,6 +177,9 @@ _rworker() {
     if [[ "$spec_flag" == *=path ]]
     then
       flags+=("${spec_flag%%=*}[${desc}]:path:_files")
+    elif [[ "$spec_flag" == *=* ]] && (( ${dynamic[(Ie)${spec_flag#*=}]} ))
+    then
+      flags+=("${spec_flag%%=*}[${desc}]:${spec_flag#*=}:_rworker_values ${spec_flag#*=}")
     elif [[ "$spec_flag" == *=* ]]
     then
       flag="${spec_flag%%=*}"

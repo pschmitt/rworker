@@ -36,6 +36,7 @@ NOW = int(time.time())  # reset at the start of every case
 # with FAKE_SSH_STDIN=0 every case must match.
 STDIN_BUG = "PARITY.md bug 2: bash's control-host ssh swallows a list or script meant for later"
 ACCEPTED = {
+    "spec": "CHANGELOG: dynamic value sets (topics, agents, agent ids) for the completions",
     "prune-yes-all-mine": STDIN_BUG,
     "logs-all": STDIN_BUG,
     "logs-follow": STDIN_BUG,
@@ -44,7 +45,7 @@ ACCEPTED = {
     "prune-yes-json": STDIN_BUG,
 }
 if os.environ.get("FAKE_SSH_STDIN") == "0":
-    ACCEPTED = {}
+    ACCEPTED = {k: v for k, v in ACCEPTED.items() if v != STDIN_BUG}
 
 
 def iso(t, frac=False, z=True):
@@ -230,6 +231,14 @@ CASES = [
     ("exec-trailing-topic", ["exec", "--topic"], {}),
     ("exec-unknown", ["exec", "--bogus", "--", "true"], {}),
     ("exec-interrupt", ["exec", "--no-nix-cache", "--", "sleep", "3"], {"stop": (signal.SIGTERM, 1.5)}),
+    # browser-daemon's rworker provider (nixos-config-private) drives the
+    # CLI like this: up, ssh with a secret on stdin, ls, down.
+    ("bd-up", ["up", "--json", "--no-nix-cache", "--ttl", "2h", "--profile", "browser-daemon",
+               "--topic", "browser-daemon:0b6f0a52-1f43-4c55-9b0e-6a1f3f0a9b1d"], {}),
+    ("bd-ssh-secret", ["ssh", "adhoc-aaaa1111", "umask 077; cat > secret.tmp && mv secret.tmp secret && wc -c < secret"],
+     {"stdin": "node-secret\n"}),
+    ("bd-ls", ["ls", "--json"], {}),
+    ("bd-down", ["down", "adhoc-aaaa1111"], {}),
     ("prune-yes-all-mine", ["prune", "-y"], {}),
     ("prune-yes-json", ["prune", "adhoc-aaaa1111", "-y", "--json"], {}),
 ]
@@ -357,8 +366,12 @@ def run_case(argv, opts, home):
         code = p.wait()
         out, err = b"".join(chunks).decode(errors="replace"), ""
     else:
-        p = subprocess.Popen(cmd, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
-                             stderr=subprocess.PIPE, env=env, cwd=home)
+        stdin = opts.get("stdin")
+        p = subprocess.Popen(cmd, stdin=subprocess.PIPE if stdin else subprocess.DEVNULL,
+                             stdout=subprocess.PIPE, stderr=subprocess.PIPE, env=env, cwd=home)
+        if stdin:
+            p.stdin.write(stdin.encode())
+            p.stdin.close()
         if stop:
             time.sleep(stop[1])
             p.send_signal(stop[0])

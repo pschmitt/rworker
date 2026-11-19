@@ -6,6 +6,20 @@ _rworker_workers() {
   rworker __workers "${COMP_WORDS[1]:-}" 2>/dev/null | cut -f1
 }
 
+# Topics, agents and agent ids of the cached workers (rworker __values SET)
+# that start with CUR, shell-quoted (they may contain spaces).
+_rworker_values() {
+  local set="$1" cur="$2" value
+  COMPREPLY=()
+  while IFS=$'\t' read -r value _
+  do
+    if [[ -n "$value" && "$value" == "$cur"* ]]
+    then
+      COMPREPLY+=("$(printf '%q' "$value")")
+    fi
+  done < <(rworker __values "$set" 2>/dev/null)
+}
+
 _rworker() {
   local cur="${COMP_WORDS[COMP_CWORD]}"
   local prev="${COMP_WORDS[COMP_CWORD-1]}"
@@ -44,6 +58,10 @@ _rworker() {
       if [[ "$flag" == "${prev}=path" ]]
       then
         mapfile -t COMPREPLY < <(compgen -f -- "$cur")
+        return
+      elif [[ "$flag" == "${prev}="* ]] && grep -q -E "^dynamic( .*)? ${flag#*=}( |\$)" <<< "$spec"
+      then
+        _rworker_values "${flag#*=}" "$cur"
         return
       elif [[ "$flag" == "${prev}="* ]]
       then

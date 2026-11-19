@@ -22,7 +22,9 @@ fn refresh_in_background(ctx: &Ctx) {
         .spawn();
 }
 
-pub fn cmd_workers(ctx: &Ctx, action: &str) -> R {
+/// The cached `ls` answer, refreshed in the background when it is older
+/// than 30 s (for the next TAB). None without a cache.
+fn cached_ls(ctx: &Ctx) -> Option<String> {
     let cache = ctx.ls_cache();
     let age = std::fs::metadata(&cache)
         .and_then(|m| m.modified())
@@ -32,7 +34,11 @@ pub fn cmd_workers(ctx: &Ctx, action: &str) -> R {
     if age > 30 {
         refresh_in_background(ctx);
     }
-    let Ok(text) = std::fs::read_to_string(&cache) else {
+    std::fs::read_to_string(&cache).ok()
+}
+
+pub fn cmd_workers(ctx: &Ctx, action: &str) -> R {
+    let Some(text) = cached_ls(ctx) else {
         let mut names: Vec<String> = std::fs::read_dir(&ctx.state_dir)
             .map(|d| {
                 d.filter_map(Result::ok)
@@ -99,4 +105,72 @@ pub fn cmd_workers(ctx: &Ctx, action: &str) -> R {
         ));
     }
     Ok(())
+}
+
+/// A topic or agent as a regex that matches exactly that text.
+fn regex_escape(s: &str) -> String {
+    let mut out = String::new();
+    for c in s.chars() {
+        if "\\.+*?()|[]{}^$".contains(c) {
+            out.push('\\');
+        }
+        out.push(c);
+    }
+    out
+}
+
+/// `__values SET`: "VALUE<TAB>DESCRIPTION" for a dynamic value set of the
+/// spec (topics, agents, agent ids), from the cached worker list plus the
+/// set's static values. The *-re sets are regex filters: their values are
+/// escaped, so a topic matches itself.
+pub fn cmd_values(ctx: &Ctx, set: &str) -> R {
+    let (field, regex) = match set {
+        "topic" => ("topic", false),
+        "topic-re" => ("topic", true),
+        "agent" => ("agent", false),
+        "agent-re" => ("agent", true),
+        "id" => ("agent_id", false),
+        "id-re" => ("agent_id", true),
+        _ => return Ok(()),
+    };
+    let mut values: std::collections::BTreeMap<String, Vec<String>> = Default::default();
+    let prefix = format!("values {set} ");
+    if let Some(line) = crate::help::SPEC.lines().find(|l| l.starts_with(&prefix)) {
+        for v in line[prefix.len()..].split(' ').filter(|v| !v.is_empty()) {
+            values.entry(v.to_string()).or_default();
+        }
+    }
+    let list = cached_ls(ctx)
+        .and_then(|t| serde_json::from_str::<Value>(&t).ok())
+        .unwrap_or(Value::Null);
+    for w in jq::items(&list).unwrap_or_default() {
+        let v = jq::or_empty(get(w, field));
+        if !v.is_empty() {
+            values.entry(v).or_default().push(jq::raw(get(w, "name")));
+        }
+    }
+    for (value, workers) in values {
+        let desc = match workers.len() {
+            0 => String::new(),
+            1..=3 => workers.join(", "),
+            n => format!("{}, ... ({n} workers)", workers[..2].join(", ")),
+        };
+        let value = if regex { regex_escape(&value) } else { value };
+        // One value per line: a tab or newline in it would break the lines.
+        let value = value.replace(['\t', '\n'], " ");
+        outln(&format!("{value}\t{desc}"));
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn escape() {
+        assert_eq!(
+            super::regex_escape("rbw (release) 1.2"),
+            "rbw \\(release\\) 1\\.2"
+        );
+        assert_eq!(super::regex_escape("plain words"), "plain words");
+    }
 }

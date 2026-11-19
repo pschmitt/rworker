@@ -30,11 +30,11 @@ flag logs -f short for --follow
 flag logs -q short for --quiet
 flag logs --no-events suppress lifecycle events while following
 flag logs --quiet suppress all status messages (timestamped, italic) while following
-flag logs --topic=topic limit to workers whose topic matches this regex (prefix with ! to invert)
-flag logs --agent=agent limit to workers whose creating agent matches this regex (prefix with ! to invert)
+flag logs --topic=topic-re limit to workers whose topic matches this regex (prefix with ! to invert)
+flag logs --agent=agent-re limit to workers whose creating agent matches this regex (prefix with ! to invert)
 flag events --interval=interval event polling interval
-flag events --topic=topic limit to workers whose topic matches this regex (prefix with ! to invert)
-flag events --agent=agent limit to workers whose creating agent matches this regex (prefix with ! to invert)
+flag events --topic=topic-re limit to workers whose topic matches this regex (prefix with ! to invert)
+flag events --agent=agent-re limit to workers whose creating agent matches this regex (prefix with ! to invert)
 flag register --log=path absolute path to an existing log file
 values job
 values count 50 200 1000
@@ -87,11 +87,11 @@ flag claim --topic=topic what the worker is for now
 flag claim --agent-id=id your agent id (Concord)
 flag up --agent-id=id the creating agent's id (Concord)
 flag exec --agent-id=id the creating agent's id (Concord)
-flag ls --topic=topic only workers whose topic matches this regex (prefix with ! to invert)
-flag ls --agent=agent only workers whose creating agent matches this regex (prefix with ! to invert)
-flag ls --agent-id=id only workers whose agent id matches this regex (prefix with ! to invert)
-flag logs --agent-id=id limit to workers whose agent id matches this regex (prefix with ! to invert)
-flag events --agent-id=id limit to workers whose agent id matches this regex (prefix with ! to invert)
+flag ls --topic=topic-re only workers whose topic matches this regex (prefix with ! to invert)
+flag ls --agent=agent-re only workers whose creating agent matches this regex (prefix with ! to invert)
+flag ls --agent-id=id-re only workers whose agent id matches this regex (prefix with ! to invert)
+flag logs --agent-id=id-re limit to workers whose agent id matches this regex (prefix with ! to invert)
+flag events --agent-id=id-re limit to workers whose agent id matches this regex (prefix with ! to invert)
 flag prune --yes do not ask
 flag prune -y short for --yes
 flag prune -n short for --dry-run
@@ -103,9 +103,14 @@ values size 100 150 250 500
 values path
 values format json wide
 values topic
+values topic-re
+values id
+values id-re
 values agent claude codex agy opencode gemini copilot shell nixbot
+values agent-re claude codex agy opencode gemini copilot shell nixbot
 values user agent pschmitt nix-remote-builder
 values interval 2 5 10 30
+dynamic topic topic-re agent agent-re id id-re
 worker down extend topic claim niks3-token ssh sync builder prune inspect nix-cache start jobs ps logs register
 global --json force JSON output
 global -j short for --json
