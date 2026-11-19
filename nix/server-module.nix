@@ -31,6 +31,7 @@ in
   options.services.rworker = {
     enable = lib.mkEnableOption "the rworker control socket and local client";
     reaper.enable = lib.mkEnableOption "periodic reaping of expired ad-hoc workers";
+    reaper.dryRun = lib.mkEnableOption "reporting reaper decisions without changing workers";
     autoscaler = {
       enable = lib.mkEnableOption "nixbot build-pool autoscaling";
       settingsFile = lib.mkOption {

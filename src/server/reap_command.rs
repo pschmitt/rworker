@@ -1,4 +1,4 @@
-pub(super) fn reap(cfg: &serde_json::Value) -> Result<(), String> {
+pub(super) fn reap(cfg: &serde_json::Value, dry_run: bool) -> Result<(), String> {
     use super::reaper::{AfterProbe, BeforeProbe, Policy, Worker};
     use super::{
         mutations::{self, Compute},
@@ -67,7 +67,7 @@ pub(super) fn reap(cfg: &serde_json::Value) -> Result<(), String> {
                         report_expired,
                         renew_token_until,
                     } => {
-                        if record_activity {
+                        if record_activity && !dry_run {
                             compute.set_metadata(
                                 &id,
                                 [("last_active".into(), json!((now as i64).to_string()))]
@@ -78,7 +78,7 @@ pub(super) fn reap(cfg: &serde_json::Value) -> Result<(), String> {
                         if report_expired {
                             eprintln!("{name} expired but is in use; keeping it");
                         }
-                        if let Some(end) = renew_token_until {
+                        if let Some(end) = renew_token_until.filter(|_| !dry_run) {
                             super::niks3::install(
                                 cfg,
                                 &mut compute,
@@ -93,8 +93,33 @@ pub(super) fn reap(cfg: &serde_json::Value) -> Result<(), String> {
                 }
             }
         };
-        eprintln!("deleting {name} ({reason})");
-        mutations::delete(cfg, &compute, &netbird, &id, name, &metadata)?;
+        if cfg["reapProtectInUse"] == true {
+            let reserved = ["owner", "topic"].iter().any(|key| {
+                metadata
+                    .get(*key)
+                    .and_then(Value::as_str)
+                    .is_some_and(|value| !value.is_empty())
+            });
+            let idle = if reserved {
+                false
+            } else if let Some(key) = metadata.get("host_key").and_then(Value::as_str)
+                && let Some(ip) = worker_ssh::route(cfg, name)?
+            {
+                worker_ssh::active(cfg, ip, key) == Some(false)
+            } else {
+                false
+            };
+            if !idle {
+                eprintln!("keeping {name} (reserved or activity could not be ruled out)");
+                continue;
+            }
+        }
+        if dry_run {
+            eprintln!("would delete {name} ({reason})");
+        } else {
+            eprintln!("deleting {name} ({reason})");
+            mutations::delete(cfg, &compute, &netbird, &id, name, &metadata)?;
+        }
     }
     Ok(())
 }

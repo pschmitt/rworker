@@ -28,3 +28,12 @@ Actions, flags, output, JSON and exit statuses are the same; see
 - Job commands (`logs`, `jobs`, `ps`, `logs -f`) on a worker seen for the
   first time printed nothing: the control-host lookup swallowed the job
   manager script. `prune` with several workers deleted only the first.
+
+### Control-host cutover safeguards
+
+- `rworker server CONFIG reap --dry-run` reports deletion candidates and
+  skips provider mutations. NixOS can select it with
+  `services.rworker.reaper.dryRun`.
+- Setting `reapProtectInUse` in the control settings preserves workers
+  with an owner or topic and requires a successful idle probe before
+  deleting other candidates.

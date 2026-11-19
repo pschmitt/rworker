@@ -284,7 +284,7 @@ impl Pool<'_> {
             self.last_membership_check = now;
         }
         if cfg["reapAdhoc"] == true {
-            super::reap_command::reap(cfg)?;
+            super::reap_command::reap(cfg, false)?;
         }
         let output = self
             .compute

@@ -52,7 +52,7 @@ pub fn run(ctx: &crate::ctx::Ctx, args: &[String]) -> R {
     };
     let edit = match action.as_str() {
         "up" => None,
-        "reap" if rest.is_empty() => None,
+        "reap" if rest.is_empty() || rest == ["--dry-run"] => None,
         "autoscale" if rest.is_empty() || rest == ["--once"] => None,
         "profiles" | "ls" if rest.is_empty() => None,
         "topic" | "claim" | "extend" | "niks3-token" | "down" => match parse_edit(action, rest) {
@@ -74,7 +74,7 @@ pub fn run(ctx: &crate::ctx::Ctx, args: &[String]) -> R {
             return Ok(());
         }
         if action == "reap" {
-            reap_command::reap(&settings)?;
+            reap_command::reap(&settings, !rest.is_empty())?;
             return Ok(());
         }
         let response = if let Some(args) = up {

@@ -172,19 +172,27 @@ else:
         commands["cmd_reap"](cfg, cloud, None)
         cloud.delete.assert_called_once_with(name)
         cloud.route.assert_not_called()
-        trace.write_text("")
-        actual = subprocess.run(
-            [str(binary), "server", str(config), "reap"], capture_output=True, text=True,
-            timeout=10, env={
-                **os.environ, "PATH": f"{directory}:{os.environ['PATH']}",
-                "RWORKER_FAKE_SERVER": json.dumps({"properties": worker.metadata}),
-                "RWORKER_FAKE_TRACE": str(trace),
-            },
-        )
-        assert (actual.returncode, actual.stdout) == (0, ""), actual
-        assert actual.stderr == f"deleting {name} (maximum lifetime reached)\n", actual
-        assert [json.loads(line) for line in trace.read_text().splitlines()] == [["delete", name]]
+        for flags, verb, reason, protect, expected in [
+            ([], "deleting", "maximum lifetime reached", False, [["delete", name]]),
+            (["--dry-run"], "would delete", "maximum lifetime reached", False, []),
+            ([], "keeping", "reserved or activity could not be ruled out", True, []),
+        ]:
+            config.write_text(json.dumps({**current, **cfg, "reapProtectInUse": protect}))
+            trace.write_text("")
+            actual = subprocess.run(
+                [str(binary), "server", str(config), "reap", *flags], capture_output=True, text=True,
+                timeout=10, env={
+                    **os.environ, "PATH": f"{directory}:{os.environ['PATH']}",
+                    "RWORKER_FAKE_SERVER": json.dumps({"properties": worker.metadata}),
+                    "RWORKER_FAKE_TRACE": str(trace),
+                },
+            )
+            assert (actual.returncode, actual.stdout) == (0, ""), actual
+            assert actual.stderr == f"{verb} {name} ({reason})\n", actual
+            assert [json.loads(line) for line in trace.read_text().splitlines()] == expected
         print("Rust vs Python reaper CLI: 1 case compared, 0 differences")
+        print("Reaper dry run: deletion reported, zero mutations")
+        print("Reaper cutover safeguard: reserved worker preserved, zero mutations")
     return 8
 
 
