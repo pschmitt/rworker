@@ -48,5 +48,6 @@ lifecycle events and a periodic worker count on stderr.
 | `RWORKER_AGENT_ID`, `CONCORD_AGENT_ID` | Agent id recorded on `up` and `claim` |
 | `RWORKER_ICONS=0` | No Nerd Font glyphs for the creating agent |
 | `RWORKER_PROBE_TIMEOUT` | Seconds to wait for each overlay address (default 4) |
+| `RWORKER_AWS_CREDENTIALS_FILE` | AWS credentials file `nix-cache` reads its profiles from (else `AWS_SHARED_CREDENTIALS_FILE`, else `~/.aws/credentials`) |
 | `RWORKER_SSH_CONTROL_MASTER=0` | No shared SSH connection to the control host |
 | `NO_COLOR` | No colors, also not in help |

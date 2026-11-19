@@ -11,7 +11,8 @@ service and never via the control host:
     `nix config show`. Nothing else of nix.conf is copied (it can hold
     access-tokens and netrc paths), and neither are non-S3 substituters.
   - the AWS profile each s3:// URL names (profile=...) from
-    $AWS_SHARED_CREDENTIALS_FILE or ~/.aws/credentials; no other profile.
+    $RWORKER_AWS_CREDENTIALS_FILE, $AWS_SHARED_CREDENTIALS_FILE or
+    ~/.aws/credentials; no other profile.
 They land in /run/rworker-nix on the worker (tmpfs, agent-owned, 0700), so
 they vanish with the worker. The worker's nix-daemon includes nix.conf from
 there and restarts when it changes. Run it again after rotating the key.

@@ -53,4 +53,5 @@ yourself there, as agent on your own ad-hoc workers.
 
 Environment: RWORKER_HOST (default rofl-10), RWORKER_KEY (public key file,
 default ~/.ssh/id_ed25519.pub), RWORKER_USER (SSH user override),
-RWORKER_ICONS=0 (no Nerd Font glyphs for the agent), NO_COLOR.
+RWORKER_ICONS=0 (no Nerd Font glyphs for the agent),
+RWORKER_AWS_CREDENTIALS_FILE (AWS profiles for nix-cache), NO_COLOR.

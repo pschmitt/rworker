@@ -110,9 +110,14 @@ pub fn push(ctx: &Ctx, name: &str, dry: bool) -> R<String> {
         ctx.err("This host's Nix has no s3:// substituter; nothing to push");
         return Err(Fail(1));
     }
+    // RWORKER_AWS_CREDENTIALS_FILE: for rworker only, without pointing
+    // every other AWS tool at that file.
     let creds_file = crate::ctx::env_or(
-        "AWS_SHARED_CREDENTIALS_FILE",
-        &format!("{}/.aws/credentials", ctx.home),
+        "RWORKER_AWS_CREDENTIALS_FILE",
+        &crate::ctx::env_or(
+            "AWS_SHARED_CREDENTIALS_FILE",
+            &format!("{}/.aws/credentials", ctx.home),
+        ),
     );
     let mut creds = String::new();
     for profile in strings(get(&settings, "profiles")) {

@@ -39,6 +39,8 @@ ACCEPTED = {
     "spec": "CHANGELOG: dynamic value sets for the completions, the completions action",
     **{case: "CHANGELOG: the usage lists the completions action" for case in
        ("usage-empty", "help", "help-flag", "help-bogus", "unknown-action")},
+    **{case: "CHANGELOG: RWORKER_AWS_CREDENTIALS_FILE in the help" for case in
+       ("nix-cache-missing", "nix-cache-bogus")},
     "prune-yes-all-mine": STDIN_BUG,
     "logs-all": STDIN_BUG,
     "logs-follow": STDIN_BUG,
@@ -206,7 +208,8 @@ CASES = [
     ("logs-bad-lines", ["logs", "--lines", "x"], {}),
     ("logs-unknown", ["logs", "--bogus"], {}),
     ("logs-topic-empty", ["logs", "--topic="], {}),
-    ("logs-follow", ["logs", "-f", "--topic", "rbw", "--no-events"], {"stop": (signal.SIGINT, 3)}),
+    # Concurrent tails on the worker interleave in any order.
+    ("logs-follow", ["logs", "-f", "--topic", "rbw", "--no-events"], {"stop": (signal.SIGINT, 3), "unordered": True}),
     ("ps", ["ps", "adhoc-aaaa1111"], {}),
     ("ps-long", ["ps", "--long"], {}),
     ("ps-unknown", ["ps", "nope"], {}),
@@ -388,6 +391,8 @@ def run_case(argv, opts, home):
     if log.exists():
         for line in log.read_text().splitlines():
             calls.append(normalize(line))
+    if opts.get("unordered"):
+        out, err = ("\n".join(sorted(t.splitlines())) for t in (out, err))
     return {"code": code, "stdout": normalize(out), "stderr": normalize(err),
             "calls": calls, "state": state_snapshot()}
 

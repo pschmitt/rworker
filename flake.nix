@@ -40,6 +40,53 @@
           checks = {
             inherit rworker;
             parity = pkgs.callPackage ./nix/parity.nix { inherit rworker; };
+            # The Home Manager module, evaluated against stand-ins for the two
+            # Home Manager options it sets, and its configured wrapper built
+            # and asked for its settings.
+            hm-module =
+              let
+                eval = nixpkgs.lib.evalModules {
+                  modules = [
+                    self.homeModules.default
+                    {
+                      options.home = {
+                        packages = nixpkgs.lib.mkOption { type = nixpkgs.lib.types.listOf nixpkgs.lib.types.package; };
+                        shellAliases = nixpkgs.lib.mkOption { type = nixpkgs.lib.types.attrsOf nixpkgs.lib.types.str; };
+                      };
+                      config = {
+                        _module.args.pkgs = pkgs;
+                        programs.rworker = {
+                          enable = true;
+                          controlHost = "control.example.com";
+                          publicKeyFile = "/keys/id_test.pub";
+                          icons = false;
+                          sshControlMaster = false;
+                          nixCache.awsCredentialsFile = "/run/secrets/aws";
+                          mcp.enable = true;
+                          aliases = [ "rk" ];
+                        };
+                      };
+                    }
+                  ];
+                };
+                cfg = eval.config;
+                client = cfg.programs.rworker.finalPackage;
+              in
+              assert cfg.home.shellAliases.rk == "rworker";
+              assert builtins.length cfg.home.packages == 2;
+              pkgs.runCommand "rworker-hm-module-check" { } ''
+                wrapper=${client}/bin/rworker
+                grep -q 'RWORKER_HOST.*control.example.com' $wrapper
+                grep -q 'RWORKER_KEY.*/keys/id_test.pub' $wrapper
+                grep -q 'RWORKER_ICONS.*0' $wrapper
+                grep -q 'RWORKER_AWS_CREDENTIALS_FILE.*/run/secrets/aws' $wrapper
+                # sshControlMaster is the package's own wrapper, which this one runs.
+                grep -q 'RWORKER_SSH_CONTROL_MASTER.*0' "$(grep -o '/nix/store/[^"]*/bin/rworker' $wrapper)"
+                grep -q -- '--rworker ${client}/bin/rworker' ${cfg.programs.rworker.mcp.finalPackage}/bin/rworker-mcp
+                $wrapper __spec | grep -q '^action up '
+                test -e ${client}/share/zsh/site-functions/_rworker
+                touch $out
+              '';
             mcp =
               pkgs.runCommand "rworker-mcp-test"
                 {
@@ -91,5 +138,15 @@
       overlays.default = _final: prev: {
         rworker = packageFor prev;
       };
+
+      # programs.rworker; this flake's package is the default.
+      homeModules.default =
+        { lib, pkgs, ... }:
+        {
+          imports = [ ./nix/hm-module.nix ];
+          programs.rworker.package = lib.mkDefault self.packages.${pkgs.stdenv.hostPlatform.system}.default;
+        };
+      homeModules.rworker = self.homeModules.default;
+      homeManagerModules = self.homeModules;
     };
 }

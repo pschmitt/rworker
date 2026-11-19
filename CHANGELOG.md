@@ -16,6 +16,13 @@ Actions, flags, output, JSON and exit statuses are the same; see
 - `rworker completions zsh|bash` prints the completion scripts, which are
   compiled into the binary; the Nix package installs them from there.
 
+- Home Manager module `programs.rworker` (`homeModules.default`): control
+  host, public key, login user, probe timeout, icons, SSH connection
+  sharing, extra runtime inputs, the AWS credentials file for `nix-cache`,
+  shell aliases and the MCP server, as defaults in the client's wrapper.
+- `RWORKER_AWS_CREDENTIALS_FILE`: the AWS credentials file `nix-cache`
+  reads, for rworker only.
+
 ### Fixed
 
 - Job commands (`logs`, `jobs`, `ps`, `logs -f`) on a worker seen for the

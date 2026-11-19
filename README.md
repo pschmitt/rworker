@@ -42,14 +42,18 @@ when its time runs out.
 ```nix
 {
   inputs.rworker.url = "github:pschmitt/rworker";
-  # in your NixOS or Home Manager configuration:
-  nixpkgs.overlays = [ inputs.rworker.overlays.default ];
-  home.packages = [ pkgs.rworker ];
+  # in your Home Manager configuration:
+  imports = [ inputs.rworker.homeModules.default ];
+  programs.rworker = {
+    enable = true;
+    controlHost = "control.example.com";
+  };
 }
 ```
 
 From source: `cargo install --path .` (needs OpenSSH and rsync at run
-time). See [Nix](docs/nix.md) for the flake outputs and the MCP server.
+time). See [Nix](docs/nix.md) for the module's options, the overlay and the MCP
+server.
 
 ## Quick start
 
