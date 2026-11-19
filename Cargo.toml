@@ -9,7 +9,7 @@ repository = "https://github.com/pschmitt/rworker"
 readme = "README.md"
 
 [dependencies]
-jiff = "0.2"
+jiff = "1.0"
 libc = "0.2"
 regex = "1"
 serde_json = { version = "1", features = ["preserve_order"] }
