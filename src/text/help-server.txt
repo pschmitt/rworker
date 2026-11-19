@@ -1,0 +1,15 @@
+Usage: __ME__ server CONFIG ACTION [ARGS...]
+
+Run a control-host command using the specified runtime JSON configuration.
+
+Actions:
+  profiles      List available worker profiles.
+  ls            List ad-hoc and pool workers as JSON.
+  up            Provision an ad-hoc worker and wait for readiness.
+  down          Delete a worker.
+  extend        Update an ad-hoc worker's expiry.
+  topic         Change or clear an ad-hoc worker's topic.
+  claim         Replace recorded creator metadata.
+  niks3-token   Issue a fresh push token for a worker.
+  reap          Reconcile expired ad-hoc workers once.
+  autoscale     Reconcile the nixbot build pool continuously.

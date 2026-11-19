@@ -15,6 +15,14 @@ use std::time::Duration;
 /// `ssh CONTROL rworker ARGS...` over one shared connection (kept 10 min):
 /// repeated calls (ls --watch, the completions' refresh) skip the handshake.
 pub fn control_cmd<S: AsRef<str>>(ctx: &Ctx, args: &[S]) -> Command {
+    if let Some(path) = std::env::var_os("RWORKER_CONTROL_SOCKET").filter(|p| !p.is_empty()) {
+        let exe = std::env::current_exe().unwrap_or_else(|_| "rworker".into());
+        let mut cmd = Command::new(exe);
+        cmd.arg("__control-socket")
+            .arg(path)
+            .args(args.iter().map(AsRef::as_ref));
+        return cmd;
+    }
     let _ = fs::create_dir_all(&ctx.state_dir);
     let mut cmd = Command::new("ssh");
     cmd.args(["-q", "-o", "BatchMode=yes"]);

@@ -6,6 +6,7 @@ action events stream worker and job lifecycle events
 action register register an existing log file
 action up create a worker and wait until it is ready
 action profiles list available worker profiles
+action server run a control-host command
 action ls list all workers (ad-hoc and pool)
 action exec create a worker, run a command on it, delete it
 action down delete an ad-hoc worker

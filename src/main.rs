@@ -10,6 +10,7 @@ mod help;
 mod jq;
 mod paint;
 mod proc;
+mod server;
 mod signals;
 mod state;
 mod table;
@@ -27,6 +28,7 @@ pub const ACTIONS: &[&str] = &[
     "register",
     "up",
     "profiles",
+    "server",
     "ls",
     "down",
     "prune",
@@ -257,6 +259,19 @@ fn run(ctx: &Ctx, argv: &[String]) -> R {
     let action = argv.first().cloned().unwrap_or_default();
     let second = argv.get(1).cloned().unwrap_or_default();
     match action.as_str() {
+        "__serve-control-socket" => {
+            return match argv {
+                [_, config] => server::socket::serve(config),
+                _ => Err(Fail(2)),
+            };
+        }
+        "__control-socket" => {
+            if let Some(path) = argv.get(1) {
+                return server::socket::request(path, &argv[2..]);
+            }
+            return Err(Fail(2));
+        }
+        "server" => return server::run(ctx, &argv[1..]),
         "__spec" => {
             ctx::out(help::SPEC);
             return Ok(());
@@ -336,7 +351,27 @@ fn main() {
     signals::default_sigpipe();
     let argv: Vec<String> = std::env::args().skip(1).collect();
     let ctx = Ctx::from_env();
-    let code = match run(&ctx, &argv) {
+    let remote_command = std::env::var_os("RWORKER_CONTROL_SSH_COMPAT").is_some()
+        && std::env::var_os("SSH_CONNECTION").is_some()
+        && std::env::var_os("SSH_TTY").is_none()
+        && argv.first().is_some_and(|action| {
+            matches!(
+                action.as_str(),
+                "profiles" | "ls" | "up" | "down" | "extend" | "topic" | "claim" | "niks3-token"
+            )
+        });
+    let result = if remote_command {
+        match std::env::var("RWORKER_CONTROL_SOCKET") {
+            Ok(path) => server::socket::request(&path, &argv),
+            Err(_) => {
+                ctx.err("Missing RWORKER_CONTROL_SOCKET for SSH control request");
+                Err(Fail(1))
+            }
+        }
+    } else {
+        run(&ctx, &argv)
+    };
+    let code = match result {
         Ok(()) => 0,
         Err(Fail(c)) => c,
     };
