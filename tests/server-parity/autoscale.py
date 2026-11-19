@@ -22,7 +22,7 @@ def compare(oracle, binary, root):
         "bootTimeout": 120, "scaleUpPending": 0, "scaleUpAfter": 60, "idleSeconds": 60, "localMaxJobs": 1,
         "maxJobs": 8, "supportedFeatures": ["big-parallel"], "sshUser": "builder",
         "sshKeyFile": "/run/test/ssh-key", "machinesSshKeyFile": "/run/test/ssh-key",
-        "databaseUrl": "postgresql://fixture.invalid/test", "netbirdSelf": "fixture",
+        "databaseUrl": "postgresql:///test?host=/run/fixture", "netbirdSelf": "fixture",
         "netbirdNixbotGroup": "nixbot", "netbirdApi": "https://overlay.example.invalid",
         "netbirdTokenFile": str(root / "token"), "openstackSecretName": "test",
         "openstackSecretFile": str(root / "secret"), "staticMachinesFile": str(root / "static"),
@@ -62,7 +62,12 @@ if "/setup-keys" in request:
 else:
     print('[{"name":"nixbot","id":"group"}]' if "/groups" in request else "[]")
 """,
-        "psql": "print('0|0')",
+        "psql": """
+import os
+assert os.environ["PGDATABASE"] == "test"
+assert os.environ["PGHOST"] == "/run/fixture"
+print("0|0")
+""",
         "timeout": "pass",
     }.items():
         exe = root / name

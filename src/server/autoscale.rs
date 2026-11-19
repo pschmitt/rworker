@@ -22,6 +22,22 @@ pub(super) struct Demand {
 
 impl Demand {
     pub fn read(database_url: &str) -> Result<Self, String> {
+        // libpq treats PGDATABASE as a literal name. Parse the local
+        // socket URI without putting a credential-bearing URL in argv.
+        let (database, socket) = database_url
+            .strip_prefix("postgresql:///")
+            .and_then(|url| url.split_once("?host="))
+            .filter(|(database, socket)| {
+                !database.is_empty()
+                    && database
+                        .bytes()
+                        .all(|b| b.is_ascii_alphanumeric() || b == b'_' || b == b'-')
+                    && socket.starts_with('/')
+                    && socket
+                        .bytes()
+                        .all(|b| b.is_ascii_alphanumeric() || b"/._-".contains(&b))
+            })
+            .ok_or("Expected a PostgreSQL local socket URI (postgresql:///DATABASE?host=/PATH)")?;
         let output = Command::new("psql")
             .args([
                 "--no-psqlrc",
@@ -32,7 +48,8 @@ impl Demand {
                 "--command",
                 DEMAND_SQL,
             ])
-            .env("PGDATABASE", database_url)
+            .env("PGDATABASE", database)
+            .env("PGHOST", socket)
             .stdin(Stdio::null())
             .stderr(Stdio::null())
             .output()
