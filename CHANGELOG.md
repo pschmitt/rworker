@@ -149,4 +149,5 @@ The Rust client and controller replace the original Bash client.
   `services.rworker.reaper.dryRun`.
 - Setting `reapProtectInUse` in the control settings requires a successful
   idle probe before deleting a worker, including at maximum lifetime.
-  Ownership and topic metadata do not affect the activity check.
+  The probe checks common build processes, Nix build users and one-minute
+  load. Idle shells and log followers do not block cleanup.

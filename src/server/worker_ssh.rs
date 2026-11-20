@@ -173,16 +173,42 @@ pub(super) fn routes(settings: &Value, name: &str) -> Result<Routes, String> {
     ))
 }
 
-pub(super) fn active(settings: &Value, ip: IpAddr, host_key: &str) -> Option<bool> {
-    let users = settings["busyUsers"]
-        .as_array()?
-        .iter()
-        .map(Value::as_str)
-        .collect::<Option<Vec<_>>>()?
-        .join(",");
-    let users = crate::proc::quote_words(&[users]);
+pub(super) fn activity(
+    settings: &Value,
+    name: &str,
+    host_key: &str,
+    workloads_only: bool,
+) -> Result<Option<bool>, String> {
+    let (preferred, overlays) = routes(settings, name)?;
+    let mut routes = preferred.into_iter();
+    let mut alternate = overlays
+        .values()
+        .filter_map(Value::as_str)
+        .filter_map(|ip| ip.parse::<IpAddr>().ok())
+        .filter(|ip| Some(*ip) != preferred);
+    let result = routes.find_map(|ip| active(settings, ip, host_key, workloads_only));
+    Ok(if workloads_only {
+        result.or_else(|| alternate.find_map(|ip| active(settings, ip, host_key, workloads_only)))
+    } else {
+        result
+    })
+}
+
+fn active(settings: &Value, ip: IpAddr, host_key: &str, workloads_only: bool) -> Option<bool> {
+    let process_filter = if workloads_only {
+        // pgrep matches Linux comm, which is limited to 15 bytes.
+        "-x 'nix|nix-build|nix-store|cargo.*|rustc|gcc.*|g\\+\\+.*|cc|cc1.*|c\\+\\+|clang.*|make|gmake|ninja|cmake|ld|ld\\.lld|mold|go|javac|gradle.*|meson|bazel.*|buck2|zig'".to_owned()
+    } else {
+        let users = settings["busyUsers"]
+            .as_array()?
+            .iter()
+            .map(Value::as_str)
+            .collect::<Option<Vec<_>>>()?
+            .join(",");
+        format!("-u {}", crate::proc::quote_words(&[users]))
+    };
     let command = format!(
-        "printf '%s %s %s\\n' \"$(pgrep -c -u {users} || true)\" \"$(pgrep -c -G nixbld || true)\" \"$(cut -d' ' -f1 /proc/loadavg)\""
+        "printf '%s %s %s\\n' \"$(pgrep -c {process_filter} || true)\" \"$(pgrep -c -G nixbld || true)\" \"$(cut -d' ' -f1 /proc/loadavg)\""
     );
     let output = match run(settings, ip, host_key, &command, None, 30) {
         Ok(output) if output.status.success() => output,

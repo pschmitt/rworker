@@ -74,9 +74,7 @@ pub(super) fn reap(cfg: &serde_json::Value, dry_run: bool) -> Result<(), String>
                 .and_then(Value::as_str)
                 .filter(|key| !key.is_empty());
             match key {
-                Some(key) => {
-                    worker_ssh::route(cfg, name)?.and_then(|ip| worker_ssh::active(cfg, ip, key))
-                }
+                Some(key) => worker_ssh::activity(cfg, name, key, protect_in_use)?,
                 None => None,
             }
         } else {
