@@ -13,45 +13,65 @@ pub(super) fn list(cfg: &Value) -> Result<Value, String> {
     let compute = OpenStack::from_settings(cfg)?;
     let netbird = NetBird::from_settings(cfg)?;
     let prefixes = [setting(cfg, "adhocPrefix")?, setting(cfg, "poolPrefix")?];
-    let list = compute.command(&["server", "list", "-f", "json", "-c", "ID", "-c", "Name"])?;
+    let (list, peers, devices) = std::thread::scope(|scope| {
+        let peers = scope.spawn(|| netbird.peers());
+        let devices = scope.spawn(|| tailscale_devices(cfg));
+        let list = compute.command(&[
+            "server",
+            "list",
+            "-f",
+            "json",
+            "-c",
+            "Name",
+            "-c",
+            "Status",
+            "-c",
+            "Properties",
+            "-c",
+            "Created At",
+            "-c",
+            "Task State",
+            "-c",
+            "Availability Zone",
+            "-c",
+            "Flavor",
+        ]);
+        let peers = peers.join().map_err(|_| "NetBird lookup thread failed")?;
+        let devices = devices
+            .join()
+            .map_err(|_| "Tailscale lookup thread failed")?;
+        Ok::<_, String>((list?, peers?, devices))
+    })?;
     let list: Vec<Value> =
         serde_json::from_slice(&list).map_err(|_| "Invalid OpenStack server listing")?;
-    let mut ids = BTreeMap::new();
-    for server in &list {
-        let name = setting(server, "Name")?;
-        if prefixes.iter().any(|prefix| name.starts_with(prefix)) {
-            ids.insert(name, setting(server, "ID")?);
-        }
-    }
-    let peers: HashMap<_, _> = netbird
-        .peers()?
+    let peers: HashMap<_, _> = peers
         .into_iter()
         .filter_map(|peer| Some((peer["name"].as_str()?.to_owned(), peer)))
         .collect();
-    let devices = if cfg["tailscale"].is_object() {
-        Tailscale::from_settings(&cfg["tailscale"])
-            .and_then(|mut client| client.devices())
-            .unwrap_or_else(|err| {
-                eprintln!("Tailscale device list: {err}");
-                HashMap::new()
-            })
-    } else {
-        HashMap::new()
-    };
+    let mut servers = BTreeMap::new();
+    for server in &list {
+        let name = setting(server, "Name")?;
+        if prefixes.iter().any(|prefix| name.starts_with(prefix)) {
+            servers.insert(name, server);
+        }
+    }
     let mut workers = Vec::new();
-    for (name, id) in ids {
-        let output = compute.command(&["server", "show", "-f", "json", "--", id])?;
-        let detail: Value =
-            serde_json::from_slice(&output).map_err(|_| "Invalid OpenStack server detail")?;
-        workers.push(info(
-            cfg,
-            name,
-            &detail,
-            peers.get(name),
-            devices.get(name),
-        )?);
+    for (name, server) in servers {
+        workers.push(info(cfg, name, server, peers.get(name), devices.get(name))?);
     }
     Ok(Value::Array(workers))
+}
+
+fn tailscale_devices(cfg: &Value) -> HashMap<String, Value> {
+    if !cfg["tailscale"].is_object() {
+        return HashMap::new();
+    }
+    Tailscale::from_settings(&cfg["tailscale"])
+        .and_then(|mut client| client.devices())
+        .unwrap_or_else(|err| {
+            eprintln!("Tailscale device list: {err}");
+            HashMap::new()
+        })
 }
 
 fn info(
@@ -61,7 +81,7 @@ fn info(
     peer: Option<&Value>,
     device: Option<&Value>,
 ) -> Result<Value, String> {
-    let mut meta = match &detail["properties"] {
+    let mut meta = match &detail["Properties"] {
         Value::Object(value) => value.clone(),
         Value::Null => Default::default(),
         _ => return Err("Invalid OpenStack server properties".into()),
@@ -99,10 +119,10 @@ fn info(
             ips.insert(overlay.into(), json!(ip));
         }
     }
-    let status = if detail["OS-EXT-STS:task_state"] == "deleting" {
+    let status = if detail["Task State"] == "deleting" {
         json!("DELETING")
     } else {
-        detail["status"].clone()
+        detail["Status"].clone()
     };
     let mut worker = json!({
         "name": name,
@@ -112,9 +132,9 @@ fn info(
             None => json!("unknown"),
         },
         "host_key": meta.get("host_key"),
-        "created_at": detail["created"],
+        "created_at": detail["Created At"],
         "status": status,
-        "flavor": detail["flavor"]["original_name"],
+        "flavor": detail.get("Flavor"),
         "profile": meta.get("worker_profile").cloned().unwrap_or_else(|| json!("standard")),
         "owner": meta.get("owner"),
         "last_active": number("last_active").map(|value| value as i64),
@@ -128,7 +148,7 @@ fn info(
         "ips": ips,
         "connected": peer.is_some_and(|p| p["connected"].as_bool() == Some(true))
             || device.is_some_and(|d| d["connectedToControl"].as_bool() == Some(true)),
-        "availability_zone": detail["OS-EXT-AZ:availability_zone"],
+        "availability_zone": detail["Availability Zone"],
     });
     for key in CREATOR_KEYS {
         worker[key] = meta.get(key).cloned().unwrap_or_default();

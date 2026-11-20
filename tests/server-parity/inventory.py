@@ -36,9 +36,8 @@ def compare(oracle, binary, root):
 import json, os, sys
 operation = sys.argv[2]
 if operation == "list":
+    assert "Properties" in sys.argv and "--long" not in sys.argv
     print(os.environ["FAKE_LIST"])
-elif operation == "show":
-    print(json.loads(os.environ["FAKE_DETAILS"])[sys.argv[-1]])
 else:
     raise AssertionError(operation)
 """,
@@ -92,22 +91,19 @@ else:
         expected = io.StringIO()
         with contextlib.redirect_stdout(expected):
             legacy["cmd_ls"](settings, cloud, None)
-        details = {
-            server.name: json.dumps({
-                "properties": server.metadata, "status": server.status,
-                "created": server.created_at, "flavor": server.flavor,
-                "OS-EXT-STS:task_state": server.task_state,
-                "OS-EXT-AZ:availability_zone": server.availability_zone,
-            })
+        details = [
+            {"Name": server.name, "Properties": server.metadata, "Status": server.status,
+             "Created At": server.created_at, "Flavor": server.flavor["original_name"],
+             "Task State": server.task_state, "Availability Zone": server.availability_zone}
             for server in servers
-        }
+        ]
         actual = subprocess.run(
             [str(binary), "server", str(root / "settings"), "ls"],
             capture_output=True, text=True, timeout=10,
             env={
                 **os.environ, "PATH": f"{root}:{os.environ['PATH']}",
-                "FAKE_LIST": json.dumps([{"ID": s.name, "Name": s.name} for s in servers]),
-                "FAKE_DETAILS": json.dumps(details), "FAKE_PEERS": json.dumps(peers),
+                "FAKE_LIST": json.dumps(details),
+                "FAKE_PEERS": json.dumps(peers),
                 "FAKE_DEVICES": json.dumps({"devices": devices}),
             },
         )
