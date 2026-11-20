@@ -56,16 +56,16 @@ pub(super) fn create(
     };
     for (total, used, needed) in [
         (
-            "maxTotalCores",
-            "totalCoresUsed",
+            "max_total_cores",
+            "total_cores_used",
             flavor["vcpus"].as_i64().ok_or("Invalid flavor cores")?,
         ),
         (
-            "maxTotalRAMSize",
-            "totalRAMUsed",
+            "max_total_ram_size",
+            "total_ram_used",
             flavor["ram"].as_i64().ok_or("Invalid flavor RAM")?,
         ),
-        ("maxTotalInstances", "totalInstancesUsed", 1),
+        ("max_total_instances", "total_instances_used", 1),
     ] {
         if limit(total)?.saturating_sub(limit(used)?) < needed {
             return Err(format!("no quota left for a {} worker", request.flavor));

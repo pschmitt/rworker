@@ -45,8 +45,8 @@ match args[:2]:
     case ["flavor", "show"]: data = {"id": "flavor", "vcpus": 1, "ram": 512}
     case ["limits", "show"]:
         data = [{"Name": n, "Value": v} for n, v in dict(
-            maxTotalCores=10, totalCoresUsed=0, maxTotalRAMSize=4096,
-            totalRAMUsed=0, maxTotalInstances=10, totalInstancesUsed=0
+            max_total_cores=10, total_cores_used=0, max_total_ram_size=4096,
+            total_ram_used=0, max_total_instances=10, total_instances_used=0
         ).items()]
     case ["image", "list"]: data = [{"ID": "image"}]
     case ["image", "show"]: data = {"name": "image", "created_at": "2026-01-01"}

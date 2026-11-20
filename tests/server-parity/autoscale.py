@@ -42,8 +42,8 @@ match sys.argv[1:3]:
     case ["flavor", "show"]: print('{"id":"flavor","vcpus":1,"ram":512}')
     case ["limits", "show"]:
         print(json.dumps([{"Name": key, "Value": value} for key, value in dict(
-            maxTotalCores=10, totalCoresUsed=0, maxTotalRAMSize=4096,
-            totalRAMUsed=0, maxTotalInstances=10, totalInstancesUsed=0,
+            max_total_cores=10, total_cores_used=0, max_total_ram_size=4096,
+            total_ram_used=0, max_total_instances=10, total_instances_used=0,
         ).items()]))
     case ["image", "list"]: print('[{"ID":"image"}]')
     case ["image", "show"]: print('{"name":"image","created_at":"2026-01-01"}')
