@@ -1,5 +1,6 @@
 """Exercise the shared inventory refresher and its HTTP read API with fake providers."""
 from concurrent.futures import ThreadPoolExecutor
+import base64
 import json
 import os
 from pathlib import Path
@@ -10,14 +11,15 @@ import tempfile
 import time
 
 
-def verify_log_stream(address, origin):
+def verify_log_stream(address, origin, job, expected_opcode, expected):
+    nonce = base64.b64encode(os.urandom(16)).decode()
     with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as connection:
         connection.settimeout(5)
         connection.connect(str(address))
         connection.sendall((
-            "GET /v1/ui/follow/raw-logs/example-worker/compile HTTP/1.1\r\n"
+            f"GET /v1/ui/follow/raw-logs/example-worker/{job} HTTP/1.1\r\n"
             "Host: localhost\r\nConnection: Upgrade\r\nUpgrade: websocket\r\n"
-            "Sec-WebSocket-Version: 13\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n"
+            f"Sec-WebSocket-Version: 13\r\nSec-WebSocket-Key: {nonce}\r\n"
             f"Origin: {origin}\r\nRemote-User: operator\r\n\r\n"
         ).encode())
         with connection.makefile("rb") as response:
@@ -25,13 +27,16 @@ def verify_log_stream(address, origin):
             while (line := response.readline()) != b"\r\n":
                 assert line
             received = b""
-            while b"fixture log second" not in received:
+            while len(received) < len(expected):
                 opcode, size = response.read(2)
                 assert size < 126
                 payload = response.read(size)
-                if opcode == 0x82:
+                if opcode == expected_opcode:
                     received += payload
-            assert received == b"fixture log first\nfixture log second\n"
+            if expected_opcode == 0x81:
+                assert expected.decode() in json.loads(received)["snapshot"]
+            else:
+                assert received == expected
 
 
 def verify_inventory_stream(binary, address, env, workers):
@@ -71,7 +76,8 @@ def verify(binary, root, web_enabled):
     fixture = json.dumps([{"Name": "example-worker", "Status": "ACTIVE", "Properties": {}}])
     for name, program in {
         "curl": "print('[]')",
-        "ssh": "import time\nprint('fixture log first', flush=True)\n"
+        "ssh": "import sys, time\nif 'archive-only' in sys.argv[-1]: sys.exit(126)\n"
+               "print('fixture log first', flush=True)\n"
                "time.sleep(0.1)\nprint('fixture log second', flush=True)",
         "openstack": f"with open({str(calls)!r}, 'a') as log:\n"
                      f"    print('read', file=log)\n"
@@ -91,6 +97,7 @@ def verify(binary, root, web_enabled):
     archive = root / "rworker" / "job-logs" / "example-worker"
     archive.mkdir(parents=True)
     (archive / "compile").write_text("cached build")
+    (archive / "archive-only").write_text("fixture cached log\n")
     (root / "rworker" / "example-worker.json").write_text(json.dumps({
         "ip": "127.0.0.1", "ips": {"netbird": "127.0.0.1"},
         "host_key": "fixture-host-key", "user": "agent",
@@ -156,8 +163,12 @@ def verify(binary, root, web_enabled):
                     assert request("/v1/ui/session", "-H", "Remote-User: visitor")[0].startswith("HTTP/1.1 403")
                     assert request("/v1/ui/session", "-H", "Remote-User: operator")[0].startswith("HTTP/1.1 200")
                     jobs = json.loads(request("/v1/ui/jobs", "-H", "Remote-User: operator")[1])["data"]
-                    assert jobs == [{"worker": "example-worker", "job": "compile", "state": "archived"}]
-                    verify_log_stream(socket, origin)
+                    assert jobs == [
+                        {"worker": "example-worker", "job": job, "state": "archived"}
+                        for job in ("archive-only", "compile")
+                    ]
+                    verify_log_stream(socket, origin, "compile", 0x82, b"fixture log first\nfixture log second\n")
+                    verify_log_stream(socket, origin, "archive-only", 0x81, b"fixture cached log")
                     assert json.loads(request("/v1/ui/jobs/example-worker", "-H", "Remote-User: operator")[1])["data"] == jobs
                     auth = ("-H", f"Authorization: Bearer {fixture_token}")
                     assert request("/v1/ui/unknown", *auth)[0].startswith("HTTP/1.1 404")

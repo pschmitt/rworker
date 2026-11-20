@@ -391,9 +391,9 @@ in
             }
             //
               lib.optionalAttrs
-                (cfg.web.enable && cfg.web.operator == cfg.logCache.operator && cfg.logCache.identityFile != null)
+                (cfg.web.enable && cfg.web.operator == cfg.logCache.operator && cfg.logCache.workerUser != null)
                 {
-                  RWORKER_WEB_LOG_IDENTITY = cfg.logCache.identityFile;
+                  RWORKER_USER = cfg.logCache.workerUser;
                 }
             // lib.optionalAttrs (cfg.web.enable && cfg.web.identityFile != null) {
               RWORKER_IDENTITY_FILE = cfg.web.identityFile;

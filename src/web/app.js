@@ -434,9 +434,14 @@ function followLogs(path, content, indicator) {
   socket.onmessage = ({data}) => {
     if (logSocket !== socket) return;
     const atEnd = !buffer || content.scrollHeight - content.clientHeight - content.scrollTop < 8;
-    buffer = (buffer + decoder.decode(data, {stream: true})).slice(-262144);
+    if (typeof data === "string") {
+      buffer = JSON.parse(data).snapshot;
+      indicator.textContent = "Cached";
+    } else {
+      buffer = (buffer + decoder.decode(data, {stream: true})).slice(-262144);
+      indicator.textContent = "Live";
+    }
     content.textContent = stripAnsi(buffer);
-    indicator.textContent = "Live";
     if (atEnd) content.scrollTop = content.scrollHeight;
   };
   socket.onclose = () => {

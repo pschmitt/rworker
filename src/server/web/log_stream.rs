@@ -1,4 +1,4 @@
-use super::{Failure, authorized, failure, same_origin, worker_command};
+use super::{Failure, authorized, failure, run, same_origin, worker_command};
 use axum::Router;
 use axum::body::Bytes;
 use axum::extract::Path;
@@ -58,6 +58,15 @@ fn follow(
         Ok(args) => args,
         Err(error) => return failure(error),
     };
+    let archived_view = if view == "logs" {
+        "archived-logs"
+    } else {
+        "raw-archive"
+    };
+    let archive = match worker_command(archived_view, worker, job) {
+        Ok((args, _)) => args,
+        Err(error) => return failure(error),
+    };
     let Ok(permit) = STREAMS.try_acquire() else {
         return failure((StatusCode::SERVICE_UNAVAILABLE, "Too many log streams."));
     };
@@ -69,10 +78,8 @@ fn follow(
             if check.is_err() && !authenticate(&mut socket).await {
                 return;
             }
-            if matches!(stream(&mut socket, &args, false).await, End::NoOutput)
-                && std::env::var_os("RWORKER_WEB_LOG_IDENTITY").is_some()
-            {
-                stream(&mut socket, &args, true).await;
+            if matches!(stream(&mut socket, &args).await, End::NoOutput) {
+                cached(&mut socket, archive).await;
             }
         })
         .into_response()
@@ -117,7 +124,7 @@ impl Drop for LogProcess {
     }
 }
 
-fn spawn(args: &[String], collector: bool) -> std::io::Result<LogProcess> {
+fn spawn(args: &[String]) -> std::io::Result<LogProcess> {
     use std::os::unix::process::CommandExt;
 
     let mut cmd = Command::new(std::env::current_exe()?);
@@ -127,20 +134,14 @@ fn spawn(args: &[String], collector: bool) -> std::io::Result<LogProcess> {
         .stdout(Stdio::piped())
         .stderr(Stdio::null())
         .process_group(0);
-    if collector {
-        cmd.env_remove("RWORKER_IDENTITY_FILE");
-        if let Some(identity) = std::env::var_os("RWORKER_WEB_LOG_IDENTITY") {
-            cmd.env("RWORKER_LOG_CACHE_IDENTITY", identity);
-        }
-    }
     tokio::process::Command::from(cmd)
         .kill_on_drop(true)
         .spawn()
         .map(LogProcess)
 }
 
-async fn stream(socket: &mut WebSocket, args: &[String], collector: bool) -> End {
-    let Ok(mut child) = spawn(args, collector) else {
+async fn stream(socket: &mut WebSocket, args: &[String]) -> End {
+    let Ok(mut child) = spawn(args) else {
         return End::NoOutput;
     };
     let Some(mut stdout) = child.0.stdout.take() else {
@@ -173,6 +174,41 @@ async fn stream(socket: &mut WebSocket, args: &[String], collector: bool) -> End
             Ok(Ok(()))
         ) {
             return End::Closed;
+        }
+    }
+}
+
+async fn cached(socket: &mut WebSocket, args: Vec<String>) {
+    let mut tick = tokio::time::interval(Duration::from_secs(5));
+    let mut previous = String::new();
+    loop {
+        tokio::select! {
+            _ = tick.tick() => {
+                let snapshot = run(args.clone(), 4).await.ok().filter(|text| text != &previous);
+                let frame = if let Some(snapshot) = snapshot {
+                    previous = snapshot;
+                    let mut start = previous.len().saturating_sub(262_144);
+                    while !previous.is_char_boundary(start) {
+                        start += 1;
+                    }
+                    let data = serde_json::json!({"snapshot": &previous[start..]}).to_string();
+                    Message::Text(data.into())
+                } else {
+                    Message::Ping(Bytes::new())
+                };
+                if !matches!(
+                    timeout(Duration::from_secs(10), socket.send(frame)).await,
+                    Ok(Ok(()))
+                ) {
+                    return;
+                }
+            }
+            message = socket.recv() => {
+                match message {
+                    Some(Ok(Message::Ping(_) | Message::Pong(_))) => {}
+                    _ => return,
+                }
+            }
         }
     }
 }

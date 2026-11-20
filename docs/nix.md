@@ -134,8 +134,9 @@ actions run with the account's existing rworker permissions.
 
 Open the configured HTTPS hostname in a browser with its client certificate,
 then enter the operator token. The console provides workers and history, job
-management, profiles, events, inspection, process lists, and log snapshots with
-follow and optional redaction. It can copy an SSH command or a Nix builder entry.
+management, profiles, events, inspection, process lists, and optionally redacted
+logs. Follow streams over a WebSocket and sends updated archive snapshots when
+the controller cannot follow a worker directly. It can copy an SSH command or a Nix builder entry.
 Use the CLI for local file transfers, image workflows, interactive SSH, and
 one-shot commands that need terminal I/O.
 
