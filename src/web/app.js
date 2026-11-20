@@ -8,7 +8,7 @@ const views = {
   profiles: ["Profiles", "See the resources available for new workers."],
 };
 const state = {
-  token: "", authenticated: false, view: "workers", rows: {}, selected: null, job: null, tab: "logs",
+  token: "", authenticated: false, view: "workers", rows: {}, sort: {}, selected: null, job: null, tab: "logs",
   showRetired: false, showFinished: false, redact: true, follow: true, limit: 200,
 };
 let stream;
@@ -184,8 +184,12 @@ function duration(seconds) {
   return Math.floor(hours / 24) + "d" + (hours % 24) + "h";
 }
 
+function timestamp(value) {
+  return typeof value === "number" ? value : Date.parse(value) / 1000;
+}
+
 function workerAge(created, now) {
-  const seconds = typeof created === "number" ? created : Date.parse(created) / 1000;
+  const seconds = timestamp(created);
   return Number.isFinite(seconds) ? duration(now - seconds) : "—";
 }
 
@@ -216,12 +220,50 @@ function clock(value) {
   return Number.isNaN(date.valueOf()) ? "—" : date.toLocaleString();
 }
 
-function table(columns, rows) {
+const sortFields = {
+  workers: [
+    (row) => row.name, (row) => row.retired ? "Retired" : row.status, (row) => row.agent,
+    (row) => row.topic,
+    (row, now) => row.kind === "pool" && row.pool_state ? null :
+      row.grace_until > now ? Number(row.grace_until) : Number(row.expires_at) || null,
+    (row) => -timestamp(row.created_at),
+  ],
+  jobs: [(row) => row.job, (row) => row.state],
+  events: [(row) => row.kind, (row) => row.target, (row) => timestamp(row.timestamp)],
+  profiles: [(row) => row.name, (row) => row.flavor, (row) => Number(row.disk) || null,
+    (row) => (row.image_tags || []).join(", ")],
+};
+const sortLabels = new Intl.Collator(undefined, { numeric: true, sensitivity: "base" });
+
+function compareSortValues(left, right, descending) {
+  const empty = (value) => value == null || value === "" || Number.isNaN(value);
+  if (empty(left)) return empty(right) ? 0 : 1;
+  if (empty(right)) return -1;
+  const order = typeof left === "number" && typeof right === "number" ?
+    left - right : sortLabels.compare(left, right);
+  return descending ? -order : order;
+}
+
+function table(columns, rows, view) {
   const node = element("table");
   const head = node.createTHead().insertRow();
-  for (const [label, optional] of columns) {
-    const cell = element("th", label, optional ? "optional" : "");
+  for (const [index, [label, optional]] of columns.entries()) {
+    const cell = element("th", view ? null : label, optional ? "optional" : "");
     cell.scope = "col";
+    if (view) {
+      const sort = state.sort[view];
+      const active = sort?.index === index;
+      const heading = button(label, () => {
+        state.sort[view] = { index, descending: active && !sort.descending };
+        render();
+      }, "sort-heading");
+      heading.dataset.sort = String(index);
+      const arrow = element("span", active ? (sort.descending ? "↓" : "↑") : "↕", "sort-arrow");
+      arrow.setAttribute("aria-hidden", "true");
+      heading.append(arrow);
+      cell.append(heading);
+      if (active) cell.setAttribute("aria-sort", sort.descending ? "descending" : "ascending");
+    }
     head.append(cell);
   }
   const tbody = node.createTBody();
@@ -286,6 +328,12 @@ function render() {
     visible = visible.filter((row) => row.state !== "archived" && !String(row.state).startsWith("exit "));
   }
   if (state.view === "events") visible = [...visible].reverse();
+  const now = Date.now() / 1000;
+  const sort = state.sort[state.view];
+  if (sort) {
+    const value = sortFields[state.view][sort.index];
+    visible.sort((left, right) => compareSortValues(value(left, now), value(right, now), sort.descending));
+  }
   const count = visible.length;
   visible = visible.slice(0, state.limit);
 
@@ -301,17 +349,13 @@ function render() {
   let rows;
   switch (state.view) {
     case "workers": {
-      const now = Date.now() / 1000;
-      columns = [["Name"], ["Status"], ["Agent", true], ["Topic", true], ["Expires"], ["Age", true]];
-      rows = visible.map((row) => {
-        const name = named(row.name, row.topic, () => selected(row));
-        name.className = "worker-name";
-        return {
-          selected: state.selected?.name === row.name,
-          cells: [name, badge(row.retired ? "Retired" : row.status), agentLabel(row.agent),
-            row.topic || "—", workerExpiry(row, now), element("span", workerAge(row.created_at, now), "worker-age")],
-        };
-      });
+      columns = [["Name"], ["Status"], ["Agent"], ["Topic"], ["Expires"], ["Age"]];
+      rows = visible.map((row) => ({
+        selected: state.selected?.name === row.name,
+        cells: [named(row.name, null, () => selected(row)), badge(row.retired ? "Retired" : row.status),
+          agentLabel(row.agent), row.topic || "—", workerExpiry(row, now),
+          element("span", workerAge(row.created_at, now), "worker-age")],
+      }));
       break;
     }
     case "jobs":
@@ -322,19 +366,27 @@ function render() {
       }));
       break;
     case "events":
-      columns = [["Event"], ["Target"], ["Time", true]];
+      columns = [["Event"], ["Target"], ["Time"]];
       rows = visible.map((row) => ({
         cells: [eventLabel(row), element("span", row.target, "event-tone info"), clock(row.timestamp)],
       }));
       break;
     default:
-      columns = [["Profile"], ["Flavor"], ["Disk"], ["Image tags", true]];
+      columns = [["Profile"], ["Flavor"], ["Disk"], ["Image tags"]];
       rows = visible.map((row) => ({
         cells: [named(row.name, row.default ? "Default" : "", () => form("create", null, row.name)),
           row.flavor, row.disk ? row.disk + " GiB" : "—", (row.image_tags || []).join(", ") || "—"],
       }));
   }
-  results.replaceChildren(table(columns, rows));
+  const previous = results.querySelector(`[data-view-table="${state.view}"]`);
+  const scrollLeft = previous?.scrollLeft ?? 0;
+  const focusedSort = previous?.contains(document.activeElement) ? document.activeElement.dataset.sort : undefined;
+  const scroller = element("div", null, state.view === "workers" ? "table-scroll worker-table" : "table-scroll");
+  scroller.dataset.viewTable = state.view;
+  scroller.append(table(columns, rows, state.view));
+  results.replaceChildren(scroller);
+  scroller.scrollLeft = scrollLeft;
+  if (focusedSort !== undefined) scroller.querySelector(`[data-sort="${focusedSort}"]`)?.focus({preventScroll: true});
   if (count > visible.length) {
     const more = element("div", null, "more");
     more.append(button("Show more", () => { state.limit += 200; render(); }));

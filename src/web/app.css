@@ -179,6 +179,26 @@ dialog footer { justify-content: end; border-top: 1px solid var(--line); }
 .worker-expiry.urgent { color: var(--red); }
 .worker-expiry.soon { color: var(--amber); }
 .worker-expiry.idle { color: var(--muted); }
-@media (min-width: 701px) {
-  .worker-name .secondary { display: none; }
+.table-scroll { overflow-x: auto; }
+.sort-heading {
+  display: inline-flex;
+  align-items: center;
+  gap: .35em;
+  padding: 0;
+  min-height: 28px;
+  background: transparent;
+  border: 0;
+  font-weight: inherit;
+  white-space: nowrap;
+}
+.sort-heading:hover, th[aria-sort] .sort-heading { color: var(--ink); }
+.sort-arrow { color: var(--muted); }
+th[aria-sort] .sort-arrow { color: var(--cyan); }
+@media (max-width: 700px) {
+  .worker-table table { min-width: 38rem; }
+  .worker-table tr > :first-child { position: sticky; left: 0; z-index: 1; }
+  .worker-table td:first-child { background: var(--paper); box-shadow: 1px 0 var(--line); }
+  .worker-table tr.selected td:first-child { background: var(--accent-soft); }
+  .worker-table td:nth-child(4) { min-width: 9rem; }
+  .sort-heading { min-height: 32px; }
 }
