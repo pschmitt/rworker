@@ -134,26 +134,26 @@ pub fn cmd_logs(ctx: &Ctx, args: &[String]) -> R {
     }
     // Options may come before or after WORKER [JOB]: `logs -f WORKER` too.
     let cache_lines = match opts.as_slice() {
-        [] => Some("200"),
-        [flag, count] if flag == "--lines" && count.parse::<usize>().is_ok() => {
-            Some(count.as_str())
-        }
+        [] => Some(200),
+        [flag, count] if flag == "--lines" => count.parse::<usize>().ok(),
         _ => None,
     };
     if cached && (!(1..=2).contains(&positional.len()) || cache_lines.is_none()) {
         ctx.err("--cached requires WORKER [JOB] and optionally --lines N");
         return Err(Fail(2));
     }
-    if (cached || std::env::var_os("RWORKER_LOG_CACHE_READ").is_some())
-        && (1..=2).contains(&positional.len())
-        && let Some(lines) = cache_lines
-    {
-        let result = super::log_cache::client_read(
+    let cache_lines = cache_lines.filter(|_| (1..=2).contains(&positional.len()));
+    let read_cache = |lines: usize| {
+        super::log_cache::client_read(
             ctx,
             &positional[0],
             positional.get(1).map_or("", String::as_str),
-            lines,
-        );
+            &lines.to_string(),
+        )
+    };
+    let prefer_cache = cached || std::env::var_os("RWORKER_LOG_CACHE_READ").is_some();
+    if let Some(lines) = cache_lines.filter(|_| prefer_cache) {
+        let result = read_cache(lines);
         if result.is_ok() {
             return result;
         }
@@ -168,6 +168,22 @@ pub fn cmd_logs(ctx: &Ctx, args: &[String]) -> R {
         let mut all = vec!["logs".to_string(), positional[0].clone()];
         all.extend(positional[1..].iter().cloned());
         all.extend(opts);
+        if let Some(lines) = cache_lines.filter(|_| !prefer_cache) {
+            let read = || read_cache(lines);
+            match ctx.muted(|| jobs_command(ctx, &all)) {
+                Ok(mut cmd) => {
+                    let result = proc::run_with_input(ctx, &mut cmd, JOBS_SH.as_bytes())
+                        .and_then(crate::ctx::status);
+                    return if result.is_err() && ctx.muted(read).is_ok() {
+                        Ok(())
+                    } else {
+                        result
+                    };
+                }
+                Err(_) if ctx.muted(read).is_ok() => return Ok(()),
+                Err(_) => {}
+            }
+        }
         return jobs_remote(ctx, &all);
     }
     let mut lines = "200".to_string();

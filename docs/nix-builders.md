@@ -118,7 +118,7 @@ A warm build from another machine leaves the original owner's name in place.
 The agent is displayed as `nix build`.
 
 Use `rworker ls --all` (also `-A` or `--history`) or press `h` in the TUI
-to include retired workers. Use `rworker logs WORKER --cached` to read saved
+to include retired workers. Use `rworker logs WORKER` to read saved
 build output. Pass a derivation log name printed in that output to read just
 that log. The gateway collects completed logs while the worker is idle and
 before deleting the lease. Each snapshot reads up to 32 recent derivation logs,

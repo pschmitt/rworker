@@ -25,6 +25,7 @@ Actions, flags, output, JSON and exit statuses are the same; see
   Record the initiating machine, preserve retired builders in history and archive
   their Nix derivation logs.
 - Include retired workers in the machine list with `--all`, `-A` or `--history`.
+- Fall back to archived worker logs when a live log snapshot is unavailable.
 
 - Store and display the OpenStack image name and ID in worker inspection.
 
