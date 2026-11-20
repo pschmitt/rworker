@@ -16,6 +16,7 @@
   # OpenSSH connection sharing needs a Unix socket; Android's translated
   # app-private paths are too long for one, so TermuxPP turns it off.
   sshControlMaster ? true,
+  web ? true,
 }:
 let
   cargoToml = lib.importTOML ../Cargo.toml;
@@ -88,6 +89,7 @@ let
     common
     // {
       pname = "rworker-unwrapped";
+      cargoExtraArgs = common.cargoExtraArgs + lib.optionalString (!web) " --no-default-features";
       cargoArtifacts = deps;
       nativeBuildInputs = [ installShellFiles ];
       # The unit tests run here, reusing the built dependencies.

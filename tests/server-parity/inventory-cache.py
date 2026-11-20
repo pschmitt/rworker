@@ -9,7 +9,7 @@ import tempfile
 import time
 
 
-def verify(binary, root):
+def verify(binary, root, web_enabled):
     credentials = root / "credentials.json"
     credentials.write_text(json.dumps({"fake": {"data": dict.fromkeys(
         ["auth_url", "region", "application_credential_id", "application_credential_secret"], "fake"
@@ -91,16 +91,21 @@ def verify(binary, root):
                 assert conditional.startswith("HTTP/1.1 304"), conditional
                 assert json.loads(request("/v1/workers/example-worker")[1]) == workers[0]
                 assert request("/v1/workers/other")[0].startswith("HTTP/1.1 404")
-                headers, body = request("/")
-                assert headers.startswith("HTTP/1.1 200") and "content-security-policy:" in headers
-                assert "/assets/app.js" in body
-                assert request("/assets/app.js")[0].startswith("HTTP/1.1 200")
-                assert request("/v1/ui/events")[0].startswith("HTTP/1.1 401")
-                auth = ("-H", f"Authorization: Bearer {fixture_token}")
-                assert request("/v1/ui/unknown", *auth)[0].startswith("HTTP/1.1 404")
-                action = (*auth, "-H", "Content-Type: application/json", "--data", '{"action":"unknown"}')
-                assert request("/v1/ui/action", *action)[0].startswith("HTTP/1.1 403")
-                assert request("/v1/ui/action", *action, "-H", f"Origin: {origin}")[0].startswith("HTTP/1.1 400")
+                if web_enabled:
+                    headers, body = request("/")
+                    assert headers.startswith("HTTP/1.1 200") and "content-security-policy:" in headers
+                    assert "/assets/app.js" in body
+                    assert request("/assets/app.js")[0].startswith("HTTP/1.1 200")
+                    assert request("/v1/ui/events")[0].startswith("HTTP/1.1 401")
+                    auth = ("-H", f"Authorization: Bearer {fixture_token}")
+                    assert request("/v1/ui/unknown", *auth)[0].startswith("HTTP/1.1 404")
+                    action = (*auth, "-H", "Content-Type: application/json", "--data", '{"action":"unknown"}')
+                    assert request("/v1/ui/action", *action)[0].startswith("HTTP/1.1 403")
+                    assert request("/v1/ui/action", *action, "-H", f"Origin: {origin}")[0].startswith("HTTP/1.1 400")
+                else:
+                    assert request("/")[0].startswith("HTTP/1.1 404")
+                    assert request("/assets/app.js")[0].startswith("HTTP/1.1 404")
+                    assert request("/v1/ui/events")[0].startswith("HTTP/1.1 404")
                 cache.terminate()
                 cache.wait(timeout=5)
                 expired = time.time() - 31
@@ -114,5 +119,5 @@ def verify(binary, root):
 
 if __name__ == "__main__":
     with tempfile.TemporaryDirectory(prefix="rworker-inventory-") as directory:
-        verify(Path(sys.argv[1]).resolve(strict=True), Path(directory))
+        verify(Path(sys.argv[1]).resolve(strict=True), Path(directory), "--without-web" not in sys.argv[2:])
     print("Shared inventory refresh and HTTP status, ETag and age checks passed")

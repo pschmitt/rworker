@@ -98,6 +98,10 @@ See [On-demand Nix builders](nix-builders.md) for gateway and client options.
 
 ## Web console
 
+Standard builds include the console through the default Cargo feature `web`.
+To omit it, build with `cargo build --no-default-features` or use the Nix package
+override `pkgs.rworker.override { web = false; }`.
+
 Enable the console on a controller that already has `services.rworker.api.https`
 configured. The browser uses the same HTTPS listener and client certificate as
 the inventory API. The operator console also requires a separate access token.

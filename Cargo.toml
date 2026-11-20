@@ -8,6 +8,10 @@ license = "GPL-3.0-only"
 repository = "https://github.com/pschmitt/rworker"
 readme = "README.md"
 
+[features]
+default = ["web"]
+web = []
+
 [dependencies]
 axum = { version = "0.8", default-features = false, features = ["http1", "tokio"] }
 futures-util = { version = "0.3", default-features = false, features = ["std"] }

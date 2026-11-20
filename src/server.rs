@@ -16,6 +16,7 @@ mod selection;
 pub(crate) mod socket;
 mod tailscale;
 mod up;
+#[cfg(feature = "web")]
 mod web;
 mod worker_ssh;
 

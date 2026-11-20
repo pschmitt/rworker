@@ -30,8 +30,9 @@ pub(super) fn serve(dir: PathBuf, socket: &str) -> io::Result<()> {
                 .route("/v1/workers", get(workers))
                 .route("/v1/workers/events/stream", get(events))
                 .route("/v1/workers/{name}", get(worker));
-            let app = super::web::routes(app).with_state(dir);
-            axum::serve(listener, app).await
+            #[cfg(feature = "web")]
+            let app = super::web::routes(app);
+            axum::serve(listener, app.with_state(dir)).await
         })
 }
 
