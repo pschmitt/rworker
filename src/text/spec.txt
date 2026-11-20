@@ -64,7 +64,8 @@ flag up --topic=topic what the worker is for (none unless given)
 flag up --profile=profile worker profile (standard, browser-daemon or large-builder)
 flag exec --topic=topic what the worker is for (none unless given)
 flag exec --profile=profile worker profile (standard, browser-daemon or large-builder)
-flag ls -o=format output format (wide adds PID, flavor, IP and cwd)
+flag ls -o=format output format (json or wide)
+flag ls --wide add owner, profile and IP addresses
 flag inspect --boot also show the worker's own boot metadata (over SSH)
 flag exec --ttl=duration lifetime of the worker
 flag exec --flavor=flavor OpenStack flavor

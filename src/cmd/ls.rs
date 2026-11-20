@@ -74,6 +74,7 @@ pub fn cmd_ls(ctx: &Ctx, args: &[String]) -> R {
                 }
             }
             "--json" | "-ojson" => json = true,
+            "--wide" | "-owide" => ctx.wide.set(true),
             "-w" | "--watch" => watch = true,
             "--fresh" => fresh = true,
             "--topic" | "--agent" | "--agent-id" => {

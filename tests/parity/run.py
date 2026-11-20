@@ -435,6 +435,32 @@ def compare_optimized_calls(name, reference, actual):
     )
 
 
+def compare_ls_columns(output, legacy, wide):
+    """Compare table values in the new display order without alignment padding."""
+    def row(match):
+        line = re.sub(r"\x1b\[[0-9;]*[mK]", "", match[0]).strip()
+        fields = re.split(r" {2,}", line)
+        if wide:
+            # The fixture with no IP has an empty column in both renderers.
+            if legacy and len(fields) == 12:
+                fields.insert(11, "")
+            elif not legacy and len(fields) == 8:
+                fields.append("")
+        if legacy:
+            if len(fields) != (13 if wide else 9):
+                return match[0]
+            name, _, profile, status, owner, agent, topic, expires, age, *extra = fields
+            agent = re.sub(r" \(\d+\)$", "", agent) if wide else agent
+            fields = [name, status, agent, topic, expires, age]
+            if wide:
+                fields.extend([owner, profile, extra[2]])
+        return "\t".join(fields)
+    return re.sub(
+        r"(?m)^(?=[^\r\n]*(?:NAME|adhoc-[a-f0-9]+|pool-[0-9]+)(?:\x1b\[0m)? {2,})[^\r\n]+",
+        row, output,
+    )
+
+
 def main():
     rust = sys.argv[1]
     only = sys.argv[2] if len(sys.argv) > 2 else ""
@@ -444,12 +470,10 @@ def main():
     differences = accepted = 0
     for name, args, _ in selected:
         a, b = bash[name], ours[name]
-        if args == ["ls"] or (args[:1] == ["ls"] and not {"--json", "-j", "json"}.intersection(args)):
-            # Drop the legacy display column while retaining alignment and every other field.
-            a["stdout"] = re.sub(
-                r"(?m)^([^\n]*?(?:NAME|adhoc-[a-f0-9]+|pool-[0-9]+)(?:\x1b\[0m)? {2,})(?:KIND|adhoc|pool) {2,}",
-                r"\1", a["stdout"],
-            )
+        if args[:1] == ["ls"] and not {"--json", "-j", "json"}.intersection(args):
+            wide = "wide" in args
+            a["stdout"] = compare_ls_columns(a["stdout"], legacy=True, wide=wide)
+            b["stdout"] = compare_ls_columns(b["stdout"], legacy=False, wide=wide)
         if name == "logs-follow":
             # The fake follower's shell may report the killed test sleep.
             for result in (a, b):
@@ -460,6 +484,15 @@ def main():
                 a[stream] = a[stream].replace(
                     "List all workers: ad-hoc ones (KIND adhoc) and nixbot's pool (KIND pool),",
                     "List ad-hoc workers and nixbot's pool workers,",
+                )
+                a[stream] = a[stream].replace(
+                    "with status, owner, creating agent, topic, time to expiry and age.",
+                    "with status, creating agent, topic, time to expiry and age.",
+                )
+                b[stream] = b[stream].replace(" | \x1b[36m--wide\x1b[0m", "")
+                b[stream] = b[stream].replace(
+                    "  \x1b[36m--wide, -o\x1b[0m wide\n                 add the owner, profile and \x1b[33mIP\x1b[0m addresses",
+                    "  \x1b[36m-o\x1b[0m wide        add the agent id, flavor, NetBird IP and cwd",
                 )
                 b[stream] = b[stream].replace("\x1b[36m--fresh\x1b[0m | ", "")
                 b[stream] = b[stream].replace(

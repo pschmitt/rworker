@@ -5,7 +5,12 @@
 use super::proc::{self, Msg, Stream};
 use crate::ctx::Ctx;
 use crate::jq::{self, get};
-use ratatui::crossterm::event::{Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
+use ratatui::crossterm::event::{
+    DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers,
+    MouseButton, MouseEvent, MouseEventKind,
+};
+use ratatui::crossterm::execute;
+use ratatui::layout::{Position, Rect};
 use ratatui::widgets::TableState;
 use serde_json::Value;
 use std::collections::{HashMap, VecDeque};
@@ -13,6 +18,14 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::time::{Duration, Instant};
+
+struct MouseCapture;
+
+impl Drop for MouseCapture {
+    fn drop(&mut self) {
+        let _ = execute!(std::io::stdout(), DisableMouseCapture);
+    }
+}
 
 /// Lines kept per text view.
 const MAX_LINES: usize = 20_000;
@@ -24,11 +37,9 @@ pub struct Worker {
     pub status: String,
     pub owner: String,
     pub agent: String,
-    pub agent_id: String,
+    agent_id: String,
     pub topic: String,
-    pub flavor: String,
     pub ips: String,
-    pub cwd: String,
     pub created: Option<i64>,
     pub mine: bool,
     raw: Value,
@@ -61,9 +72,7 @@ impl Worker {
             agent: s("agent"),
             agent_id: s("agent_id"),
             topic: s("topic"),
-            flavor: s("flavor"),
             ips: jq::or_empty(&crate::table::ips_label(v)),
-            cwd: s("cwd"),
             created: get(v, "created_at")
                 .as_str()
                 .and_then(crate::time::created_epoch),
@@ -151,6 +160,15 @@ pub struct TextView {
     trim: Option<(regex::Regex, &'static str)>,
 }
 
+impl TextView {
+    fn scroll(&mut self, delta: isize) {
+        if delta < 0 {
+            self.follow = false;
+        }
+        self.top = self.top.saturating_add_signed(delta);
+    }
+}
+
 pub enum Sub {
     Jobs(Jobs),
     Text(TextView),
@@ -201,6 +219,9 @@ pub struct App {
     pub icons: bool,
     pub workers: Vec<Worker>,
     pub table: TableState,
+    pub mouse_table: Option<Rect>,
+    pub mouse_text: Option<Rect>,
+    pub preview: Option<(String, TextView)>,
     pub filter: String,
     pub mine_only: bool,
     pub refreshing: bool,
@@ -292,6 +313,11 @@ impl App {
 
     /// Open a text view on the output of `rworker ARGS`.
     fn open_text(&mut self, title: impl Into<String>, args: Vec<String>) {
+        let view = self.text_stream(title, args);
+        self.stack.push(Sub::Text(view));
+    }
+
+    fn text_stream(&mut self, title: impl Into<String>, args: Vec<String>) -> TextView {
         let id = self.id();
         let mut view = TextView {
             title: title.into(),
@@ -314,7 +340,7 @@ impl App {
                 view.exit = Some(None);
             }
         }
-        self.stack.push(Sub::Text(view));
+        view
     }
 
     fn open_jobs(&mut self, worker: String) {
@@ -352,9 +378,91 @@ impl App {
         });
     }
 
+    fn sync_preview(&mut self) {
+        let selected = if self.stack.is_empty() && self.mouse_text.is_some() {
+            self.selected().map(|worker| worker.name.as_str())
+        } else {
+            None
+        };
+        if self.preview.as_ref().map(|(worker, _)| worker.as_str()) == selected {
+            return;
+        }
+        let selected = selected.map(str::to_owned);
+        self.preview = None;
+        if let Some(worker) = selected {
+            let args = ["logs", &worker, "--follow", "--quiet", "--lines", "100"]
+                .into_iter()
+                .map(str::to_owned)
+                .collect();
+            let mut view = self.text_stream(format!("logs · {worker}"), args);
+            view.wrap = true;
+            self.preview = Some((worker, view));
+        }
+    }
+
+    fn text_view(&mut self, id: u64) -> Option<&mut TextView> {
+        self.stack
+            .iter_mut()
+            .filter_map(|sub| match sub {
+                Sub::Text(view) => Some(view),
+                Sub::Jobs(_) => None,
+            })
+            .chain(self.preview.as_mut().map(|(_, view)| view))
+            .find(|view| view.id == id)
+    }
+
+    fn mouse(&mut self, event: MouseEvent) {
+        if self.help || self.prompt.is_some() || self.confirm.is_some() {
+            return;
+        }
+        let point = Position::new(event.column, event.row);
+        let delta = match event.kind {
+            MouseEventKind::ScrollUp => -3,
+            MouseEventKind::ScrollDown => 3,
+            MouseEventKind::Down(MouseButton::Left) => 0,
+            _ => return,
+        };
+        if self.mouse_text.is_some_and(|area| area.contains(point)) {
+            let view = match self.stack.last_mut() {
+                Some(Sub::Text(view)) => Some(view),
+                None => self.preview.as_mut().map(|(_, view)| view),
+                Some(Sub::Jobs(_)) => None,
+            };
+            if delta != 0
+                && let Some(view) = view
+            {
+                view.scroll(delta);
+            }
+        } else if let Some(area) = self.mouse_table.filter(|area| area.contains(point)) {
+            let offset = usize::from(event.row - area.y);
+            let worker_count = self.visible().len();
+            let (state, count) = match self.stack.last_mut() {
+                Some(Sub::Jobs(jobs)) => (&mut jobs.state, jobs.rows.len()),
+                None => (&mut self.table, worker_count),
+                Some(Sub::Text(_)) => return,
+            };
+            if count == 0 {
+                return;
+            }
+            let index = if delta == 0 {
+                state.offset() + offset
+            } else {
+                state
+                    .selected()
+                    .unwrap_or(0)
+                    .saturating_add_signed(delta)
+                    .min(count - 1)
+            };
+            if index < count {
+                state.select(Some(index));
+            }
+        }
+    }
+
     fn handle(&mut self, msg: Msg) {
         match msg {
             Msg::Input(Event::Key(k)) if k.kind != KeyEventKind::Release => self.key(k),
+            Msg::Input(Event::Mouse(event)) => self.mouse(event),
             Msg::Input(_) => {}
             Msg::Refreshing => self.refreshing = true,
             Msg::Workers { result, took } => {
@@ -370,31 +478,22 @@ impl App {
                 }
             }
             Msg::Line { id, text, err } => {
-                for sub in &mut self.stack {
-                    if let Sub::Text(v) = sub
-                        && v.id == id
-                    {
-                        let text = match &v.trim {
-                            Some((re, rep)) => re.replace(&text, *rep).into_owned(),
-                            None => text,
-                        };
-                        v.lines.push_back((text, err));
-                        if v.lines.len() > MAX_LINES {
-                            v.lines.pop_front();
-                            v.top = v.top.saturating_sub(1);
-                        }
-                        break;
+                if let Some(v) = self.text_view(id) {
+                    let text = match &v.trim {
+                        Some((re, rep)) => re.replace(&text, *rep).into_owned(),
+                        None => text,
+                    };
+                    v.lines.push_back((text, err));
+                    if v.lines.len() > MAX_LINES {
+                        v.lines.pop_front();
+                        v.top = v.top.saturating_sub(1);
                     }
                 }
             }
             Msg::Exit { id } => {
-                for sub in &mut self.stack {
-                    if let Sub::Text(v) = sub
-                        && v.id == id
-                    {
-                        v.exit = Some(v.stream.as_mut().and_then(Stream::code));
-                        v.stream = None;
-                    }
+                if let Some(v) = self.text_view(id) {
+                    v.exit = Some(v.stream.as_mut().and_then(Stream::code));
+                    v.stream = None;
                 }
             }
             Msg::Done { id, ok, out, err } => match self.pending.remove(&id) {
@@ -1102,6 +1201,9 @@ pub fn run(ctx: &Ctx, interval: Duration) -> std::io::Result<()> {
         icons: ctx.icons,
         workers: Vec::new(),
         table: TableState::default(),
+        mouse_table: None,
+        mouse_text: None,
+        preview: None,
         filter: String::new(),
         mine_only: false,
         refreshing: false,
@@ -1138,9 +1240,12 @@ pub fn run(ctx: &Ctx, interval: Duration) -> std::io::Result<()> {
     let _ = signal_hook::flag::register(signal_hook::consts::SIGINT, Arc::clone(&interrupt));
 
     let mut term = ratatui::init();
+    let mouse = MouseCapture;
     let result = (|| -> std::io::Result<()> {
+        execute!(std::io::stdout(), EnableMouseCapture)?;
         loop {
             term.draw(|f| app.draw(f))?;
+            app.sync_preview();
             match rx.recv_timeout(Duration::from_millis(250)) {
                 Ok(msg) => {
                     app.handle(msg);
@@ -1167,6 +1272,7 @@ pub fn run(ctx: &Ctx, interval: Duration) -> std::io::Result<()> {
                 while !parked.load(Ordering::SeqCst) && t0.elapsed() < Duration::from_secs(1) {
                     std::thread::sleep(Duration::from_millis(10));
                 }
+                execute!(std::io::stdout(), DisableMouseCapture)?;
                 ratatui::restore();
                 let status = proc::interactive(&args);
                 if !matches!(status, Ok(Some(0))) {
@@ -1187,13 +1293,16 @@ pub fn run(ctx: &Ctx, interval: Duration) -> std::io::Result<()> {
                     let _ = std::io::stdin().read_line(&mut line);
                 }
                 term = ratatui::init();
+                execute!(std::io::stdout(), EnableMouseCapture)?;
                 term.clear()?;
                 paused.store(false, Ordering::SeqCst);
                 let _ = app.refresh.send(());
             }
         }
     })();
+    drop(mouse);
     ratatui::restore();
+    app.preview = None;
     // Stop the streams before the process ends.
     app.stack.clear();
     result

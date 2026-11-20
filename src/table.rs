@@ -104,16 +104,17 @@ fn expiry(w: &Value, now: f64) -> String {
     }
 }
 
+pub(crate) const COLUMNS: [&str; 6] = ["NAME", "STATUS", "AGENT", "TOPIC", "EXPIRES", "AGE"];
+pub(crate) const WIDE_COLUMNS: [&str; 3] = ["OWNER", "PROFILE", "IP"];
+
 /// kubectl-style table from `ls` JSON (aligned, uncolored); empty when
 /// there are no workers.
 pub fn plain(ctx: &Ctx, list: &Value) -> R<String> {
     let now = crate::time::now() as f64;
     let wide = ctx.wide.get();
-    let mut header = vec![
-        "NAME", "PROFILE", "STATUS", "OWNER", "AGENT", "TOPIC", "EXPIRES", "AGE",
-    ];
+    let mut header = COLUMNS.to_vec();
     if wide {
-        header.extend(["AGENT-ID", "FLAVOR", "IP", "CWD"]);
+        header.extend(WIDE_COLUMNS);
     }
     let mut rows = vec![header.join("\t")];
     let Some(mut workers) = jq::items(list) else {
@@ -135,15 +136,6 @@ pub fn plain(ctx: &Ctx, list: &Value) -> R<String> {
             ));
             return Err(Fail(5));
         };
-        let agent = if wide && jq::truthy(get(w, "agent_pid")) {
-            format!(
-                "{} ({})",
-                agent_label(ctx, get(w, "agent")),
-                jq::raw(get(w, "agent_pid"))
-            )
-        } else {
-            agent_label(ctx, get(w, "agent"))
-        };
         let age = match get(w, "created_at") {
             v if jq::truthy(v) => match v.as_str().and_then(crate::time::created_epoch) {
                 Some(c) => dur(now - c as f64),
@@ -153,24 +145,20 @@ pub fn plain(ctx: &Ctx, list: &Value) -> R<String> {
         };
         let mut cells = vec![
             jq::tsv(get(w, "name")),
-            jq::tsv(jq::alt(
-                get(w, "profile"),
-                &Value::String("standard".into()),
-            )),
             jq::tsv(&Value::String(status.to_ascii_uppercase())),
-            jq::tsv(&opt(get(w, "owner"))),
-            jq::tsv(&Value::String(agent)),
+            jq::tsv(&Value::String(agent_label(ctx, get(w, "agent")))),
             jq::tsv(&opt(get(w, "topic"))),
             jq::tsv(&Value::String(expiry(w, now))),
             age,
         ];
         if wide {
-            let ips = ips_label(w);
             cells.extend([
-                jq::tsv(&opt(get(w, "agent_id"))),
-                jq::tsv(jq::alt(get(w, "flavor"), &Value::String("-".into()))),
-                jq::tsv(jq::alt(&ips, &Value::String("<none>".into()))),
-                jq::tsv(&opt(get(w, "cwd"))),
+                jq::tsv(&opt(get(w, "owner"))),
+                jq::tsv(jq::alt(
+                    get(w, "profile"),
+                    &Value::String("standard".into()),
+                )),
+                jq::tsv(jq::alt(&ips_label(w), &Value::String("<none>".into()))),
             ]);
         }
         rows.push(cells.join("\t"));

@@ -23,7 +23,7 @@ Actions:
                        create a worker and wait until it is ready
   image create [--flake FLAKE] [--upload] | image upload --name NAME IMAGE
                        build or upload a worker disk image
-  ls [-o json|wide] [--watch [-n SECONDS]]
+  ls [-o json|wide | --wide] [--watch [-n SECONDS]]
                        list all workers (ad-hoc and nixbot's pool)
   exec [UP_OPTIONS] [--sync SRC[:DEST]] [--fetch REMOTE[:LOCAL]] [--keep] -- CMD
                        one-shot: create a worker, run CMD, delete the worker

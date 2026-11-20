@@ -21,6 +21,11 @@ Actions, flags, output, JSON and exit statuses are the same; see
 
 ### New
 
+- Align the `ls` table with the TUI. Use `--wide` or `-o wide` for owner,
+  profile and address columns.
+- Follow the selected worker’s logs beside or below the borderless worker
+  list. Use the mouse to select rows and scroll tables and logs.
+
 - Add OpenStack cloud and project selectors to image uploads.
 - Ship a standalone NixOS worker image and a reusable image module.
 
