@@ -6,7 +6,7 @@
 nix build github:pschmitt/rworker               # the client with its completions
 nix run github:pschmitt/rworker -- help
 nix develop                                     # cargo, clippy, rustfmt, cargo-deny, the harness's tools
-nix flake check                                 # unit tests, parity harness, MCP test
+nix flake check                                 # unit tests, inventory API, MCP test
 ```
 
 - `packages.<system>.rworker` (also `default`), for x86_64-linux and

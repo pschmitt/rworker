@@ -47,7 +47,18 @@
               inherit nixpkgs system;
               serverModule = self.nixosModules.default;
             };
-            parity = pkgs.callPackage ./nix/parity.nix { inherit rworker; };
+            inventory-cache =
+              pkgs.runCommand "rworker-inventory-cache-test"
+                {
+                  nativeBuildInputs = [
+                    pkgs.curl
+                    pkgs.python3
+                  ];
+                }
+                ''
+                  python3 ${./tests/server-parity/inventory-cache.py} ${rworker.unwrapped}/bin/rworker
+                  touch "$out"
+                '';
             # The Home Manager module, evaluated against stand-ins for the two
             # Home Manager options it sets, and its configured wrapper built
             # and asked for its settings.
@@ -122,11 +133,7 @@
               nixfmt
               statix
               deadnix
-              # The parity harness's reference needs these.
-              jq
-              util-linux
-              procps
-              ncurses
+              curl
               python3
             ];
           };

@@ -79,8 +79,7 @@ rworker down "$w"                                    # delete it
 | [Nix](docs/nix.md) | Flake outputs, overlay options and the MCP server |
 | [On-demand Nix builders](docs/nix-builders.md) | Gateway, machines entry and worker leases |
 | [Worker images](docs/images.md) | Building, uploading and booting worker images |
-| [Development](docs/development.md) | Building, tests and the parity harness |
-| [Parity contract](PARITY.md) | What the Rust client keeps from the bash client it replaces |
+| [Development](docs/development.md) | Building and testing |
 | [Changelog](CHANGELOG.md) | Release notes |
 
 ## License

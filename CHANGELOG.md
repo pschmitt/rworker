@@ -2,9 +2,7 @@
 
 ## 0.1.0 (unreleased)
 
-Rewritten in Rust from the bash client of nixos-config (`pkgs/rworker`).
-Actions, flags, output, JSON and exit statuses are the same; see
-[PARITY.md](PARITY.md) for the contract and the accepted differences.
+The Rust client and controller replace the original Bash client.
 
 ### Control inventory and JSON output
 
@@ -20,6 +18,8 @@ Actions, flags, output, JSON and exit statuses are the same; see
   existing format.
 
 ### New
+
+- Remove the legacy Bash client and its differential test harness.
 
 - Color error usage consistently with normal help.
 - Mask recognizable secrets in the local log view with bare `--redact`. Use

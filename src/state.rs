@@ -360,7 +360,7 @@ pub fn worker_ip(ctx: &Ctx, name: &str) -> R<String> {
 /// SSH options for a worker. Host keys are pinned per worker *name*
 /// (HostKeyAlias): NetBird reuses IPs, and a stale entry must fail loudly
 /// rather than reach whichever worker holds that IP now. A failure leaves
-/// no options, as `mapfile < <(ssh_opts ...)` did (see PARITY.md).
+/// no options if the host key is unavailable.
 pub fn ssh_opts(ctx: &Ctx, name: &str) -> Vec<String> {
     let Ok(key) = worker_field(ctx, name, "host_key") else {
         return Vec::new();
