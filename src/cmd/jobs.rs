@@ -50,7 +50,11 @@ pub fn jobs_remote(ctx: &Ctx, args: &[String]) -> R {
 /// `$(cmd_jobs_remote ...)`.
 fn jobs_capture(ctx: &Ctx, args: &[String]) -> R<String> {
     let mut cmd = jobs_command(ctx, args)?;
-    let (code, out) = proc::capture_with_input(ctx, &mut cmd, JOBS_SH.as_bytes())?;
+    capture_job_command(ctx, &mut cmd)
+}
+
+fn capture_job_command(ctx: &Ctx, cmd: &mut Command) -> R<String> {
+    let (code, out) = proc::capture_with_input(ctx, cmd, JOBS_SH.as_bytes())?;
     crate::ctx::status(code)?;
     Ok(out)
 }
@@ -61,14 +65,16 @@ fn poll_jobs(ctx: &Ctx, requests: &[Vec<String>]) -> Vec<R<String>> {
     requests
         .chunks(4)
         .flat_map(|batch| {
+            // Prepare commands in order, including host-key and local state writes.
+            let commands: Vec<_> = batch.iter().map(|args| jobs_command(ctx, args)).collect();
             std::thread::scope(|scope| {
-                let tasks: Vec<_> = batch
-                    .iter()
-                    .map(|args| {
+                let tasks: Vec<_> = commands
+                    .into_iter()
+                    .map(|command| {
                         scope.spawn(move || {
                             let ctx = Ctx::from_env();
                             ctx.quiet.set(quiet);
-                            jobs_capture(&ctx, args)
+                            capture_job_command(&ctx, &mut command?)
                         })
                     })
                     .collect();

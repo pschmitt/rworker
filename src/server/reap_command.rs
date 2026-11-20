@@ -116,8 +116,13 @@ pub(super) fn reap(cfg: &serde_json::Value, dry_run: bool) -> Result<(), String>
         if dry_run {
             eprintln!("would delete {name} ({reason})");
         } else {
+            let current = compute.metadata(&id)?;
+            if current != metadata {
+                eprintln!("keeping {name} (metadata changed during reaping)");
+                continue;
+            }
             eprintln!("deleting {name} ({reason})");
-            mutations::delete(cfg, &compute, &netbird, &id, name, &metadata)?;
+            mutations::delete(cfg, &compute, &netbird, &id, name, &current)?;
         }
     }
     Ok(())
