@@ -21,6 +21,11 @@ Actions, flags, output, JSON and exit statuses are the same; see
 
 ### New
 
+- Archive one-shot `exec` stdout and stderr before worker cleanup. The TUI
+  has a retired-worker history and a borderless Jobs view with active jobs
+  shown by default.
+
+
 - Collect registered job logs on the control host under the operator's account.
   Read retained snapshots with `logs WORKER [JOB] --cached` and redact
   matching text on the client with `--redact REGEX`.

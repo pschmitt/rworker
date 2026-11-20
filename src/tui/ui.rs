@@ -2,7 +2,7 @@
 //! and overlays (prompt, confirmation, help).
 
 use super::ansi;
-use super::app::{App, Jobs, Sub, TextView, Urgency};
+use super::app::{App, History, Jobs, Sub, TextView, Urgency};
 use crate::{
     paint,
     table::{COLUMNS, WIDE_COLUMNS, glyph},
@@ -123,8 +123,12 @@ impl App {
         match stack.last_mut() {
             None => self.draw_workers(f, body),
             Some(Sub::Jobs(j)) => {
-                self.mouse_table = Some(table_rows(body));
-                draw_jobs(f, body, j, self.tick);
+                self.mouse_table = Some(borderless_rows(body));
+                draw_jobs(f, body, j);
+            }
+            Some(Sub::History(history)) => {
+                self.mouse_table = Some(borderless_rows(body));
+                draw_history(f, body, history);
             }
             Some(Sub::Text(v)) => {
                 self.mouse_text = Some(body);
@@ -267,7 +271,8 @@ impl App {
         }
         let hints = match self.stack.last() {
             None => key_hints(&[
-                ("j", "all jobs"),
+                ("J", "jobs"),
+                ("h", "history"),
                 ("⏎", "worker jobs"),
                 ("l", "logs"),
                 ("L", "all logs"),
@@ -279,7 +284,16 @@ impl App {
                 ("/", "filter"),
                 ("?", "help"),
             ]),
-            Some(Sub::Jobs(_)) => key_hints(&[
+            Some(Sub::Jobs(jobs)) => key_hints(&[
+                ("J", "workers"),
+                (
+                    "d",
+                    if jobs.show_finished {
+                        "active jobs"
+                    } else {
+                        "include finished"
+                    },
+                ),
                 ("⏎", "job log"),
                 ("l", "all logs"),
                 ("p", "ps"),
@@ -288,6 +302,9 @@ impl App {
                 ("r", "reload"),
                 ("esc", "back"),
             ]),
+            Some(Sub::History(_)) => {
+                key_hints(&[("⏎", "cached logs"), ("h", "workers"), ("↑↓", "select")])
+            }
             Some(Sub::Text(_)) => key_hints(&[
                 ("↑↓", "scroll"),
                 ("G", "follow"),
@@ -481,7 +498,9 @@ impl App {
         let left = vec![
             section("Workers"),
             row("↑↓ k g G", "move"),
-            row("j", "jobs across workers"),
+            row("J", "toggle Jobs / Workers"),
+            row("h", "retired workers and cached logs"),
+            row("d (Jobs)", "toggle finished jobs"),
             row("⏎ / o", "jobs of the worker"),
             row("l", "follow its logs"),
             row("L", "follow all workers' logs"),
@@ -536,61 +555,85 @@ impl App {
     }
 }
 
-fn table_rows(area: Rect) -> Rect {
-    Rect::new(
-        area.x.saturating_add(1),
-        area.y.saturating_add(2),
-        area.width.saturating_sub(2),
-        area.height.saturating_sub(3),
-    )
+fn borderless_rows(area: Rect) -> Rect {
+    Rect {
+        y: area.y.saturating_add(1),
+        height: area.height.saturating_sub(1),
+        ..area
+    }
 }
 
-fn draw_jobs(f: &mut Frame, area: Rect, j: &mut Jobs, tick: u64) {
-    let mut title = vec![
-        Span::styled(" jobs · ", Style::new().bold()),
-        Span::styled(
-            format!("{} ", j.worker.as_deref().unwrap_or("all workers")),
-            Style::new().fg(ACCENT).bold(),
-        ),
-    ];
-    if j.loading.is_some() {
-        title.push(Span::styled(
-            format!("{} ", SPINNER[tick as usize % SPINNER.len()]),
-            dim(),
-        ));
-    }
-    let mut block = Block::bordered()
-        .border_type(BorderType::Rounded)
-        .border_style(dim())
-        .title(Line::from(title));
-    if let Some(e) = &j.error {
-        if !j.rows.is_empty() {
-            block = block.title_bottom(Line::styled(
-                format!(" {e} "),
-                Style::new().fg(Color::Yellow),
-            ));
+fn draw_history(f: &mut Frame, area: Rect, history: &mut History) {
+    if history.rows.is_empty() {
+        let message = if history.loading.is_some() {
+            "Loading worker history…"
+        } else if history.error {
+            "Could not load worker history"
         } else {
-            f.render_widget(
-                Paragraph::new(Line::styled(e.clone(), Style::new().fg(Color::Red)))
-                    .wrap(Wrap { trim: false })
-                    .block(block),
-                area,
-            );
-            return;
-        }
+            "No retired workers in history"
+        };
+        f.render_widget(Paragraph::new(Line::styled(message, dim())), area);
+        return;
     }
+    let rows = history.rows.iter().map(|row| {
+        let status = row["exit_code"]
+            .as_i64()
+            .map(|code| format!("exit {code}"))
+            .unwrap_or_else(|| "retired".into());
+        Row::new([
+            Cell::from(Span::styled(
+                row["name"].as_str().unwrap_or_default().to_owned(),
+                Style::new().fg(ACCENT),
+            )),
+            Cell::from(row["agent"].as_str().unwrap_or_default().to_owned()),
+            Cell::from(row["topic"].as_str().unwrap_or_default().to_owned()),
+            Cell::from(status),
+            Cell::from(
+                row["last_seen"]
+                    .as_str()
+                    .unwrap_or_default()
+                    .chars()
+                    .take(10)
+                    .collect::<String>(),
+            ),
+        ])
+    });
+    let table = Table::new(
+        rows,
+        [
+            Constraint::Length(18),
+            Constraint::Length(8),
+            Constraint::Fill(1),
+            Constraint::Length(8),
+            Constraint::Length(10),
+        ],
+    )
+    .header(
+        Row::new(["WORKER", "AGENT", "TOPIC", "STATE", "LAST SEEN"])
+            .style(dim().add_modifier(Modifier::BOLD)),
+    )
+    .column_spacing(2)
+    .row_highlight_style(
+        Style::new()
+            .bg(Color::Indexed(236))
+            .add_modifier(Modifier::BOLD),
+    );
+    f.render_stateful_widget(table, area, &mut history.state);
+}
+
+fn draw_jobs(f: &mut Frame, area: Rect, j: &mut Jobs) {
     if j.rows.is_empty() {
-        let msg = if j.loading.is_some() {
-            "loading…"
-        } else if j.worker.is_none() {
-            "No registered jobs on reachable workers."
+        let message = if j.loading.is_some() {
+            "Loading jobs…"
+        } else if let Some(error) = &j.error {
+            error
+        } else if j.show_finished {
+            "No jobs"
         } else {
-            "No jobs. Press n to start one, l to follow the worker's logs."
+            "No active jobs. Press d to include finished jobs."
         };
         f.render_widget(
-            Paragraph::new(Line::styled(msg, dim()))
-                .alignment(Alignment::Center)
-                .block(block),
+            Paragraph::new(Line::styled(message, dim())).wrap(Wrap { trim: false }),
             area,
         );
         return;
@@ -638,7 +681,6 @@ fn draw_jobs(f: &mut Frame, area: Rect, j: &mut Jobs, tick: u64) {
     }
     let table = Table::new(rows, widths)
         .header(Row::new(header).style(Style::new().add_modifier(Modifier::BOLD | Modifier::DIM)))
-        .block(block)
         .column_spacing(2)
         .row_highlight_style(
             Style::new()

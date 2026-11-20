@@ -44,7 +44,6 @@ pub fn control_ssh_cmd<S: AsRef<str>>(ctx: &Ctx, args: &[S]) -> Command {
         .is_some_and(|action| action.as_ref().starts_with("__cached-"))
     {
         cmd.args([
-            "-n",
             "-o",
             "ConnectTimeout=5",
             "-o",

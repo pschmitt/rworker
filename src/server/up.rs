@@ -170,6 +170,7 @@ pub(super) fn up(cfg: &Value, args: Args<'_>) -> Result<Value, String> {
             .ok_or("invalid Ed25519 collector public key")?;
         user_data.insert("log_collector_key".into(), json!(blob));
     }
+    let archive_logs = user_data.contains_key("log_collector_key");
     let (id, mut metadata) = provision::create(
         cfg,
         &compute,
@@ -218,6 +219,12 @@ pub(super) fn up(cfg: &Value, args: Args<'_>) -> Result<Value, String> {
             "expires_at": expires, "flavor": flavor, "profile": profile,
             "builder": format!("ssh-ng://agent@{ip}"),
         });
+        if archive_logs {
+            response["archive_logs"] = json!(true);
+            response["created_at"] = metadata.get("created_at").cloned().unwrap_or(Value::Null);
+            response["topic"] = metadata.get("topic").cloned().unwrap_or(Value::Null);
+            response["agent"] = metadata.get("agent").cloned().unwrap_or(Value::Null);
+        }
         if !args.no_token
             && cfg["niks3"].is_object()
             && options["niks3Token"].as_bool().unwrap_or(true)

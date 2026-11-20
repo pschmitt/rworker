@@ -278,8 +278,8 @@ fn ready(list: &Value) -> Vec<String> {
         .collect()
 }
 
-pub(super) fn registered_jobs(ctx: &Ctx) -> R<Vec<(String, String)>> {
-    let mut names = ready(&workers(ctx, "", "")?);
+pub(super) fn registered_jobs(ctx: &Ctx, inventory: &Value) -> R<Vec<(String, String)>> {
+    let mut names = ready(inventory);
     names.retain(|name| !name.is_empty());
     names.sort_unstable();
     names.dedup();

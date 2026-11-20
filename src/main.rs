@@ -308,6 +308,9 @@ fn run(ctx: &Ctx, argv: &[String]) -> R {
         // Internal: the background refresh of the completions' cache.
         "__ls-refresh" => return state::remote_ls(ctx).map(|_| ()),
         // Internal: one follower of `logs -f`.
+        "__worker-history" => return cmd::history::client(ctx),
+        "__cached-worker-history" => return cmd::history::show(ctx),
+        "__cached-archive-exec" => return cmd::log_cache::receive_exec(ctx, &argv[1..]),
         "__collect-logs" => return cmd::log_cache::collect(ctx, &argv[1..]),
         "__cached-logs" => return cmd::log_cache::read(ctx, &argv[1..], false),
         "__cached-preview" => return cmd::log_cache::preview(ctx, &argv[1..]),

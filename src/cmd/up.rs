@@ -266,6 +266,15 @@ pub fn up(ctx: &Ctx, args: &[String], capture: bool) -> R<Option<String>> {
     let name = need(&parsed, "name")?;
     let ip = need(&parsed, "ip")?;
     state::remember_created(ctx, &name, &parsed)?;
+    if parsed["archive_logs"] == true {
+        let history = json!({
+            "topic": parsed["topic"], "agent": parsed["agent"],
+            "created_at": parsed["created_at"], "status": "ready",
+        });
+        if super::log_cache::send_record(ctx, &name, &history, None).is_err() {
+            ctx.err(&format!("Could not add {name} to worker history"));
+        }
+    }
 
     let nix_cache = match nix_cache {
         Some(v) => v,

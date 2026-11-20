@@ -9,7 +9,7 @@ use crate::proc;
 use crate::signals;
 use crate::state;
 use serde_json::{Value, json};
-use std::process::Command;
+use std::process::{Command, Stdio};
 
 /// Deletes the worker when dropped, unless it is to be kept.
 struct Cleanup<'a> {
@@ -158,19 +158,58 @@ pub fn cmd_exec(ctx: &Ctx, args: &[String]) -> R {
     let login = format!("agent@{ip}");
     let mut ssh = Command::new("ssh");
     ssh.args(&opts).arg(&login).args(&cmd);
+    let archive = info["archive_logs"] == true;
     let (rc, stdout, stderr) = if json {
         let o = ssh.output().map_err(|e| {
             ctx.err(&format!("{}: ssh: {e}", ctx.me));
             Fail(1)
         })?;
-        (
-            proc::code_of(o.status),
-            String::from_utf8_lossy(&o.stdout).into_owned(),
-            String::from_utf8_lossy(&o.stderr).into_owned(),
-        )
+        (proc::code_of(o.status), o.stdout, o.stderr)
+    } else if archive {
+        let mut child = ssh
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .map_err(|e| {
+                ctx.err(&format!("{}: ssh: {e}", ctx.me));
+                Fail(1)
+            })?;
+        let stdout = child.stdout.take().ok_or(Fail(1))?;
+        let stderr = child.stderr.take().ok_or(Fail(1))?;
+        std::thread::scope(|scope| {
+            let out = scope.spawn(move || {
+                super::log_cache::stream_tail(stdout, Some(std::io::stdout().lock()))
+            });
+            let err = scope.spawn(move || {
+                super::log_cache::stream_tail(stderr, Some(std::io::stderr().lock()))
+            });
+            let status = child.wait().map_err(|_| Fail(1))?;
+            let stdout = out.join().map_err(|_| Fail(1))?.map_err(|_| Fail(1))?;
+            let stderr = err.join().map_err(|_| Fail(1))?.map_err(|_| Fail(1))?;
+            Ok((proc::code_of(status), stdout, stderr))
+        })?
     } else {
-        (proc::run(ctx, &mut ssh)?, String::new(), String::new())
+        (proc::run(ctx, &mut ssh)?, Vec::new(), Vec::new())
     };
+    if archive {
+        let info = json!({
+            "topic": info["topic"], "agent": info["agent"], "created_at": info["created_at"],
+            "exit_code": rc,
+        });
+        if super::log_cache::send_record(
+            ctx,
+            &name,
+            &info,
+            Some((
+                super::log_cache::keep_tail(&stdout),
+                super::log_cache::keep_tail(&stderr),
+            )),
+        )
+        .is_err()
+        {
+            ctx.err(&format!("Could not archive exec logs for {name}"));
+        }
+    }
     interrupted()?;
 
     for item in &fetches {
@@ -217,7 +256,8 @@ pub fn cmd_exec(ctx: &Ctx, args: &[String]) -> R {
         crate::ctx::json_out(
             ctx,
             &jq::pretty(&json!({
-                "name": name, "exit_code": rc, "stdout": stdout, "stderr": stderr,
+                "name": name, "exit_code": rc,
+                "stdout": String::from_utf8_lossy(&stdout), "stderr": String::from_utf8_lossy(&stderr),
                 "kept": cleanup.keep,
             })),
         );

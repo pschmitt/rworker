@@ -60,6 +60,12 @@ displayed stdout line. This uses Rust regex syntax and applies only to
 matches you specify. The collector stores log bytes verbatim within the
 retention limits.
 
+For workers created on a control host with log archiving enabled, `exec`
+streams output as usual and sends bounded verbatim tails of stdout and
+stderr to the control host before deleting the worker. Read the retained
+`exec` job with `rworker logs WORKER exec --cached`. The collector keeps up to
+1,024 worker history records for 30 days from last observation.
+
 ## Terminal UI
 
 `rworker tui` is an interactive front end over the same actions, in the
@@ -68,6 +74,10 @@ default 5) and shows your own workers with a dot and new ones with a `+`;
 a strip below it gives the selected worker's owner, profile, addresses and
 working directory.
 
+- `J` toggles Jobs and Workers. Jobs shows running and registered jobs by
+  default. Press `d` in Jobs to include completed and inactive jobs.
+- `h` opens the retired-worker history. Press Enter on a worker to view its
+  retained logs.
 - `⏎` opens the worker's jobs, `⏎` on a job follows its log; `l` follows
   all jobs of the worker, `L` all workers, `E` the lifecycle events.
 - `s` logs in over ssh (the TUI comes back when the session ends), `i`

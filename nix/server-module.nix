@@ -26,7 +26,11 @@ let
     postBuild = ''
       wrapProgram "$out/bin/rworker" \
         --set RWORKER_CONTROL_SOCKET ${socket} \
-        --set RWORKER_CONTROL_SSH_COMPAT 1
+        --set RWORKER_CONTROL_SSH_COMPAT 1 \
+        ${lib.optionalString (cfg.logCache.operator != null) (
+          "--set RWORKER_LOG_ARCHIVE_LIMITS "
+          + lib.escapeShellArg "${toString cfg.logCache.retentionDays}:${toString cfg.logCache.maxMiB}:${toString cfg.logCache.maxJobMiB}"
+        )}
     '';
   };
 in

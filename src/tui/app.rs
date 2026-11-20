@@ -135,10 +135,18 @@ impl Worker {
 
 pub struct Jobs {
     pub worker: Option<String>,
+    pub show_finished: bool,
     pub rows: Vec<[String; 4]>,
     pub state: TableState,
     pub loading: Option<u64>,
     pub error: Option<String>,
+}
+
+pub struct History {
+    pub rows: Vec<Value>,
+    pub state: TableState,
+    pub loading: Option<u64>,
+    pub error: bool,
 }
 
 pub struct TextView {
@@ -173,6 +181,7 @@ impl TextView {
 
 pub enum Sub {
     Jobs(Jobs),
+    History(History),
     Text(TextView),
 }
 
@@ -207,6 +216,7 @@ pub struct Confirm {
 enum Pending {
     Status(String),
     JobList,
+    History,
     LogPreview(u64),
 }
 
@@ -351,12 +361,52 @@ impl App {
     fn open_jobs(&mut self, worker: Option<String>) {
         self.stack.push(Sub::Jobs(Jobs {
             worker,
+            show_finished: false,
             rows: Vec::new(),
             state: TableState::default(),
             loading: None,
             error: None,
         }));
         self.reload_jobs();
+    }
+
+    fn open_history(&mut self) {
+        let id = self.id();
+        self.stack.push(Sub::History(History {
+            rows: Vec::new(),
+            state: TableState::default(),
+            loading: Some(id),
+            error: false,
+        }));
+        self.pending.insert(id, Pending::History);
+        proc::action(id, s(&["__worker-history"]), self.tx.clone());
+    }
+
+    fn history_key(&mut self, k: KeyEvent) {
+        let Some(Sub::History(view)) = self.stack.last_mut() else {
+            return;
+        };
+        let count = view.rows.len();
+        let index = view.state.selected().unwrap_or(0);
+        match k.code {
+            KeyCode::Esc | KeyCode::Backspace | KeyCode::Char('h' | 'q') => {
+                self.stack.pop();
+            }
+            KeyCode::Down | KeyCode::Char('j') if count > 0 => {
+                view.state.select(Some((index + 1).min(count - 1)));
+            }
+            KeyCode::Up | KeyCode::Char('k') if count > 0 => {
+                view.state.select(Some(index.saturating_sub(1)));
+            }
+            KeyCode::Enter | KeyCode::Char('l') => {
+                if let Some(name) = view.rows.get(index).and_then(|row| row["name"].as_str()) {
+                    let title = format!("cached logs · {name}");
+                    let args = s(&["logs", name, "--cached", "--lines", "1000"]);
+                    self.open_text(title, args);
+                }
+            }
+            _ => {}
+        }
     }
 
     fn reload_jobs(&mut self) {
@@ -419,7 +469,7 @@ impl App {
             .iter_mut()
             .filter_map(|sub| match sub {
                 Sub::Text(view) => Some(view),
-                Sub::Jobs(_) => None,
+                Sub::Jobs(_) | Sub::History(_) => None,
             })
             .chain(self.preview.as_mut().map(|(_, view)| view))
             .find(|view| view.id == id)
@@ -440,7 +490,7 @@ impl App {
             let view = match self.stack.last_mut() {
                 Some(Sub::Text(view)) => Some(view),
                 None => self.preview.as_mut().map(|(_, view)| view),
-                Some(Sub::Jobs(_)) => None,
+                Some(Sub::Jobs(_) | Sub::History(_)) => None,
             };
             if delta != 0
                 && let Some(view) = view
@@ -452,6 +502,7 @@ impl App {
             let worker_count = self.visible().len();
             let (state, count) = match self.stack.last_mut() {
                 Some(Sub::Jobs(jobs)) => (&mut jobs.state, jobs.rows.len()),
+                Some(Sub::History(history)) => (&mut history.state, history.rows.len()),
                 None => (&mut self.table, worker_count),
                 Some(Sub::Text(_)) => return,
             };
@@ -557,6 +608,28 @@ impl App {
                         view.seeded = true;
                     }
                 }
+                Some(Pending::History) => {
+                    let live = &self.workers;
+                    if let Some(Sub::History(view)) = self.stack.last_mut()
+                        && view.loading == Some(id)
+                    {
+                        view.loading = None;
+                        match serde_json::from_str::<Vec<Value>>(&out) {
+                            Ok(rows) if ok => {
+                                view.rows = rows
+                                    .into_iter()
+                                    .filter(|row| {
+                                        row["name"].as_str().is_some_and(|name| {
+                                            !live.iter().any(|w| w.name == name)
+                                        })
+                                    })
+                                    .collect();
+                                view.state.select((!view.rows.is_empty()).then_some(0));
+                            }
+                            _ => view.error = true,
+                        }
+                    }
+                }
                 Some(Pending::JobList) => {
                     for sub in &mut self.stack {
                         if let Sub::Jobs(j) = sub
@@ -583,10 +656,17 @@ impl App {
                                             .splitn(if j.worker.is_some() { 3 } else { 4 }, '\t');
                                         let worker =
                                             j.worker.as_deref().or_else(|| fields.next())?;
+                                        let job = fields.next()?;
+                                        let state = fields.next()?;
+                                        if !j.show_finished
+                                            && !matches!(state, "running" | "registered")
+                                        {
+                                            return None;
+                                        }
                                         Some([
                                             worker.to_owned(),
-                                            fields.next()?.to_owned(),
-                                            fields.next()?.to_owned(),
+                                            job.to_owned(),
+                                            state.to_owned(),
                                             fields.next()?.to_owned(),
                                         ])
                                     })
@@ -651,6 +731,7 @@ impl App {
         match self.stack.last() {
             None => self.workers_key(k),
             Some(Sub::Jobs(_)) => self.jobs_key(k),
+            Some(Sub::History(_)) => self.history_key(k),
             Some(Sub::Text(_)) => self.text_key(k),
         }
     }
@@ -675,8 +756,11 @@ impl App {
                     self.reselect(name.clone());
                 }
             }
-            KeyCode::Char('j') => self.open_jobs(None),
-            KeyCode::Down if n > 0 => self.table.select(Some((sel + 1).min(n - 1))),
+            KeyCode::Char('J') => self.open_jobs(None),
+            KeyCode::Char('h') => self.open_history(),
+            KeyCode::Down | KeyCode::Char('j') if n > 0 => {
+                self.table.select(Some((sel + 1).min(n - 1)))
+            }
             KeyCode::Up | KeyCode::Char('k') if n > 0 => {
                 self.table.select(Some(sel.saturating_sub(1)))
             }
@@ -862,6 +946,17 @@ impl App {
         let job = row.map(|row| row[1].clone());
         let worker = row.map(|row| row[0].clone()).or_else(|| j.worker.clone());
         match k.code {
+            KeyCode::Char('J') => self.stack.clear(),
+            KeyCode::Char('d') => {
+                j.show_finished = !j.show_finished;
+                if j.show_finished {
+                    self.reload_jobs();
+                } else {
+                    j.rows
+                        .retain(|row| matches!(row[2].as_str(), "running" | "registered"));
+                    j.state.select((!j.rows.is_empty()).then_some(0));
+                }
+            }
             KeyCode::Esc | KeyCode::Char('q') | KeyCode::Backspace | KeyCode::Char('h') => {
                 self.stack.pop();
             }
