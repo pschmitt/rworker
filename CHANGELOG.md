@@ -4,6 +4,12 @@
 
 The Rust client and controller replace the original Bash client.
 
+### MCP
+
+- Inspect job processes and retained lifecycle events.
+- Read logs across workers or from retained snapshots, with optional secret
+  redaction, and request fresh inventory or include retired workers.
+
 ### Web console
 
 - Open worker details and logs on a full-width, linkable worker page.

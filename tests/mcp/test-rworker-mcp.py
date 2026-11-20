@@ -1,4 +1,4 @@
-"""Check that MCP exposes the worker profile selector."""
+"""Check MCP argument forwarding and registered job handling."""
 
 import importlib.util
 from pathlib import Path
@@ -16,14 +16,18 @@ class FakeServer:
         return lambda func: func
 
 
-class ProfileTest(unittest.TestCase):
-    def test_up_passes_profile_and_resource_overrides(self):
+class WorkerMcpTest(unittest.TestCase):
+    def setUp(self):
         modules = {name: ModuleType(name) for name in ("mcp", "mcp.server", "mcp.server.mcpserver")}
         modules["mcp.server.mcpserver"].MCPServer = FakeServer
         spec = importlib.util.spec_from_file_location("worker_mcp", Path(__file__).resolve().parents[2] / "mcp" / "rworker-mcp.py")
         module = importlib.util.module_from_spec(spec)
         with patch.dict(sys.modules, modules), patch.object(sys, "argv", ["rworker-mcp", "--rworker", "rworker"]):
             spec.loader.exec_module(module)
+        self.module = module
+
+    def test_up_passes_profile_and_resource_overrides(self):
+        module = self.module
         with patch.object(module, "run", return_value='{"name":"test"}') as run:
             self.assertEqual(module.up(profile="large-builder", disk_gib=500)["name"], "test")
         args = run.call_args.args
@@ -35,12 +39,7 @@ class ProfileTest(unittest.TestCase):
             run.assert_called_once_with("profiles", "--json", timeout=120)
 
     def test_niks3_token_is_default_and_optional(self):
-        modules = {name: ModuleType(name) for name in ("mcp", "mcp.server", "mcp.server.mcpserver")}
-        modules["mcp.server.mcpserver"].MCPServer = FakeServer
-        spec = importlib.util.spec_from_file_location("worker_mcp", Path(__file__).resolve().parents[2] / "mcp" / "rworker-mcp.py")
-        module = importlib.util.module_from_spec(spec)
-        with patch.dict(sys.modules, modules), patch.object(sys, "argv", ["rworker-mcp", "--rworker", "rworker"]):
-            spec.loader.exec_module(module)
+        module = self.module
         with patch.object(module, "run", return_value="{}") as run:
             module.up()
             self.assertNotIn("--no-niks3-token", run.call_args.args)
@@ -68,18 +67,33 @@ class ProfileTest(unittest.TestCase):
                 ("ls", "--json", "--agent-id", "claude-code:abc"))
 
     def test_exec_uses_registered_job_and_returns_exit_status(self):
-        modules = {name: ModuleType(name) for name in ("mcp", "mcp.server", "mcp.server.mcpserver")}
-        modules["mcp.server.mcpserver"].MCPServer = FakeServer
-        spec = importlib.util.spec_from_file_location("worker_mcp", Path(__file__).resolve().parents[2] / "mcp" / "rworker-mcp.py")
-        module = importlib.util.module_from_spec(spec)
-        with patch.dict(sys.modules, modules), patch.object(sys, "argv", ["rworker-mcp", "--rworker", "rworker"]):
-            spec.loader.exec_module(module)
+        module = self.module
         with patch.object(module, "run", side_effect=["job-123\n", "job-123\texit 7\ttoday\n", "output\n"]) as run:
             result = module.exec("worker", "exit 7")
         self.assertEqual(result["job"], "job-123")
         self.assertEqual(result["exit_code"], 7)
         self.assertIn("output", result["stdout"])
         self.assertEqual(run.call_args_list[0].args, ("start", "worker", "--", "exit 7"))
+
+    def test_log_snapshot_flags(self):
+        with patch.object(self.module, "run", return_value="output") as run:
+            self.assertEqual(
+                self.module.logs("worker", "job", cached=True, redact=True),
+                "output",
+            )
+            run.assert_called_once_with(
+                "logs", "--lines", "200", "worker", "job", "--cached",
+                "--redact", timeout=60,
+            )
+            with self.assertRaises(ValueError):
+                self.module.logs(cached=True)
+
+    def test_retained_events_filter_and_limit(self):
+        with patch.object(self.module, "run", return_value='[{"id":1},{"id":2}]') as run:
+            self.assertEqual(self.module.events(agent_id="codex:abc", limit=1), [{"id": 2}])
+            run.assert_called_once_with(
+                "events", "--json", "--agent-id", "codex:abc", timeout=60,
+            )
 
 
 if __name__ == "__main__":

@@ -106,11 +106,18 @@ def profiles() -> list:
 
 @mcp.tool()
 def ls(topic: str | None = None, agent: str | None = None,
-       agent_id: str | None = None) -> list:
+       agent_id: str | None = None, include_retired: bool = False,
+       fresh: bool = False) -> list:
     """List all workers: ad-hoc ones (kind adhoc) and nixbot's pool (pool).
     topic, agent (claude, codex, ...) and agent_id (a Concord agent id) are
-    regexes that keep only matching workers; a leading "!" inverts one."""
+    regexes that keep only matching workers; a leading "!" inverts one.
+    include_retired adds retained worker history. fresh refreshes inventory.
+    """
     argv = ["ls", "--json"]
+    if include_retired:
+        argv.append("--all")
+    if fresh:
+        argv.append("--fresh")
     for flag, value in (("--topic", topic), ("--agent", agent),
                         ("--agent-id", agent_id)):
         if value:
@@ -223,18 +230,69 @@ def start(name: str, command: str, session: str | None = None,
 
 
 @mcp.tool()
-def jobs(name: str) -> str:
-    """List registered jobs, their status, and start time."""
-    return run("jobs", name, timeout=60)
+def jobs(name: str | None = None) -> str:
+    """List registered jobs and their status on one or all reachable workers."""
+    return tail(run("jobs", *([name] if name else []), timeout=60))[0]
 
 
 @mcp.tool()
-def logs(name: str, session: str | None = None, lines: int = 200) -> str:
-    """Show recent logs for all jobs, or for the named job."""
-    argv = ["logs", name]
+def ps(name: str | None = None, long: bool = False) -> str:
+    """Show processes for running jobs on one or all reachable workers."""
+    argv = ["ps"]
+    if name:
+        argv.append(name)
+    if long:
+        argv.append("--long")
+    return tail(run(*argv, timeout=60))[0]
+
+
+@mcp.tool()
+def logs(name: str | None = None, session: str | None = None,
+         lines: int = 200, cached: bool = False, redact: bool = False,
+         redact_regex: str | None = None, topic: str | None = None,
+         agent: str | None = None, agent_id: str | None = None) -> str:
+    """Read recent logs from one worker, one job, or all reachable workers.
+
+    cached reads a retained snapshot and requires a worker name. The topic,
+    agent and agent_id regex filters apply when listing all workers.
+    redact masks common secrets. redact_regex also masks matching text.
+    """
+    if not name and (session or cached):
+        raise ValueError("A worker name is required for a job or cached logs")
+    if name and any(value is not None for value in (topic, agent, agent_id)):
+        raise ValueError("Log filters are available when listing all workers")
+    argv = ["logs", "--lines", str(lines)]
+    if name:
+        argv.append(name)
     if session:
         argv.append(session)
-    return tail(run(*argv, "--lines", str(lines), timeout=60))[0]
+    if cached:
+        argv.append("--cached")
+    if redact:
+        argv.append("--redact")
+    for flag, value in (("--redact-regex", redact_regex), ("--topic", topic),
+                        ("--agent", agent), ("--agent-id", agent_id)):
+        if value is not None:
+            argv += [flag, value]
+    return tail(run(*argv, timeout=60))[0]
+
+
+@mcp.tool()
+def events(topic: str | None = None, agent: str | None = None,
+           agent_id: str | None = None, limit: int = 100) -> list:
+    """Read retained worker and job lifecycle events, newest entries last.
+
+    topic, agent and agent_id accept regexes. Prefix a regex with ! to
+    invert it. limit is the maximum number of events returned.
+    """
+    if limit < 1:
+        raise ValueError("Event limit must be positive")
+    argv = ["events", "--json"]
+    for flag, value in (("--topic", topic), ("--agent", agent),
+                        ("--agent-id", agent_id)):
+        if value is not None:
+            argv += [flag, value]
+    return json.loads(run(*argv, timeout=60))[-limit:]
 
 
 @mcp.tool()
