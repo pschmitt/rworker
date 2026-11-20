@@ -478,7 +478,8 @@ pub fn cmd_jobs(ctx: &Ctx, args: &[String]) -> R {
         return watch_jobs(ctx, worker, seconds, terminal && !ctx.json.get());
     }
     if let Some(worker) = worker
-        && (!terminal || ctx.json.get())
+        && !terminal
+        && !ctx.json.get()
     {
         return jobs_remote(ctx, &s(&["jobs", worker]));
     }

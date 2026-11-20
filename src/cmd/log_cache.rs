@@ -26,6 +26,35 @@ fn root(ctx: &Ctx) -> PathBuf {
     ctx.state_dir.join("job-logs")
 }
 
+#[cfg(feature = "web")]
+pub(crate) fn archived_jobs(ctx: &Ctx, filter: Option<&str>) -> io::Result<Vec<(String, String)>> {
+    let workers = match fs::read_dir(root(ctx)) {
+        Ok(workers) => workers,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(error) => return Err(error),
+    };
+    let mut rows = Vec::new();
+    for worker in workers.flatten() {
+        let Ok(name) = worker.file_name().into_string() else {
+            continue;
+        };
+        if !component(&name) || filter.is_some_and(|filter| filter != name) {
+            continue;
+        }
+        if !worker.file_type().is_ok_and(|kind| kind.is_dir()) {
+            continue;
+        }
+        let Ok(jobs) = fs::read_dir(worker.path()) else {
+            continue;
+        };
+        rows.extend(jobs.flatten().filter_map(|job| {
+            let id = job.file_name().into_string().ok()?;
+            (component(&id) && job.file_type().ok()?.is_file()).then(|| (name.clone(), id))
+        }));
+    }
+    Ok(rows)
+}
+
 struct Entry {
     path: PathBuf,
     size: u64,

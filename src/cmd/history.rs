@@ -138,7 +138,7 @@ pub fn show(ctx: &Ctx) -> R {
     Ok(())
 }
 
-pub(super) fn with_retired(ctx: &Ctx, active: &str) -> R<String> {
+pub(crate) fn with_retired(ctx: &Ctx, active: &str) -> R<String> {
     let mut active: Vec<Value> = serde_json::from_str(active).map_err(|_| Fail(1))?;
     let history: Vec<Value> = if std::env::var_os("RWORKER_CONTROL_SOCKET").is_some() {
         controller_rows(ctx)?

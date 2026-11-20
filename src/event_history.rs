@@ -226,6 +226,11 @@ pub(crate) fn list(dir: &Path) -> io::Result<VecDeque<Event>> {
     Ok(read(dir)?.events)
 }
 
+#[cfg(feature = "web")]
+pub(crate) fn jobs(dir: &Path) -> io::Result<Jobs> {
+    Ok(read(dir)?.jobs)
+}
+
 pub(crate) fn latest_id(dir: &Path) -> io::Result<u64> {
     Ok(read(dir)?.next_id)
 }

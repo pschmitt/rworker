@@ -116,6 +116,11 @@ in
         example = "https://console.example.com";
         description = "HTTPS origin of an independently configured authenticated reverse proxy. Defaults to the built-in HTTPS API hostname.";
       };
+      proxyUser = lib.mkOption {
+        type = lib.types.nullOr lib.types.str;
+        default = null;
+        description = "Single authenticated Remote-User accepted from a trusted reverse proxy that overwrites the header on every console route.";
+      };
       identityFile = lib.mkOption {
         type = lib.types.nullOr lib.types.str;
         default = null;
@@ -308,6 +313,10 @@ in
           assertion = lib.hasPrefix "/" cfg.web.tokenFile;
           message = "The rworker web tokenFile must be an absolute runtime path.";
         }
+        {
+          assertion = cfg.web.proxyUser == null || cfg.web.origin != null;
+          message = "Trusted proxy authentication requires an explicitly configured web.origin.";
+        }
       ];
     })
     (lib.mkIf cfg.enable {
@@ -366,7 +375,11 @@ in
             // lib.optionalAttrs (cfg.web.enable && webOrigin != null) {
               RWORKER_WEB_ORIGIN = webOrigin;
               RWORKER_WEB_TOKEN_FILE = cfg.web.tokenFile;
+              RWORKER_EVENT_DIRECTORY = eventDirectory;
               RWORKER_CONTROL_SOCKET = socket;
+            }
+            // lib.optionalAttrs (cfg.web.enable && cfg.web.proxyUser != null) {
+              RWORKER_WEB_PROXY_USER = cfg.web.proxyUser;
             }
             // lib.optionalAttrs (cfg.web.enable && cfg.web.identityFile != null) {
               RWORKER_IDENTITY_FILE = cfg.web.identityFile;

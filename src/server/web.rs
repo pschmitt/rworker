@@ -47,6 +47,16 @@ pub(super) fn routes(router: Router<PathBuf>) -> Router<PathBuf> {
                 )
             }),
         )
+        .route(
+            "/assets/agents.woff2",
+            get(|| async {
+                (
+                    [(header::CONTENT_TYPE, "font/woff2")],
+                    include_bytes!("../web/agents.woff2").as_slice(),
+                )
+            }),
+        )
+        .route("/v1/ui/session", get(session))
         .route("/v1/ui/updates", get(updates))
         .route("/v1/ui/{view}", get(list))
         .route("/v1/ui/{view}/{worker}", get(worker_view))
@@ -65,7 +75,7 @@ fn asset(content_type: &'static str, body: &'static str) -> Response {
     ([
         (header::CONTENT_TYPE, content_type),
         (header::CACHE_CONTROL, "no-cache"),
-        (header::CONTENT_SECURITY_POLICY, "default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'self'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'"),
+        (header::CONTENT_SECURITY_POLICY, "default-src 'none'; script-src 'self'; style-src 'self'; font-src 'self'; connect-src 'self'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'"),
         (header::X_CONTENT_TYPE_OPTIONS, "nosniff"),
         (header::REFERRER_POLICY, "no-referrer"),
     ], body).into_response()
@@ -88,7 +98,27 @@ fn failure((status, message): Failure) -> Response {
     reply(status, json!({"error": message}))
 }
 
+async fn session(headers: HeaderMap) -> Response {
+    match authorized(&headers) {
+        Ok(()) => reply(StatusCode::OK, json!({"data": true})),
+        Err(error) => failure(error),
+    }
+}
+
 fn authorized(headers: &HeaderMap) -> Result<(), Failure> {
+    if let Some((expected, user)) = std::env::var("RWORKER_WEB_PROXY_USER")
+        .ok()
+        .zip(headers.get("remote-user"))
+    {
+        return if user.as_bytes() == expected.as_bytes() {
+            Ok(())
+        } else {
+            Err((
+                StatusCode::FORBIDDEN,
+                "This account cannot access the console.",
+            ))
+        };
+    }
     let Some(path) = std::env::var_os("RWORKER_WEB_TOKEN_FILE") else {
         return Err((
             StatusCode::SERVICE_UNAVAILABLE,
@@ -211,15 +241,76 @@ async fn read(headers: HeaderMap, command: Result<(Vec<String>, bool), Failure>)
     }
 }
 
-async fn list(Path(view): Path<String>, headers: HeaderMap) -> Response {
+async fn list(
+    Path(view): Path<String>,
+    State(dir): State<PathBuf>,
+    headers: HeaderMap,
+) -> Response {
+    match view.as_str() {
+        "workers" => return cached_workers(&headers, dir).await,
+        "jobs" => return cached_jobs(&headers, None).await,
+        _ => {}
+    }
     let query = match view.as_str() {
-        "workers" => Ok(words(&["machines", "--all", "--json"])),
-        "jobs" => Ok(words(&["jobs", "--json"])),
         "events" => Ok(words(&["events", "--json"])),
         "profiles" => Ok(words(&["profiles", "--json"])),
         _ => Err(NOT_FOUND),
     };
     read(headers, query.map(|args| (args, true))).await
+}
+
+async fn cached_workers(headers: &HeaderMap, dir: PathBuf) -> Response {
+    if let Err(error) = authorized(headers) {
+        return failure(error);
+    }
+    let snapshot = tokio::task::spawn_blocking(move || {
+        let cached = super::inventory_cache::read(&dir, false);
+        let stale = cached.is_none();
+        let data = cached
+            .map(|(workers, _)| workers)
+            .or_else(|| super::inventory_cache::read_last(&dir))
+            .unwrap_or_else(|| json!([]));
+        let ctx = crate::ctx::Ctx::from_env();
+        let merged = crate::cmd::history::with_retired(&ctx, &data.to_string()).ok()?;
+        let rows = serde_json::from_str::<Value>(&merged).ok()?;
+        Some(json!({"data": rows, "stale": stale}))
+    })
+    .await;
+    match snapshot {
+        Ok(Some(payload)) => reply(StatusCode::OK, payload),
+        _ => failure((StatusCode::BAD_GATEWAY, "Could not read worker history.")),
+    }
+}
+
+async fn cached_jobs(headers: &HeaderMap, worker: Option<String>) -> Response {
+    if let Err(error) = authorized(headers) {
+        return failure(error);
+    }
+    let snapshot = tokio::task::spawn_blocking(move || {
+        let mut rows = std::collections::BTreeMap::new();
+        let ctx = crate::ctx::Ctx::from_env();
+        for (name, job) in crate::cmd::log_cache::archived_jobs(&ctx, worker.as_deref())? {
+            let row = json!({"worker": name, "job": job, "state": "archived"});
+            rows.insert((name, job), row);
+        }
+        if let Some(dir) = crate::event_history::directory() {
+            for (name, jobs) in crate::event_history::jobs(&dir)? {
+                if worker.as_ref().is_some_and(|filter| filter != &name) {
+                    continue;
+                }
+                for (job, state) in jobs {
+                    let row = json!({"worker": name, "job": job, "state": state});
+                    rows.insert((name.clone(), job), row);
+                }
+            }
+        }
+        Ok::<_, std::io::Error>(rows.into_values().collect::<Vec<_>>())
+    })
+    .await;
+    match snapshot {
+        Ok(Ok(rows)) => reply(StatusCode::OK, json!({"data": rows})),
+        _ => failure((StatusCode::BAD_GATEWAY, "Could not read the job cache.")),
+    }
 }
 
 fn worker_command(
@@ -244,7 +335,6 @@ fn worker_command(
     match (view, job) {
         ("inspect", None) => Ok((words(&["inspect", worker, "--json"]), true)),
         ("boot", None) => Ok((words(&["inspect", worker, "--boot", "--json"]), true)),
-        ("jobs", None) => Ok((words(&["jobs", worker, "--json"]), true)),
         ("processes", None) => Ok((words(&["ps", worker]), false)),
         ("builder", None) => Ok((words(&["builder", worker]), false)),
         _ => Err(NOT_FOUND),
@@ -252,6 +342,12 @@ fn worker_command(
 }
 
 async fn worker_view(Path((view, worker)): Path<(String, String)>, headers: HeaderMap) -> Response {
+    if view == "jobs" {
+        return match name(&worker) {
+            Ok(_) => cached_jobs(&headers, Some(worker)).await,
+            Err(error) => failure(error),
+        };
+    }
     read(headers, worker_command(&view, &worker, None)).await
 }
 

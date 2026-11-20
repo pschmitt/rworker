@@ -63,6 +63,15 @@ pub(super) fn read(dir: &Path, fresh: bool) -> Option<(Value, Duration)> {
     .then(|| (snapshot["workers"].take(), age))
 }
 
+#[cfg(feature = "web")]
+pub(super) fn read_last(dir: &Path) -> Option<Value> {
+    let snapshot = File::open(dir.join("inventory.json")).ok()?;
+    let mut snapshot: Value = serde_json::from_reader(BufReader::new(snapshot)).ok()?;
+    snapshot["workers"]
+        .is_array()
+        .then(|| snapshot["workers"].take())
+}
+
 /// Read changed snapshots only. The cache file is replaced atomically, so
 /// its filesystem identity can be checked without decoding it on every tick.
 pub(super) struct Events {
@@ -138,7 +147,7 @@ pub(super) fn refresh_forever(config: &str, dir: &Path) -> Result<(), Box<dyn st
         let mutation = generation(dir, "mutation")?;
         let refresh = generation(dir, "refresh")?;
         let output = Command::new("timeout")
-            .args(["--kill-after=2s", "10s"])
+            .args(["--kill-after=2s", "25s"])
             .arg(&binary)
             .args(["server", config, "ls"])
             .env_remove("RWORKER_INVENTORY_DIRECTORY")

@@ -54,6 +54,10 @@ pub fn collect_jobs(ctx: &Ctx) -> R {
         let result = (|| {
             let raw = state::remote_ls(ctx)?;
             let inventory = state::parse(ctx, &raw)?;
+            crate::event_history::observe_workers(&directory, &inventory).map_err(|error| {
+                ctx.err(&format!("Record worker lifecycle events: {error}"));
+                Fail(1)
+            })?;
             let jobs = super::jobs::observed_jobs(ctx, &inventory);
             crate::event_history::observe_jobs(&directory, &jobs).map_err(|error| {
                 ctx.err(&format!("Record job lifecycle events: {error}"));

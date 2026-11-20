@@ -8,7 +8,7 @@ const views = {
   profiles: ["Profiles", "See the resources available for new workers."],
 };
 const state = {
-  token: "", view: "workers", rows: {}, selected: null, job: null, tab: "logs",
+  token: "", authenticated: false, view: "workers", rows: {}, selected: null, job: null, tab: "logs",
   showRetired: false, showFinished: false, redact: true, follow: true, limit: 200,
 };
 let stream;
@@ -47,23 +47,30 @@ async function request(path, data) {
   const response = await fetch("/v1/ui/" + path, {
     method: data ? "POST" : "GET",
     headers: {
-      Authorization: "Bearer " + access,
+      ...(access ? { Authorization: "Bearer " + access } : {}),
       ...(data ? { "Content-Type": "application/json" } : {}),
     },
     body: data ? JSON.stringify(data) : undefined,
     cache: "no-store",
+    redirect: "manual",
   });
+  if (response.type === "opaqueredirect") {
+    throw new Error("Your Authelia session expired. Reload to sign in again.");
+  }
   if (response.status === 401) {
     if (state.token === access) lock();
     throw new Error("Enter the console access token.");
   }
   const payload = await response.json().catch(() => ({}));
   if (!response.ok) throw new Error(payload.error || "The controller did not respond.");
+  if (path === "workers") state.inventoryStale = Boolean(payload.stale);
   return payload.data;
 }
 
 function lock() {
+  state.authenticated = false;
   state.token = "";
+  try { sessionStorage.removeItem("rworker.operator"); } catch { /* Storage disabled. */ }
   state.rows = {};
   state.selected = null;
   detailRequest++;
@@ -93,7 +100,7 @@ function navigate() {
     else link.removeAttribute("aria-current");
   });
   $("search").placeholder = "Filter " + state.view;
-  $("create").hidden = !state.token;
+  $("create").hidden = !state.authenticated;
   const isWorkers = state.view === "workers";
   $("extra-toggle").hidden = !isWorkers && state.view !== "jobs";
   $("extra-label").textContent = isWorkers ? "Show retired" : "Show finished";
@@ -101,6 +108,26 @@ function navigate() {
   detailPanel();
   render();
   refresh();
+}
+
+const agentIcons = new Map([
+  ["claude", ["\uec82", "claude"]], ["codex", ["\uec81", "codex"]],
+  ["shell", ["\uea85", ""]], ["nixbot", ["\uf313", "nix"]], ["nix build", ["\uf313", "nix"]],
+  ["copilot", ["\uec1e", ""]], ["gemini", ["\uec10", ""]], ["agy", ["\uec10", ""]],
+  ["antigravity", ["\uec10", ""]], ["browser-daemon", ["\u{f02a0}", ""]],
+]);
+
+function agentLabel(agent) {
+  if (!agent) return "—";
+  const label = element("span", null, "agent");
+  const icon = agentIcons.get(agent);
+  if (icon) {
+    const glyph = element("span", icon[0], "agent-icon " + icon[1]);
+    glyph.setAttribute("aria-hidden", "true");
+    label.append(glyph);
+  }
+  label.append(agent);
+  return label;
 }
 
 function badge(value) {
@@ -196,7 +223,7 @@ function render() {
     if (!state.showRetired) visible = visible.filter((row) => !row.retired);
   }
   if (state.view === "jobs" && !state.showFinished) {
-    visible = visible.filter((row) => !String(row.state).startsWith("exit "));
+    visible = visible.filter((row) => row.state !== "archived" && !String(row.state).startsWith("exit "));
   }
   if (state.view === "events") visible = [...visible].reverse();
   const count = visible.length;
@@ -218,14 +245,14 @@ function render() {
       rows = visible.map((row) => ({
         selected: state.selected?.name === row.name,
         cells: [named(row.name, row.topic || row.profile, () => selected(row)), badge(row.retired ? "Retired" : row.status),
-          row.agent || "—", ago(row.created_at)],
+          agentLabel(row.agent), ago(row.created_at)],
       }));
       break;
     case "jobs":
-      columns = [["Job"], ["State"], ["Started", true]];
+      columns = [["Job"], ["State"]];
       rows = visible.map((row) => ({
         selected: state.selected?.name === row.worker && state.job === row.job,
-        cells: [named(row.job, row.worker, () => selected(workerFor(row.worker), row.job)), badge(row.state), ago(row.started_at)],
+        cells: [named(row.job, row.worker, () => selected(workerFor(row.worker), row.job)), badge(row.state)],
       }));
       break;
     case "events":
@@ -250,7 +277,7 @@ function render() {
 }
 
 async function refresh(manual = false) {
-  if (!state.token || loading) return;
+  if (!state.authenticated || loading) return;
   loading = true;
   const view = state.view;
   const access = state.token;
@@ -261,7 +288,7 @@ async function refresh(manual = false) {
     if (view !== "workers" && !state.rows.workers) {
       state.rows.workers = await request("workers");
     }
-    connection("Connected", "online");
+    connection(state.inventoryStale && view === "workers" ? "Cached inventory" : "Connected", "online");
     if (view === state.view) {
       if (state.selected && view === "workers") {
         const current = sourceWorker(state.selected.name);
@@ -274,11 +301,11 @@ async function refresh(manual = false) {
       render();
     }
   } catch (error) {
-    if (state.token) connection("Disconnected", "error");
+    if (state.authenticated) connection("Disconnected", "error");
     if (manual || !state.rows[view]) notice(error.message, true);
   } finally {
     loading = false;
-    if (state.token && state.view !== view) refresh();
+    if (state.authenticated && state.view !== view) refresh();
   }
 }
 
@@ -298,7 +325,9 @@ function detailPanel() {
   for (const [key, value] of [["Owner", row.owner], ["Profile", row.profile], ["Agent", row.agent], ["Expires", clock(row.expires_at)]]) {
     if (!value) continue;
     const datum = element("div");
-    datum.append(element("dt", key), element("dd", value));
+    const description = element("dd", key === "Agent" ? null : value);
+    if (key === "Agent") description.append(agentLabel(value));
+    datum.append(element("dt", key), description);
     $("metadata").append(datum);
   }
 
@@ -323,7 +352,7 @@ function detailPanel() {
   const tabs = $("detail-tabs");
   tabs.replaceChildren();
   for (const [key, title] of [["logs", "Logs"], ["jobs", "Jobs"], ["inspect", "Inspect"], ["processes", "Processes"]]) {
-    if (row.retired && !["logs", "inspect"].includes(key)) continue;
+    if (row.retired && !["logs", "jobs", "inspect"].includes(key)) continue;
     const tab = button(title, () => {
       state.tab = key;
       detailPanel();
@@ -346,7 +375,7 @@ function checkbox(label, checked, change) {
 
 async function updateDetail(reset = false) {
   const row = state.selected;
-  if (!row || !state.token || (detailLoading && !reset)) return;
+  if (!row || !state.authenticated || (detailLoading && !reset)) return;
   detailLoading = true;
   const tab = state.tab;
   const target = encodeURIComponent(row.name);
@@ -450,7 +479,7 @@ async function form(action, worker, profile) {
       try { profiles = await request("profiles"); state.rows.profiles = profiles; }
       catch { profiles = []; }
     }
-    if (!state.token) return;
+    if (!state.authenticated) return;
     const names = profiles.map((item) => item.name);
     const initial = profile || profiles.find((item) => item.default)?.name || names[0] || "standard";
     if (names.length) field("Profile", "profile", initial, "select", names);
@@ -467,24 +496,33 @@ async function form(action, worker, profile) {
   $("dialog").showModal();
 }
 
-$("unlock").addEventListener("submit", async (event) => {
-  event.preventDefault();
-  state.token = $("token").value.trim();
-  $("token").value = "";
-  if (!state.token) return;
-  notice("");
+async function openConsole(token = "", automatic = false) {
+  state.token = token;
   try {
-    state.rows.workers = await request("workers");
+    await request("session");
+    state.authenticated = true;
+    if (token) {
+      try { sessionStorage.setItem("rworker.operator", token); } catch { /* Storage disabled. */ }
+    }
     $("login").hidden = true;
     $("console").hidden = false;
-    $("lock").hidden = false;
+    $("lock").hidden = !token;
+    notice("");
     navigate();
+    stream?.close();
     stream = new EventSource("/v1/ui/updates");
     stream.onmessage = () => { if (state.view === "workers") refresh(); };
   } catch (error) {
     lock();
-    notice(error.message, true);
+    if (!automatic || error.message !== "Enter the console access token.") notice(error.message, true);
   }
+}
+
+$("unlock").addEventListener("submit", (event) => {
+  event.preventDefault();
+  const token = $("token").value.trim();
+  $("token").value = "";
+  if (token) openConsole(token);
 });
 $("lock").addEventListener("click", () => { lock(); notice(""); });
 $("create").addEventListener("click", () => form("create"));
@@ -522,6 +560,9 @@ $("action-form").addEventListener("submit", async (event) => {
   }
 });
 window.addEventListener("hashchange", navigate);
-setInterval(() => { if (state.token && !document.hidden) refresh(); }, 5000);
-setInterval(() => { if (state.token && !document.hidden && state.selected && state.tab === "logs" && state.follow) updateDetail(); }, 2500);
+setInterval(() => { if (state.authenticated && !document.hidden) refresh(); }, 5000);
+setInterval(() => { if (state.authenticated && !document.hidden && state.selected && state.tab === "logs" && state.follow) updateDetail(); }, 2500);
 navigate();
+let savedToken = "";
+try { savedToken = sessionStorage.getItem("rworker.operator") || ""; } catch { /* Storage disabled. */ }
+openConsole(savedToken, true);

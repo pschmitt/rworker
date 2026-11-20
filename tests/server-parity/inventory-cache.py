@@ -42,7 +42,12 @@ def verify(binary, root, web_enabled):
     fixture_token = "fixture" * 6
     web_token.write_text(fixture_token)
     origin = "https://rworker.example.invalid"
-    env.update(RWORKER_WEB_TOKEN_FILE=str(web_token), RWORKER_WEB_ORIGIN=origin)
+    archive = root / "rworker" / "job-logs" / "example-worker"
+    archive.mkdir(parents=True)
+    (archive / "compile").write_text("cached build")
+    env.update(RWORKER_WEB_TOKEN_FILE=str(web_token), RWORKER_WEB_ORIGIN=origin,
+               RWORKER_WEB_PROXY_USER="operator", XDG_STATE_HOME=str(root),
+               RWORKER_CONTROL_SOCKET=str(root / "control.sock"))
     command = [str(binary), "server", str(settings)]
     socket = root / "http.sock"
 
@@ -97,6 +102,11 @@ def verify(binary, root, web_enabled):
                     assert "/assets/app.js" in body
                     assert request("/assets/app.js")[0].startswith("HTTP/1.1 200")
                     assert request("/v1/ui/events")[0].startswith("HTTP/1.1 401")
+                    assert request("/v1/ui/session", "-H", "Remote-User: visitor")[0].startswith("HTTP/1.1 403")
+                    assert request("/v1/ui/session", "-H", "Remote-User: operator")[0].startswith("HTTP/1.1 200")
+                    jobs = json.loads(request("/v1/ui/jobs", "-H", "Remote-User: operator")[1])["data"]
+                    assert jobs == [{"worker": "example-worker", "job": "compile", "state": "archived"}]
+                    assert json.loads(request("/v1/ui/jobs/example-worker", "-H", "Remote-User: operator")[1])["data"] == jobs
                     auth = ("-H", f"Authorization: Bearer {fixture_token}")
                     assert request("/v1/ui/unknown", *auth)[0].startswith("HTTP/1.1 404")
                     action = (*auth, "-H", "Content-Type: application/json", "--data", '{"action":"unknown"}')
@@ -111,6 +121,9 @@ def verify(binary, root, web_enabled):
                 expired = time.time() - 31
                 os.utime(root / "inventory.json", (expired, expired))
                 assert request("/v1/workers")[0].startswith("HTTP/1.1 503")
+                if web_enabled:
+                    stale = json.loads(request("/v1/ui/workers", "-H", "Remote-User: operator")[1])
+                    assert stale == {"data": workers, "stale": True}, stale
             finally:
                 api.terminate()
                 if cache.poll() is None:
