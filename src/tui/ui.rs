@@ -267,7 +267,8 @@ impl App {
         }
         let hints = match self.stack.last() {
             None => key_hints(&[
-                ("⏎", "jobs"),
+                ("j", "all jobs"),
+                ("⏎", "worker jobs"),
                 ("l", "logs"),
                 ("L", "all logs"),
                 ("s", "ssh"),
@@ -479,7 +480,8 @@ impl App {
         };
         let left = vec![
             section("Workers"),
-            row("↑↓ j k g G", "move"),
+            row("↑↓ k g G", "move"),
+            row("j", "jobs across workers"),
             row("⏎ / o", "jobs of the worker"),
             row("l", "follow its logs"),
             row("L", "follow all workers' logs"),
@@ -546,7 +548,10 @@ fn table_rows(area: Rect) -> Rect {
 fn draw_jobs(f: &mut Frame, area: Rect, j: &mut Jobs, tick: u64) {
     let mut title = vec![
         Span::styled(" jobs · ", Style::new().bold()),
-        Span::styled(format!("{} ", j.worker), Style::new().fg(ACCENT).bold()),
+        Span::styled(
+            format!("{} ", j.worker.as_deref().unwrap_or("all workers")),
+            Style::new().fg(ACCENT).bold(),
+        ),
     ];
     if j.loading.is_some() {
         title.push(Span::styled(
@@ -554,22 +559,31 @@ fn draw_jobs(f: &mut Frame, area: Rect, j: &mut Jobs, tick: u64) {
             dim(),
         ));
     }
-    let block = Block::bordered()
+    let mut block = Block::bordered()
         .border_type(BorderType::Rounded)
         .border_style(dim())
         .title(Line::from(title));
     if let Some(e) = &j.error {
-        f.render_widget(
-            Paragraph::new(Line::styled(e.clone(), Style::new().fg(Color::Red)))
-                .wrap(Wrap { trim: false })
-                .block(block),
-            area,
-        );
-        return;
+        if !j.rows.is_empty() {
+            block = block.title_bottom(Line::styled(
+                format!(" {e} "),
+                Style::new().fg(Color::Yellow),
+            ));
+        } else {
+            f.render_widget(
+                Paragraph::new(Line::styled(e.clone(), Style::new().fg(Color::Red)))
+                    .wrap(Wrap { trim: false })
+                    .block(block),
+                area,
+            );
+            return;
+        }
     }
     if j.rows.is_empty() {
         let msg = if j.loading.is_some() {
             "loading…"
+        } else if j.worker.is_none() {
+            "No registered jobs on reachable workers."
         } else {
             "No jobs. Press n to start one, l to follow the worker's logs."
         };
@@ -581,10 +595,12 @@ fn draw_jobs(f: &mut Frame, area: Rect, j: &mut Jobs, tick: u64) {
         );
         return;
     }
+    let all_workers = j.worker.is_none();
+    let show_start = area.width >= 54;
     let rows: Vec<Row> = j
         .rows
         .iter()
-        .map(|[name, state, started]| {
+        .map(|[worker, name, state, started]| {
             let st = if state == "running" {
                 Style::new().fg(Color::Green)
             } else if state == "exit 0" {
@@ -594,39 +610,41 @@ fn draw_jobs(f: &mut Frame, area: Rect, j: &mut Jobs, tick: u64) {
             } else {
                 Style::new().fg(Color::Yellow)
             };
-            Row::new(vec![
+            let mut cells = Vec::new();
+            if all_workers {
+                cells.push(Cell::from(Span::styled(worker.clone(), dim())));
+            }
+            cells.extend([
                 Cell::from(Span::styled(name.clone(), Style::new().fg(ACCENT))),
                 Cell::from(Span::styled(state.clone(), st)),
-                Cell::from(Span::styled(started.clone(), dim())),
-            ])
+            ]);
+            if show_start {
+                cells.push(Cell::from(Span::styled(started.clone(), dim())));
+            }
+            Row::new(cells)
         })
         .collect();
-    let name_w = j
-        .rows
-        .iter()
-        .map(|r| r[0].width())
-        .max()
-        .unwrap_or(3)
-        .max(3) as u16;
-    let table = Table::new(
-        rows,
-        [
-            Constraint::Length(name_w),
-            Constraint::Length(10),
-            Constraint::Fill(1),
-        ],
-    )
-    .header(
-        Row::new(["JOB", "STATE", "STARTED"])
-            .style(Style::new().add_modifier(Modifier::BOLD | Modifier::DIM)),
-    )
-    .block(block)
-    .column_spacing(2)
-    .row_highlight_style(
-        Style::new()
-            .bg(Color::Indexed(236))
-            .add_modifier(Modifier::BOLD),
-    );
+    let mut widths = Vec::new();
+    let mut header = Vec::new();
+    if all_workers {
+        widths.push(Constraint::Length((area.width / 3).clamp(12, 22)));
+        header.push("WORKER");
+    }
+    widths.extend([Constraint::Fill(1), Constraint::Length(10)]);
+    header.extend(["JOB", "STATE"]);
+    if show_start {
+        widths.push(Constraint::Length(22));
+        header.push("STARTED");
+    }
+    let table = Table::new(rows, widths)
+        .header(Row::new(header).style(Style::new().add_modifier(Modifier::BOLD | Modifier::DIM)))
+        .block(block)
+        .column_spacing(2)
+        .row_highlight_style(
+            Style::new()
+                .bg(Color::Indexed(236))
+                .add_modifier(Modifier::BOLD),
+        );
     f.render_stateful_widget(table, area, &mut j.state);
 }
 

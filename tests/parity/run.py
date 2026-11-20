@@ -195,7 +195,7 @@ CASES = [
     ("nix-cache-no-profile", ["nix-cache", "adhoc-aaaa1111"], {"env": {"AWS_SHARED_CREDENTIALS_FILE": "/nonexistent"}}),
     ("nix-cache-missing", ["nix-cache"], {}),
     ("nix-cache-bogus", ["nix-cache", "--bogus"], {}),
-    ("jobs-missing-worker", ["jobs"], {}),
+    # jobs with no worker now lists jobs across reachable workers.
     ("start", ["start", "adhoc-aaaa1111", "--name", "j1", "--", "echo hello; echo oops >&2; exit 4"], {}),
     ("start-bad-name", ["start", "adhoc-aaaa1111", "--name", "bad/name", "--", "true"], {}),
     ("jobs", ["jobs", "adhoc-aaaa1111"], {"sleep": 1}),

@@ -242,6 +242,51 @@ fn ready(list: &Value) -> Vec<String> {
         .collect()
 }
 
+/// List registered jobs on reachable workers without serial SSH round trips.
+pub fn jobs_all(ctx: &Ctx) -> R {
+    let list = workers(ctx, "", "")?;
+    let mut names = ready(&list);
+    names.retain(|name| !name.is_empty());
+    names.sort_unstable();
+    names.dedup();
+    let requests: Vec<_> = names.iter().map(|name| s(&["jobs", name])).collect();
+    let mut records = Vec::new();
+    let mut failed = 0;
+    for (worker, output) in names.iter().zip(poll_jobs(ctx, &requests)) {
+        let Ok(output) = output else {
+            failed += 1;
+            continue;
+        };
+        for line in output.lines().filter(|line| !line.is_empty()) {
+            if ctx.json.get() {
+                let mut fields = line.splitn(3, '\t');
+                if let (Some(job), Some(state), Some(started)) =
+                    (fields.next(), fields.next(), fields.next())
+                {
+                    records.push(serde_json::json!({
+                        "worker": worker, "job": job, "state": state, "started_at": started,
+                    }));
+                }
+            } else {
+                outln(&format!("{worker}\t{line}"));
+            }
+        }
+    }
+    if ctx.json.get() {
+        crate::ctx::json_out(ctx, &Value::Array(records).to_string());
+    }
+    if failed > 0 {
+        ctx.err(&format!(
+            "Could not list jobs on {failed} of {} workers",
+            names.len()
+        ));
+    }
+    if failed > 0 && failed == names.len() {
+        return Err(Fail(1));
+    }
+    Ok(())
+}
+
 fn logs_all(ctx: &Ctx, lines: &str, topic: &str, agent: &str) -> R {
     let list = workers(ctx, topic, agent)?;
     let mut status = Ok(());

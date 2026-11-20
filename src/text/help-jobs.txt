@@ -1,1 +1,6 @@
-Usage: __ME__ jobs WORKER
+Usage: __ME__ jobs [WORKER] [--json]
+
+List registered jobs. With a worker name, print its usual job, state and
+start time columns. Without a worker name, list jobs on reachable workers
+as worker, job, state and start time, separated by tabs. --json returns
+objects when listing all workers.

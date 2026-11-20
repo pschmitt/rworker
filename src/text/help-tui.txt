@@ -4,6 +4,7 @@ An interactive terminal UI: the worker list (refreshed in the background,
 every 5 seconds by default), the jobs of a worker, their logs and the
 lifecycle events, followed live, and the actions on the selected worker
 (ssh, inspect, ps, extend, topic, claim, down, new worker, ...).
+Press j for jobs across workers, or Enter for the selected worker’s jobs.
 The second pane follows the selected worker’s logs. Click a row to
 select it, or scroll over a table or log pane.
 : runs any other action (sync, cp, exec, nix-cache, ...). ? lists the keys.

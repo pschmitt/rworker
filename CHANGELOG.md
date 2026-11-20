@@ -21,6 +21,9 @@ Actions, flags, output, JSON and exit statuses are the same; see
 
 ### New
 
+- List jobs across reachable workers with `rworker jobs`. In the TUI,
+  press `j` for the all-worker jobs view or Enter for the selected worker.
+
 - Align the `ls` table with the TUI. Use `--wide` or `-o wide` for owner,
   profile and address columns.
 - Follow the selected worker’s logs beside or below the borderless worker

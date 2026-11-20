@@ -134,8 +134,8 @@ impl Worker {
 }
 
 pub struct Jobs {
-    pub worker: String,
-    pub rows: Vec<[String; 3]>,
+    pub worker: Option<String>,
+    pub rows: Vec<[String; 4]>,
     pub state: TableState,
     pub loading: Option<u64>,
     pub error: Option<String>,
@@ -343,28 +343,28 @@ impl App {
         view
     }
 
-    fn open_jobs(&mut self, worker: String) {
-        let id = self.id();
-        self.pending.insert(id, Pending::JobList);
-        proc::action(id, vec!["jobs".into(), worker.clone()], self.tx.clone());
-        let mut state = TableState::default();
-        state.select(Some(0));
+    fn open_jobs(&mut self, worker: Option<String>) {
         self.stack.push(Sub::Jobs(Jobs {
             worker,
             rows: Vec::new(),
-            state,
-            loading: Some(id),
+            state: TableState::default(),
+            loading: None,
             error: None,
         }));
+        self.reload_jobs();
     }
 
     fn reload_jobs(&mut self) {
         let id = self.id();
-        if let Some(Sub::Jobs(j)) = self.stack.last_mut() {
+        if let Some(Sub::Jobs(j)) = self.stack.last_mut()
+            && j.loading.is_none()
+        {
             j.loading = Some(id);
-            let worker = j.worker.clone();
+            let args = std::iter::once("jobs".to_owned())
+                .chain(j.worker.clone())
+                .collect();
             self.pending.insert(id, Pending::JobList);
-            proc::action(id, vec!["jobs".into(), worker], self.tx.clone());
+            proc::action(id, args, self.tx.clone());
         }
     }
 
@@ -473,6 +473,9 @@ impl App {
                         self.refreshed = Some((Instant::now(), took));
                         self.stale = false;
                         self.refresh_error = None;
+                        if matches!(self.stack.last(), Some(Sub::Jobs(j)) if j.worker.is_none()) {
+                            self.reload_jobs();
+                        }
                     }
                     Err(e) => self.refresh_error = Some(e),
                 }
@@ -523,30 +526,45 @@ impl App {
                             && j.loading == Some(id)
                         {
                             j.loading = None;
+                            let why = proc::last_line(&err);
+                            j.error = if why.is_empty() {
+                                (!ok).then(|| "could not list jobs".into())
+                            } else {
+                                Some(why)
+                            };
                             if ok {
-                                j.error = None;
+                                let selected = j
+                                    .state
+                                    .selected()
+                                    .and_then(|index| j.rows.get(index))
+                                    .map(|row| (row[0].clone(), row[1].clone()));
                                 j.rows = out
                                     .lines()
-                                    .filter(|l| !l.is_empty())
-                                    .map(|l| {
-                                        let mut p = l.splitn(3, '\t').map(String::from);
-                                        [
-                                            p.next().unwrap_or_default(),
-                                            p.next().unwrap_or_default(),
-                                            p.next().unwrap_or_default(),
-                                        ]
+                                    .filter(|line| !line.is_empty())
+                                    .filter_map(|line| {
+                                        let mut fields = line
+                                            .splitn(if j.worker.is_some() { 3 } else { 4 }, '\t');
+                                        let worker =
+                                            j.worker.as_deref().or_else(|| fields.next())?;
+                                        Some([
+                                            worker.to_owned(),
+                                            fields.next()?.to_owned(),
+                                            fields.next()?.to_owned(),
+                                            fields.next()?.to_owned(),
+                                        ])
                                     })
                                     .collect();
                                 let n = j.rows.len();
-                                let sel = j.state.selected().unwrap_or(0).min(n.saturating_sub(1));
+                                let sel = selected
+                                    .and_then(|(worker, job)| {
+                                        j.rows
+                                            .iter()
+                                            .position(|row| row[0] == worker && row[1] == job)
+                                    })
+                                    .unwrap_or_else(|| {
+                                        j.state.selected().unwrap_or(0).min(n.saturating_sub(1))
+                                    });
                                 j.state.select((n > 0).then_some(sel));
-                            } else {
-                                let why = proc::last_line(&err);
-                                j.error = Some(if why.is_empty() {
-                                    "could not list jobs".into()
-                                } else {
-                                    why
-                                });
                             }
                         }
                     }
@@ -620,9 +638,8 @@ impl App {
                     self.reselect(name.clone());
                 }
             }
-            KeyCode::Down | KeyCode::Char('j') if n > 0 => {
-                self.table.select(Some((sel + 1).min(n - 1)))
-            }
+            KeyCode::Char('j') => self.open_jobs(None),
+            KeyCode::Down if n > 0 => self.table.select(Some((sel + 1).min(n - 1))),
             KeyCode::Up | KeyCode::Char('k') if n > 0 => {
                 self.table.select(Some(sel.saturating_sub(1)))
             }
@@ -680,7 +697,7 @@ impl App {
             }
             KeyCode::Enter | KeyCode::Char('o') => {
                 if let Some(w) = need(self) {
-                    self.open_jobs(w);
+                    self.open_jobs(Some(w));
                 }
             }
             KeyCode::Char('l') => {
@@ -804,12 +821,9 @@ impl App {
         };
         let n = j.rows.len();
         let sel = j.state.selected().unwrap_or(0);
-        let worker = j.worker.clone();
-        let job = j
-            .state
-            .selected()
-            .and_then(|i| j.rows.get(i))
-            .map(|r| r[0].clone());
+        let row = j.state.selected().and_then(|index| j.rows.get(index));
+        let job = row.map(|row| row[1].clone());
+        let worker = row.map(|row| row[0].clone()).or_else(|| j.worker.clone());
         match k.code {
             KeyCode::Esc | KeyCode::Char('q') | KeyCode::Backspace | KeyCode::Char('h') => {
                 self.stack.pop();
@@ -823,36 +837,43 @@ impl App {
             KeyCode::Char('g') if n > 0 => j.state.select(Some(0)),
             KeyCode::Char('G') if n > 0 => j.state.select(Some(n - 1)),
             KeyCode::Char('r') => self.reload_jobs(),
-            KeyCode::Enter | KeyCode::Char('l') => match job {
-                Some(job) if k.code == KeyCode::Enter => self.open_text(
-                    format!("logs · {worker}/{job}"),
-                    vec![
-                        "logs".into(),
-                        worker,
-                        job,
-                        "--follow".into(),
-                        "--lines".into(),
-                        "1000".into(),
-                    ],
-                ),
-                _ => self.open_text(
-                    format!("logs · {worker}"),
-                    vec!["logs".into(), worker, "--follow".into()],
-                ),
-            },
-            KeyCode::Char('p') => {
+            KeyCode::Enter | KeyCode::Char('l') if worker.is_some() => {
+                let worker = worker.unwrap_or_default();
+                if let Some(job) = job.filter(|_| k.code == KeyCode::Enter) {
+                    self.open_text(
+                        format!("logs · {worker}/{job}"),
+                        vec![
+                            "logs".into(),
+                            worker,
+                            job,
+                            "--follow".into(),
+                            "--lines".into(),
+                            "1000".into(),
+                        ],
+                    );
+                } else {
+                    self.open_text(
+                        format!("logs · {worker}"),
+                        vec!["logs".into(), worker, "--follow".into()],
+                    );
+                }
+            }
+            KeyCode::Char('p') if worker.is_some() => {
+                let worker = worker.unwrap_or_default();
                 self.open_text(
                     format!("ps · {worker}"),
                     vec!["ps".into(), worker, "--long".into()],
                 );
             }
-            KeyCode::Char('n') => self.ask(
-                PromptKind::Start(worker),
+            KeyCode::Char('n') if worker.is_some() => self.ask(
+                PromptKind::Start(worker.unwrap_or_default()),
                 "start job: command",
                 "",
                 "runs from ~ on the worker; output goes to its log",
             ),
-            KeyCode::Char('s') => self.suspend = Some(vec!["ssh".into(), worker]),
+            KeyCode::Char('s') if worker.is_some() => {
+                self.suspend = Some(vec!["ssh".into(), worker.unwrap_or_default()])
+            }
             _ => {}
         }
     }

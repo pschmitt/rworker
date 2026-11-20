@@ -208,6 +208,7 @@ fn resolve_args(ctx: &Ctx, action: &str, args: &[String]) -> R<Vec<String>> {
 
 fn dispatch(ctx: &Ctx, action: &str, args: &[String]) -> R {
     match action {
+        "jobs" if args.is_empty() => cmd::jobs::jobs_all(ctx),
         "start" | "jobs" | "register" => {
             let mut all = vec![action.to_string()];
             all.extend(args.iter().cloned());

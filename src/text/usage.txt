@@ -7,7 +7,7 @@ but ssh takes it (scripts and the MCP server use it).
 Actions:
   start NAME [--name JOB] [--workdir DIR] -- CMD
                        start a registered job
-  jobs NAME            list registered jobs
+  jobs [NAME]          list registered jobs across workers or on one worker
   ps [NAME] [--long]   show processes of running jobs on one or all workers
   logs [NAME [JOB]] [--lines N] [--follow] [--no-events] [--quiet]
        [--topic REGEX] [--agent REGEX]
