@@ -478,10 +478,17 @@ def main():
         if name == "profiles-tty":
             for result in (a, b):
                 result["stdout"] = re.sub(r"\x1b\[[0-9;]*m", "", result["stdout"])
+        if args[:1] in (["jobs"], ["logs"], ["events"], ["ps"], ["profiles"]):
+            # Error help now uses the shared formatter. Compare diagnostic text.
+            b["stderr"] = re.sub(r"\x1b\[[0-9;]*m", "", b["stderr"])
         if name == "logs-unknown":
             # Compare the original diagnostic and usage without archive help.
-            b["stderr"] = b["stderr"].replace(" [--redact REGEX]", "")
+            b["stderr"] = b["stderr"].replace(" [--redact] [--redact-regex REGEX]", "")
             b["stderr"] = re.sub(r"(?m)^ +rworker logs WORKER \[JOB\] --cached \[--lines N\]\n", "", b["stderr"])
+            b["stderr"] = b["stderr"].removesuffix(
+                "\n--redact masks common credential formats locally. --redact-regex also masks\n"
+                "matches of an expression. Saved logs are kept verbatim.\n"
+            )
             b["stderr"] = b["stderr"].removesuffix(
                 "\nFor WORKER [JOB] snapshots, fall back to the archive when live logs are unavailable.\n"
                 "Use --cached to read only the archive.\n"

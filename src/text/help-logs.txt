@@ -1,6 +1,9 @@
-Usage: __ME__ logs [WORKER [JOB]] [--lines N] [--redact REGEX] [--follow] [--no-events] [--quiet] [--topic REGEX] [--agent REGEX] [--agent-id REGEX]
+Usage: __ME__ logs [WORKER [JOB]] [--lines N] [--redact] [--redact-regex REGEX] [--follow] [--no-events] [--quiet] [--topic REGEX] [--agent REGEX] [--agent-id REGEX]
        __ME__ logs [-f] [--topic REGEX] [--agent REGEX] [--agent-id REGEX]  # follow jobs and events on all (or matching) workers
-       __ME__ logs WORKER [JOB] --cached [--lines N] [--redact REGEX]
+       __ME__ logs WORKER [JOB] --cached [--lines N] [--redact] [--redact-regex REGEX]
 
 For WORKER [JOB] snapshots, fall back to the archive when live logs are unavailable.
 Use --cached to read only the archive.
+
+--redact masks common credential formats locally. --redact-regex also masks
+matches of an expression. Saved logs are kept verbatim.

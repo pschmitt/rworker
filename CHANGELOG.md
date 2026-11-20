@@ -21,6 +21,10 @@ Actions, flags, output, JSON and exit statuses are the same; see
 
 ### New
 
+- Color error usage consistently with normal help.
+- Mask recognizable secrets in the local log view with bare `--redact`. Use
+  `--redact-regex` for an additional pattern.
+
 - Reuse restricted SSH connections when collecting worker logs.
 - Escape brackets in zsh option descriptions so log completions load.
 

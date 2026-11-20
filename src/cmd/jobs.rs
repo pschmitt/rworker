@@ -106,10 +106,10 @@ fn s(v: &[&str]) -> Vec<String> {
 }
 
 pub fn cmd_logs(ctx: &Ctx, args: &[String]) -> R {
-    if let Some(index) = args.iter().position(|arg| arg == "--redact") {
-        return super::log_cache::redact(ctx, args, index);
-    }
     let cached = args.iter().any(|arg| arg == "--cached");
+    let mut redact = false;
+    let mut redact_regex = None;
+    let mut redact_args = Vec::new();
     let mut positional: Vec<String> = Vec::new();
     let mut opts: Vec<String> = Vec::new();
     let mut i = 0;
@@ -121,6 +121,21 @@ pub fn cmd_logs(ctx: &Ctx, args: &[String]) -> R {
                 opts.push(args.get(i + 1).cloned().unwrap_or_default());
                 i += if i + 1 < args.len() { 2 } else { 1 };
             }
+            "--redact" => {
+                redact = true;
+                redact_args.push(i);
+                i += 1;
+            }
+            "--redact-regex" => {
+                let Some(pattern) = args.get(i + 1).filter(|pattern| !pattern.is_empty()) else {
+                    ctx.err("--redact-regex requires a nonempty regex");
+                    return Err(Fail(2));
+                };
+                redact = true;
+                redact_regex = Some(pattern.as_str());
+                redact_args.extend([i, i + 1]);
+                i += 2;
+            }
             "--cached" => i += 1,
             s if s.starts_with('-') => {
                 opts.push(a.clone());
@@ -131,6 +146,14 @@ pub fn cmd_logs(ctx: &Ctx, args: &[String]) -> R {
                 i += 1;
             }
         }
+    }
+    if redact {
+        let unfiltered: Vec<_> = args
+            .iter()
+            .enumerate()
+            .filter_map(|(index, value)| (!redact_args.contains(&index)).then_some(value))
+            .collect();
+        return super::log_cache::redact(ctx, &unfiltered, redact_regex);
     }
     // Options may come before or after WORKER [JOB]: `logs -f WORKER` too.
     let cache_lines = match opts.as_slice() {
@@ -242,7 +265,7 @@ pub fn cmd_logs(ctx: &Ctx, args: &[String]) -> R {
             }
             _ => {
                 ctx.err(&format!("Unknown logs option: {a}"));
-                crate::help::plain(ctx, "logs");
+                crate::help::show(ctx, "logs");
                 return Err(Fail(2));
             }
         }
@@ -431,7 +454,7 @@ pub fn cmd_jobs(ctx: &Ctx, args: &[String]) -> R {
             }
             _ if !arg.starts_with('-') && worker.is_none() => worker = Some(arg),
             _ => {
-                crate::help::plain(ctx, "jobs");
+                crate::help::show(ctx, "jobs");
                 return Err(Fail(2));
             }
         }
@@ -808,7 +831,7 @@ pub fn cmd_events(ctx: &Ctx, args: &[String]) -> R {
             }
             _ => {
                 ctx.err(&format!("Unknown events option: {a}"));
-                crate::help::plain(ctx, "events");
+                crate::help::show(ctx, "events");
                 return Err(Fail(2));
             }
         }
@@ -907,12 +930,12 @@ pub fn cmd_ps(ctx: &Ctx, args: &[String]) -> R {
         match a.as_str() {
             "--long" => long = true,
             s if s.starts_with('-') => {
-                crate::help::plain(ctx, "ps");
+                crate::help::show(ctx, "ps");
                 return Err(Fail(2));
             }
             s => {
                 if !target.is_empty() {
-                    crate::help::plain(ctx, "ps");
+                    crate::help::show(ctx, "ps");
                     return Err(Fail(2));
                 }
                 target = s.to_string();

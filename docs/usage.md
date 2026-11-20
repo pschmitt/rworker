@@ -65,10 +65,12 @@ cached results for ordinary finite log reads and seed the TUI log preview.
 Finite reads fall back to the worker on a cache miss. Following logs uses
 the live worker connection.
 
-Use `--redact 'token=[^ ]+'` to replace matches with `[REDACTED]` on each
-displayed stdout line. This uses Rust regex syntax and applies only to
-matches you specify. The collector stores log bytes verbatim within the
-retention limits.
+Use `rworker logs WORKER --redact` to mask common credential formats in
+the local display, including labeled passwords, authorization headers, supported
+tokens, URL passwords and private key blocks. This works with archived snapshots
+and with `--follow`. The archive retains the original bytes. Automatic matching
+can miss unrecognized or unlabeled secrets. Add an extra pattern with
+`--redact-regex REGEX`.
 
 For workers created on a control host with log archiving enabled, `exec`
 streams output as usual and sends bounded verbatim tails of stdout and

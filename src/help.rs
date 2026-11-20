@@ -79,8 +79,3 @@ pub fn show(ctx: &Ctx, action: &str) {
         ctx.err_raw(&painted(ctx, action));
     }
 }
-
-/// `action_help ACTION >&2`, uncolored.
-pub fn plain(ctx: &Ctx, action: &str) {
-    ctx.err_raw(&action_help(ctx, action));
-}

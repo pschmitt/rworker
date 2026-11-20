@@ -483,24 +483,87 @@ fn client_read_mode(ctx: &Ctx, action: &str, worker: &str, job: &str, lines: &st
     crate::ctx::status(status.code().unwrap_or(1))
 }
 
-pub(super) fn redact(ctx: &Ctx, args: &[String], index: usize) -> R {
-    let pattern = args
-        .get(index + 1)
-        .filter(|pattern| !pattern.is_empty())
-        .ok_or_else(|| {
-            ctx.err("--redact requires a nonempty regex");
+// Recognize common credential formats and redact the value of a labeled
+// secret. Rules run against bytes so other log content need not be UTF-8.
+struct Redactor {
+    in_private_key: bool,
+    extra: Option<regex::bytes::Regex>,
+}
+
+impl Redactor {
+    fn line(&mut self, line: &[u8], mut output: impl Write) -> io::Result<()> {
+        use regex::bytes::Regex;
+        use std::sync::LazyLock;
+
+        static ANSI: LazyLock<Regex> = LazyLock::new(|| {
+            Regex::new(r"(?-u:\x1b(?:\[[0-?]*[ -/]*[@-~]|\][^\x07\x1b]*(?:\x07|\x1b\\)))").unwrap()
+        });
+        static KEY_BEGIN: LazyLock<Regex> = LazyLock::new(|| {
+            Regex::new(r"-----BEGIN [A-Z0-9 ]*PRIVATE KEY(?: BLOCK)?-----").unwrap()
+        });
+        static KEY_END: LazyLock<Regex> = LazyLock::new(|| {
+            Regex::new(r"-----END [A-Z0-9 ]*PRIVATE KEY(?: BLOCK)?-----").unwrap()
+        });
+        static TOKENS: LazyLock<Regex> = LazyLock::new(|| {
+            Regex::new(concat!(
+                r"\b(?:gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}",
+                r"|glpat-[A-Za-z0-9_-]{12,}|xox[baprs]-[A-Za-z0-9-]{10,}",
+                r"|(?:AKIA|ASIA)[A-Z0-9]{16}",
+                r"|eyJ[A-Za-z0-9_-]{5,}\.[A-Za-z0-9_-]{5,}\.[A-Za-z0-9_-]{5,})\b",
+            ))
+            .unwrap()
+        });
+        static USERINFO: LazyLock<Regex> = LazyLock::new(|| {
+            Regex::new(r"(?i)(\b[a-z][a-z0-9+.-]*://[^\s:/@]+:)[^\s/@]+(@)").unwrap()
+        });
+        static VALUES: LazyLock<Regex> = LazyLock::new(|| {
+            Regex::new(concat!(
+                r#"(?i)((?:\b[\w.-]*(?:password|passwd|api[_-]?key|token|client[_-]?secret|secret[_-]?key|access[_-]?key[_-]?id)["']?\s*[:=]\s*)"#,
+                r#"|(?:\bauthorization["']?\s*:\s*["']?(?:basic|bearer)\s+))"#,
+                r#"(?:"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|[^\s"'<>]+)"#,
+            )).unwrap()
+        });
+
+        let ending = line.ends_with(b"\n");
+        let line = line.strip_suffix(b"\n").unwrap_or(line);
+        let line = ANSI.replace_all(line, &b""[..]);
+        if self.in_private_key || KEY_BEGIN.is_match(&line) {
+            self.in_private_key = !KEY_END.is_match(&line);
+            output.write_all(b"[REDACTED]")?;
+        } else {
+            let urls = USERINFO.replace_all(&line, &b"${1}[REDACTED]${2}"[..]);
+            let values = VALUES.replace_all(&urls, &b"${1}[REDACTED]"[..]);
+            let tokens = TOKENS.replace_all(&values, &b"[REDACTED]"[..]);
+            if let Some(regex) = &self.extra {
+                output.write_all(&regex.replace_all(&tokens, &b"[REDACTED]"[..]))?;
+            } else {
+                output.write_all(&tokens)?;
+            }
+        }
+        if ending {
+            output.write_all(b"\n")?;
+        }
+        Ok(())
+    }
+}
+
+pub(super) fn redact(ctx: &Ctx, args: &[&String], pattern: Option<&str>) -> R {
+    let extra = pattern
+        .map(regex::bytes::Regex::new)
+        .transpose()
+        .map_err(|_| {
+            ctx.err("invalid --redact-regex pattern");
             Fail(2)
         })?;
-    let regex = regex::bytes::Regex::new(pattern).map_err(|_| {
-        ctx.err("invalid --redact regex");
-        Fail(2)
-    })?;
+    let mut redactor = Redactor {
+        in_private_key: false,
+        extra,
+    };
     let exe = std::env::current_exe().map_err(|_| Fail(1))?;
     let mut child = Command::new(exe)
         .arg("logs")
-        .args(&args[..index])
-        .args(&args[index + 2..])
-        .env("__RWORKER_COLOR", if ctx.color { "1" } else { "0" })
+        .args(args)
+        .env("__RWORKER_COLOR", "0")
         .stdout(Stdio::piped())
         .spawn()
         .map_err(|_| Fail(1))?;
@@ -509,11 +572,7 @@ pub(super) fn redact(ctx: &Ctx, args: &[String], index: usize) -> R {
     let result = (|| -> io::Result<()> {
         let mut line = Vec::new();
         while source.read_until(b'\n', &mut line)? != 0 {
-            let ending = line.strip_suffix(b"\n");
-            stdout.write_all(&regex.replace_all(ending.unwrap_or(&line), &b"[REDACTED]"[..]))?;
-            if ending.is_some() {
-                stdout.write_all(b"\n")?;
-            }
+            redactor.line(&line, &mut stdout)?;
             stdout.flush()?;
             line.clear();
         }
@@ -652,6 +711,27 @@ pub(crate) fn read_at(root: &Path, args: &[String], preview: bool) -> R {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn redacts_recognizable_credentials_and_private_key_blocks() -> io::Result<()> {
+        let known_token = format!("ghp_{}", "x".repeat(36));
+        let input = format!(
+            "ok\nPASSWORD=example@internal\nAuthorization: Bearer placeholder\nhttps://user:example@host.invalid/path\n{known_token}\n-----BEGIN OPENSSH PRIVATE KEY-----\nkey fixture\n-----END OPENSSH PRIVATE KEY-----\ncustom fixture"
+        );
+        let mut redactor = Redactor {
+            in_private_key: false,
+            extra: Some(regex::bytes::Regex::new("custom fixture").unwrap()),
+        };
+        let mut output = Vec::new();
+        for line in input.as_bytes().split_inclusive(|byte| *byte == b'\n') {
+            redactor.line(line, &mut output)?;
+        }
+        assert_eq!(
+            output,
+            b"ok\nPASSWORD=[REDACTED]\nAuthorization: Bearer [REDACTED]\nhttps://user:[REDACTED]@host.invalid/path\n[REDACTED]\n[REDACTED]\n[REDACTED]\n[REDACTED]\n[REDACTED]"
+        );
+        Ok(())
+    }
 
     #[test]
     fn tails_verbatim_with_or_without_final_newline() {

@@ -213,7 +213,7 @@ pub fn cmd_niks3_token(ctx: &Ctx, args: &[String]) -> R {
 
 pub fn cmd_profiles(ctx: &Ctx, args: &[String]) -> R {
     if !args.is_empty() {
-        crate::help::plain(ctx, "profiles");
+        crate::help::show(ctx, "profiles");
         return Err(Fail(2));
     }
     let out = state::remote(ctx, &["profiles"])?;

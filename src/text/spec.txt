@@ -34,7 +34,8 @@ flag start --name=job name the registered job
 flag start --workdir=path working directory on the worker
 flag ps --long show full process command lines
 flag logs --cached read a retained snapshot for WORKER [JOB]
-flag logs --redact=regex replace matches in displayed log lines
+flag logs --redact mask common secrets in displayed logs
+flag logs --redact-regex=regex also mask matches of this expression
 flag logs --lines=count number of lines per job
 flag logs --follow follow all jobs on all workers
 flag logs -f short for --follow

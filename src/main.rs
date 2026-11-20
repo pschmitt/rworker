@@ -640,12 +640,20 @@ mod tests {
         logs_value_flags.sort();
         assert_eq!(
             logs_value_flags,
-            ["--agent", "--agent-id", "--lines", "--redact", "--topic"],
+            [
+                "--agent",
+                "--agent-id",
+                "--lines",
+                "--redact-regex",
+                "--topic"
+            ],
             "logs gained or lost a value flag: update the worker detection of both completion scripts"
         );
-        assert!(ZSH_COMPLETION.contains("--lines|--topic|--agent|--agent-id|--redact) skipval=1"));
+        assert!(
+            ZSH_COMPLETION.contains("--lines|--topic|--agent|--agent-id|--redact-regex) skipval=1")
+        );
         assert!(BASH_COMPLETION.contains(
-            r#"[[ "$w" == --lines || "$w" == --topic || "$w" == --agent || "$w" == --agent-id || "$w" == --redact ]]"#
+            r#"[[ "$w" == --lines || "$w" == --topic || "$w" == --agent || "$w" == --agent-id || "$w" == --redact-regex ]]"#
         ));
     }
 

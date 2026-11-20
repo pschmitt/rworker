@@ -91,7 +91,7 @@ _rworker() {
       if ((skipval))
       then
         skipval=0
-      elif [[ "$w" == --lines || "$w" == --topic || "$w" == --agent || "$w" == --agent-id || "$w" == --redact ]]
+      elif [[ "$w" == --lines || "$w" == --topic || "$w" == --agent || "$w" == --agent-id || "$w" == --redact-regex ]]
       then
         skipval=1
       elif [[ "$w" != -* ]]
