@@ -14,6 +14,7 @@ let
           enable = true;
           reaper.enable = true;
           logCache.operator = "operator";
+          logCache.workerUser = "agent";
           api.https = {
             serverName = "control.example.com";
             listenAddress = "127.0.0.1";
@@ -42,6 +43,7 @@ assert
   (builtins.head config.services.nginx.virtualHosts."control.example.com".listen).addr == "127.0.0.1";
 assert timers.rworker-reaper.timerConfig.OnUnitActiveSec == "1m";
 assert services.rworker-log-cache.serviceConfig.User == "operator";
+assert services.rworker-log-cache.environment.RWORKER_USER == "agent";
 assert timers.rworker-log-cache.timerConfig.OnUnitInactiveSec == "30s";
 pkgs.runCommand "rworker-server-module-check" { } ''
   test -e ${config.systemd.units."rworker-control.socket".unit}

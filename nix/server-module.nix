@@ -54,6 +54,12 @@ in
         default = null;
         description = "Unix account that collects and reads cached job logs. It must already have pinned SSH access to its workers without an interactive agent.";
       };
+      workerUser = lib.mkOption {
+        type = lib.types.nullOr lib.types.str;
+        default = null;
+        example = "agent";
+        description = "Override the remote worker login for collection when jobs run under a separate account.";
+      };
       retentionDays = lib.mkOption {
         type = lib.types.ints.positive;
         default = 7;
@@ -228,7 +234,12 @@ in
           pkgs.coreutils
           pkgs.openssh
         ];
-        environment.RWORKER_CONTROL_SOCKET = socket;
+        environment = {
+          RWORKER_CONTROL_SOCKET = socket;
+        }
+        // lib.optionalAttrs (cfg.logCache.workerUser != null) {
+          RWORKER_USER = cfg.logCache.workerUser;
+        };
         serviceConfig = {
           Type = "oneshot";
           User = cfg.logCache.operator;

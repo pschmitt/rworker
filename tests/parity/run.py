@@ -474,6 +474,11 @@ def main():
             wide = "wide" in args
             a["stdout"] = compare_ls_columns(a["stdout"], legacy=True, wide=wide)
             b["stdout"] = compare_ls_columns(b["stdout"], legacy=False, wide=wide)
+        if name == "logs-unknown":
+            # Keep comparing the original diagnostic and usage after the two
+            # new log options have been accounted for.
+            b["stderr"] = b["stderr"].replace(" [--redact REGEX]", "")
+            b["stderr"] = re.sub(r"(?m)^ +rworker logs WORKER \[JOB\] --cached \[--lines N\]\n", "", b["stderr"])
         if name == "logs-follow":
             # The fake follower's shell may report the killed test sleep.
             for result in (a, b):

@@ -40,14 +40,17 @@ lifecycle events and a periodic worker count on stderr.
 
 A control host can collect the operator’s registered logs every 30 seconds.
 Set `services.rworker.logCache.operator` to the Unix account that already
-has noninteractive SSH access to the workers. The service keeps the files
+has noninteractive SSH access to the workers. Set
+`services.rworker.logCache.workerUser = "agent"` when collecting jobs run
+as `agent` by clients on other hosts. The service keeps the files
 in that account’s rworker state directory with private permissions. The
 default limits are seven days from modification, 2 GiB total, and 32 MiB
 per job. When space runs out it removes the oldest snapshots first.
 
 Use `rworker logs WORKER [JOB] --cached` with the exact worker name, including
 after the worker is removed. The control-host SSH connection must use the
-same Unix account as the collector. Set `RWORKER_LOG_CACHE_READ=1` to prefer
+same Unix account as the collector. Use one worker-login context for
+both collection and cached reads. Set `RWORKER_LOG_CACHE_READ=1` to prefer
 cached results for ordinary finite log reads and seed the TUI log preview.
 Finite reads fall back to the worker on a cache miss. Following logs uses
 the live worker connection.

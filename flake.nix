@@ -155,26 +155,28 @@
         ];
       };
 
-      nixosModules.workerImage = {
-        imports = [
-          ./nix/worker/disk.nix
-          ./nix/worker/image.nix
-        ];
-      };
-
-      nixosModules.workerImageOpenStack = {
-        imports = [
-          self.nixosModules.workerImage
-          ./nix/worker/standalone.nix
-        ];
-      };
-
-      nixosModules.default =
-        { lib, pkgs, ... }:
-        {
-          imports = [ ./nix/server-module.nix ];
-          services.rworker.package = lib.mkDefault self.packages.${pkgs.stdenv.hostPlatform.system}.default;
+      nixosModules = {
+        workerImage = {
+          imports = [
+            ./nix/worker/disk.nix
+            ./nix/worker/image.nix
+          ];
         };
+
+        workerImageOpenStack = {
+          imports = [
+            self.nixosModules.workerImage
+            ./nix/worker/standalone.nix
+          ];
+        };
+
+        default =
+          { lib, pkgs, ... }:
+          {
+            imports = [ ./nix/server-module.nix ];
+            services.rworker.package = lib.mkDefault self.packages.${pkgs.stdenv.hostPlatform.system}.default;
+          };
+      };
 
       # programs.rworker; this flake's package is the default.
       homeModules.default =
