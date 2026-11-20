@@ -25,7 +25,7 @@ pub fn agent_label(ctx: &Ctx, a: &Value) -> String {
     let s = jq::or_empty(a);
     if s.is_empty() {
         "-".to_string()
-    } else if ctx.icons {
+    } else if ctx.icons.get() {
         format!("{} {s}", glyph(&s))
     } else {
         s
@@ -88,7 +88,7 @@ fn opt(v: &Value) -> Value {
 
 fn expiry(w: &Value, now: f64) -> String {
     let pool_state = get(w, "pool_state");
-    if get(w, "kind").as_str() == Some("pool") && jq::truthy(pool_state) {
+    if is_pool(w) && jq::truthy(pool_state) {
         let last_busy = get(w, "last_busy");
         if pool_state.as_str() == Some("idle") && jq::truthy(last_busy) {
             format!("idle {}", dur(now - jq::as_f64(last_busy)))
@@ -104,8 +104,17 @@ fn expiry(w: &Value, now: f64) -> String {
     }
 }
 
+/// An autoscaled worker: `kind` is its pool's name (older control hosts
+/// said `pool`), anything but `adhoc`/`unknown`.
+pub(crate) fn is_pool(w: &Value) -> bool {
+    !matches!(
+        get(w, "kind").as_str(),
+        None | Some("adhoc" | "unknown" | "")
+    )
+}
+
 pub(crate) const COLUMNS: [&str; 6] = ["NAME", "STATUS", "AGENT", "TOPIC", "EXPIRES", "AGE"];
-pub(crate) const WIDE_COLUMNS: [&str; 3] = ["OWNER", "PROFILE", "IP"];
+pub(crate) const WIDE_COLUMNS: [&str; 4] = ["KIND", "OWNER", "PROFILE", "IP"];
 
 /// kubectl-style table from `ls` JSON (aligned, uncolored); empty when
 /// there are no workers.
@@ -145,8 +154,17 @@ pub fn plain(ctx: &Ctx, list: &Value) -> R<String> {
             },
             _ => "-".to_string(),
         };
+        let name = if ctx.icons.get() && ctx.color {
+            Value::String(format!(
+                "{} {}",
+                crate::pool_icon::glyph(w),
+                jq::raw(get(w, "name"))
+            ))
+        } else {
+            get(w, "name").clone()
+        };
         let mut cells = vec![
-            jq::tsv(get(w, "name")),
+            jq::tsv(&name),
             jq::tsv(&Value::String(status.to_ascii_uppercase())),
             jq::tsv(&Value::String(agent_label(ctx, get(w, "agent")))),
             jq::tsv(&opt(get(w, "topic"))),
@@ -155,6 +173,7 @@ pub fn plain(ctx: &Ctx, list: &Value) -> R<String> {
         ];
         if wide {
             cells.extend([
+                jq::tsv(&opt(get(w, "kind"))),
                 jq::tsv(&opt(get(w, "owner"))),
                 jq::tsv(jq::alt(
                     get(w, "profile"),

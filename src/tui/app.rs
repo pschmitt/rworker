@@ -43,6 +43,8 @@ pub struct Worker {
     pub created: Option<i64>,
     pub mine: bool,
     pub retired: bool,
+    /// Nerd Font glyph of the worker's image (or its kind's fallback).
+    pub glyph: String,
     raw: Value,
 }
 
@@ -78,6 +80,7 @@ impl Worker {
                 .as_str()
                 .and_then(crate::time::created_epoch),
             retired: false,
+            glyph: crate::pool_icon::glyph(v).to_owned(),
             raw: v.clone(),
         }
     }
@@ -87,7 +90,7 @@ impl Worker {
     pub fn expiry(&self, now: f64) -> (String, Urgency) {
         let w = &self.raw;
         let pool_state = get(w, "pool_state");
-        if self.kind == "pool" && jq::truthy(pool_state) {
+        if crate::table::is_pool(w) && jq::truthy(pool_state) {
             let last_busy = get(w, "last_busy");
             if pool_state.as_str() == Some("idle") && jq::truthy(last_busy) {
                 let idle = crate::table::dur(now - jq::as_f64(last_busy));
@@ -993,8 +996,8 @@ impl App {
                     if force {
                         args.push("--force".into());
                     }
-                    let whose = if w.kind == "pool" {
-                        " This is a pool worker: its builds fail.".to_string()
+                    let whose = if crate::table::is_pool(&w.raw) {
+                        format!(" This is a {} pool worker: its builds fail.", w.kind)
                     } else if force {
                         format!(
                             " It belongs to {}.",
@@ -1433,7 +1436,7 @@ pub fn run(ctx: &Ctx, interval: Duration) -> std::io::Result<()> {
     let mut app = App {
         control_host: ctx.control_host.clone(),
         owner: ctx.owner(),
-        icons: ctx.icons,
+        icons: ctx.icons.get(),
         workers: Vec::new(),
         show_history: false,
         history: Vec::new(),

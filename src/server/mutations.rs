@@ -1,18 +1,15 @@
 use serde_json::{Map, Value};
 
-use super::{metadata, selection::Target};
+use super::{metadata, pools::Pools, selection::Target};
 
 pub(super) type WorkerRecord<Id> = (Id, Map<String, Value>);
 
 pub(super) trait Compute {
     type WorkerId;
 
-    /// Fetch the exact matching worker within the selected prefix.
-    fn worker(
-        &mut self,
-        prefix: &str,
-        name: &str,
-    ) -> Result<Option<WorkerRecord<Self::WorkerId>>, String>;
+    /// Fetch the server with exactly this name; callers classify it with
+    /// `pools::Pools` before acting on it.
+    fn worker(&mut self, name: &str) -> Result<Option<WorkerRecord<Self::WorkerId>>, String>;
 
     fn set_metadata(
         &mut self,
@@ -30,16 +27,16 @@ pub(super) enum Edit<'a> {
 
 pub(super) fn edit(
     cloud: &mut impl Compute,
-    prefixes: (&str, &str),
+    pools: &Pools<'_>,
     name: &str,
     owner: Option<&str>,
     force: bool,
     action: Edit<'_>,
 ) -> Result<Value, String> {
-    let target = Target::select(name, prefixes.0, prefixes.1, false)?;
     let (id, existing) = cloud
-        .worker(target.prefix, name)?
+        .worker(name)?
         .ok_or_else(|| format!("no worker {name}"))?;
+    let target = Target::new(name, pools.classify(name, &existing), false)?;
     target.check(existing.get("owner").and_then(Value::as_str), owner, force)?;
     let change = match action {
         Edit::Topic(text) => metadata::topic(name, text),
@@ -98,14 +95,14 @@ pub(super) struct Extension {
 pub(super) fn expiry(
     settings: &Value,
     cloud: &mut impl Compute<WorkerId = String>,
-    prefixes: (&str, &str),
+    pools: &Pools<'_>,
     args: &super::EditArgs<'_>,
 ) -> Result<Value, String> {
     let name = args.name;
-    let target = Target::select(name, prefixes.0, prefixes.1, false)?;
     let (id, metadata) = cloud
-        .worker(target.prefix, name)?
+        .worker(name)?
         .ok_or_else(|| format!("no worker {name}"))?;
+    let target = Target::new(name, pools.classify(name, &metadata), false)?;
     target.check(
         metadata.get("owner").and_then(Value::as_str),
         args.owner,
@@ -166,15 +163,15 @@ pub(super) fn expiry(
 pub(super) fn down(
     settings: &Value,
     compute: &mut super::openstack::OpenStack,
-    prefixes: (&str, &str),
+    pools: &Pools<'_>,
     args: &super::EditArgs<'_>,
 ) -> Result<(), String> {
     let name = args.name;
     let netbird = super::netbird::NetBird::from_settings(settings)?;
-    let target = Target::select(name, prefixes.0, prefixes.1, true)?;
     let (id, metadata) = compute
-        .worker(target.prefix, name)?
+        .worker(name)?
         .ok_or_else(|| format!("no worker {name}"))?;
+    let target = Target::new(name, pools.classify(name, &metadata), true)?;
     target.check(
         metadata.get("owner").and_then(Value::as_str),
         args.owner,

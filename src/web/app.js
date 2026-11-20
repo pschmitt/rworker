@@ -128,6 +128,30 @@ const agentIcons = new Map([
   ["antigravity", ["\uec10", ""]], ["browser-daemon", ["\u{f02a0}", ""]],
 ]);
 
+// Worker glyphs: the `icon` of the worker's Glance image (rworker_icon) when
+// the bundled font has it, else one for its kind. Keep in sync with
+// scripts/web-icon-font.sh, which builds agents.woff2 from these.
+const workerGlyphs = new Set(["\u{f1064}", "\u{f06a9}", "\u{f048b}", "\u{f0508}", "\u{f059f}"]);
+
+function isPool(row) {
+  return Boolean(row.kind) && !["adhoc", "unknown"].includes(row.kind);
+}
+
+function workerGlyph(row) {
+  if (row.icon && workerGlyphs.has(row.icon)) return row.icon;
+  if (row.kind === "adhoc") return "\u{f1064}";
+  if (row.kind === "nixbot" || row.kind === "pool") return "\u{f06a9}";
+  return "\u{f048b}";
+}
+
+function workerName(row) {
+  const node = named(row.name, row.label || (isPool(row) ? row.kind + " pool" : ""), () => selected(row));
+  const glyph = element("span", workerGlyph(row), "agent-icon worker-icon");
+  glyph.setAttribute("aria-hidden", "true");
+  node.prepend(glyph);
+  return node;
+}
+
 function agentLabel(agent) {
   if (!agent) return "—";
   const label = element("span", null, "agent");
@@ -203,7 +227,7 @@ function workerAge(created, now) {
 function workerExpiry(row, now) {
   let label = "—";
   let tone = "";
-  if (row.kind === "pool" && row.pool_state) {
+  if (isPool(row) && row.pool_state) {
     label = row.pool_state;
     if (label === "idle" && row.last_busy > 0) {
       label += " " + duration(now - row.last_busy);
@@ -231,7 +255,7 @@ const sortFields = {
   workers: [
     (row) => row.name, (row) => row.retired ? "Retired" : row.status, (row) => row.agent,
     (row) => row.topic,
-    (row, now) => row.kind === "pool" && row.pool_state ? null :
+    (row, now) => isPool(row) && row.pool_state ? null :
       row.grace_until > now ? Number(row.grace_until) : Number(row.expires_at) || null,
     (row) => -timestamp(row.created_at),
   ],
@@ -361,7 +385,7 @@ function render() {
       columns = [["Name"], ["Status"], ["Agent"], ["Topic"], ["Expires"], ["Age"]];
       rows = visible.map((row) => ({
         selected: state.selected?.name === row.name,
-        cells: [named(row.name, null, () => selected(row)), badge(row.retired ? "Retired" : row.status),
+        cells: [workerName(row), badge(row.retired ? "Retired" : row.status),
           agentLabel(row.agent), row.topic || "—", workerExpiry(row, now),
           element("span", workerAge(row.created_at, now), "worker-age")],
       }));

@@ -421,7 +421,14 @@ impl App {
                     Span::raw(w.topic.clone())
                 };
                 let mut cells = vec![
-                    Cell::from(Span::styled(w.name.clone(), Style::new().fg(ACCENT))),
+                    Cell::from(Span::styled(
+                        if self.icons {
+                            format!("{} {}", w.glyph, w.name)
+                        } else {
+                            w.name.clone()
+                        },
+                        Style::new().fg(ACCENT),
+                    )),
                     Cell::from(Span::styled(
                         w.status.clone(),
                         if w.retired {
@@ -460,7 +467,7 @@ impl App {
             .min(table_area.width.saturating_sub(11).max(4));
         let name_w = visible
             .iter()
-            .map(|w| w.name.width())
+            .map(|w| w.name.width() + if self.icons { 2 } else { 0 })
             .max()
             .unwrap_or(4)
             .clamp(4, usize::from(name_cap)) as u16;

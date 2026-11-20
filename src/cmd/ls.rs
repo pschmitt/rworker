@@ -77,6 +77,7 @@ pub fn cmd_ls(ctx: &Ctx, args: &[String]) -> R {
             }
             "--json" | "-ojson" => json = true,
             "--wide" | "-owide" => ctx.wide.set(true),
+            "--no-icons" => ctx.icons.set(false),
             "-w" | "--watch" => watch = true,
             "--fresh" => fresh = true,
             "-A" | "--all" | "--history" => history = true,
@@ -134,6 +135,13 @@ pub fn cmd_ls(ctx: &Ctx, args: &[String]) -> R {
     };
     let out = filter_workers(ctx, &out, &topic, &agent)?;
     if json || ctx.json.get() {
+        let out = match serde_json::from_str::<serde_json::Value>(&out) {
+            Ok(mut list) => {
+                crate::pool_icon::strip(&mut list);
+                list.to_string()
+            }
+            Err(_) => out,
+        };
         crate::ctx::json_out(ctx, &out);
         return Ok(());
     }

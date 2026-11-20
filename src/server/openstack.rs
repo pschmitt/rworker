@@ -86,15 +86,15 @@ pub(super) fn setting<'a>(settings: &'a Value, key: &str) -> Result<&'a str, Str
 impl Compute for OpenStack {
     type WorkerId = String;
 
-    fn worker(&mut self, prefix: &str, name: &str) -> Result<Option<WorkerRecord<String>>, String> {
+    fn worker(&mut self, name: &str) -> Result<Option<WorkerRecord<String>>, String> {
         let output = self.command(&["server", "list", "-f", "json", "-c", "ID", "-c", "Name"])?;
         let servers: Vec<Value> = serde_json::from_slice(&output)
             .map_err(|_| "Invalid OpenStack server listing".to_string())?;
-        let Some(server) = servers.iter().rev().find(|server| {
-            server["Name"]
-                .as_str()
-                .is_some_and(|n| n == name && n.starts_with(prefix))
-        }) else {
+        let Some(server) = servers
+            .iter()
+            .rev()
+            .find(|server| server["Name"].as_str() == Some(name))
+        else {
             return Ok(None);
         };
         let id = setting(server, "ID")?;

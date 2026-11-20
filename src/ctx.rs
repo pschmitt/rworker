@@ -16,8 +16,9 @@ pub struct Ctx {
     /// `$USER`, possibly empty.
     pub user: String,
     pub hostname: String,
-    /// Nerd Font glyphs for the creating agent.
-    pub icons: bool,
+    /// Nerd Font glyphs (creating agent, worker image) in human-readable
+    /// output: off with RWORKER_ICONS=0, NO_NERD_FONTS or `ls --no-icons`.
+    pub icons: Cell<bool>,
     /// Colors for human-readable output: stdout is a terminal and NO_COLOR
     /// is unset. Decided once, like the bash client.
     pub color: bool,
@@ -83,7 +84,9 @@ impl Ctx {
             home,
             user: env("USER"),
             hostname: hostname(),
-            icons: env_or("RWORKER_ICONS", "1") != "0",
+            icons: Cell::new(
+                env_or("RWORKER_ICONS", "1") != "0" && env("NO_NERD_FONTS").is_empty(),
+            ),
             color,
             no_color,
             control_master: env_or("RWORKER_SSH_CONTROL_MASTER", "1") != "0",

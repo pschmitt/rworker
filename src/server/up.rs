@@ -239,6 +239,9 @@ pub(super) fn up(cfg: &Value, args: Args<'_>) -> Result<Value, String> {
         Ok(Some(response)) => Ok(response),
         result => {
             let compute = OpenStack::from_settings(cfg)?;
+            if matches!(result, Ok(None)) {
+                eprintln!("{}", boot_diagnostics(cfg, &compute, &id, &name));
+            }
             mutations::delete(cfg, &compute, &netbird, &id, &name, &metadata)?;
             result?.ok_or_else(|| format!("{name} did not come up; deleted it"))
         }
@@ -246,6 +249,110 @@ pub(super) fn up(cfg: &Value, args: Args<'_>) -> Result<Value, String> {
 }
 
 pub(super) type Ready = (String, std::net::IpAddr, Map<String, Value>);
+
+/// Lines a console may show that must not reach logs: tokens, keys and
+/// passwords from cloud-init or services. The worker's public host key
+/// line is fine.
+fn secret_line(line: &str) -> bool {
+    if line.contains("NIXBOT-WORKER-HOSTKEY") {
+        return false;
+    }
+    let lower = line.to_ascii_lowercase();
+    [
+        "token",
+        "secret",
+        "password",
+        "passwd",
+        "setup_key",
+        "setup-key",
+        "setupkey",
+        "authkey",
+        "auth_key",
+        "auth-key",
+        "private key",
+        "-----begin",
+        "key=",
+    ]
+    .iter()
+    .any(|word| lower.contains(word))
+}
+
+/// Why a worker never became ready, logged before it is deleted: the
+/// server's state and fault, the readiness step it stopped at (ACTIVE?
+/// host key on the console? overlay address answering SSH?) and the
+/// filtered console tail.
+pub(super) fn boot_diagnostics(cfg: &Value, compute: &OpenStack, id: &str, name: &str) -> String {
+    let mut out = vec![format!("boot diagnostics for {name} ({id}):")];
+    match compute.command(&[
+        "server",
+        "show",
+        "-f",
+        "json",
+        "-c",
+        "status",
+        "-c",
+        "OS-EXT-STS:task_state",
+        "-c",
+        "fault",
+        "--",
+        id,
+    ]) {
+        Ok(output) => {
+            let detail: Value = serde_json::from_slice(&output).unwrap_or_default();
+            let fault = detail["fault"]["message"]
+                .as_str()
+                .or_else(|| detail["fault"].as_str())
+                .unwrap_or("-");
+            out.push(format!(
+                "  server: status={} task_state={} fault={fault}",
+                detail["status"].as_str().unwrap_or("?"),
+                detail["OS-EXT-STS:task_state"].as_str().unwrap_or("-"),
+            ));
+        }
+        Err(error) => out.push(format!("  server: {error}")),
+    }
+    match boot_status(cfg, compute, id, name) {
+        Ok((stage, _)) => out.push(format!("  readiness stopped at: {stage}")),
+        Err(error) => out.push(format!("  readiness: {error}")),
+    }
+    match worker_ssh::routes(cfg, name) {
+        Ok((reachable, ips)) => {
+            if ips.is_empty() {
+                out.push("  overlay: no NetBird peer or Tailscale device with this name".into());
+            }
+            for (overlay, ip) in &ips {
+                let ip = ip.as_str().unwrap_or_default();
+                let answers = ip
+                    .parse()
+                    .is_ok_and(|ip| reachable == Some(ip) || worker_ssh::answers(ip));
+                out.push(format!(
+                    "  overlay {overlay}: {ip} ssh {}",
+                    if answers {
+                        "answers"
+                    } else {
+                        "does not answer"
+                    }
+                ));
+            }
+        }
+        Err(error) => out.push(format!("  overlay: {error}")),
+    }
+    match compute.command(&["console", "log", "show", "--lines", "40", "--", id]) {
+        Ok(output) => {
+            out.push("  console (last 40 lines, secrets filtered):".into());
+            let text = String::from_utf8_lossy(&output);
+            for line in text.lines() {
+                if secret_line(line) {
+                    out.push("    [filtered]".into());
+                } else {
+                    out.push(format!("    {}", line.trim_end()));
+                }
+            }
+        }
+        Err(error) => out.push(format!("  console: {error}")),
+    }
+    out.join("\n")
+}
 
 fn ready(
     cfg: &Value,
@@ -320,4 +427,18 @@ pub(super) fn boot_status(
         _ => Boot::Waiting,
     };
     Ok((stage.to_owned(), result))
+}
+
+#[cfg(test)]
+mod boot_diagnostics_tests {
+    use super::secret_line;
+
+    #[test]
+    fn console_secrets_are_filtered_but_the_host_key_stays() {
+        assert!(!secret_line("NIXBOT-WORKER-HOSTKEY ssh-ed25519 AAAA"));
+        assert!(secret_line("netbird_setup_key: ABC"));
+        assert!(secret_line("Using token=deadbeef"));
+        assert!(secret_line("-----BEGIN OPENSSH PRIVATE KEY-----"));
+        assert!(!secret_line("[  OK  ] Started NetBird."));
+    }
 }

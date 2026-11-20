@@ -11,6 +11,7 @@ mod help;
 mod inventory_feed;
 mod jq;
 mod paint;
+mod pool_icon;
 mod proc;
 mod server;
 mod signals;

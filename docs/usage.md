@@ -31,6 +31,23 @@ matches. `USER@NAME` picks the login user; the default is `agent` on ad-hoc
 workers this host created and yourself on all others. Workers this host has
 not seen yet are looked up on the control host on first use.
 
+## Worker kinds and pools
+
+The control host tells workers apart by their OpenStack metadata, not their
+names: `nixbot-worker=adhoc` marks an ad-hoc worker, `rworker-pool=NAME` the
+pool of an autoscaled one (each autoscaler sets it at creation, from
+`poolName` or its `poolLabels.kind`). `ls` shows `adhoc` or the pool name as
+KIND (`-o wide`); the reaper only ever deletes ad-hoc workers. Workers from
+before this metadata fall back to their name prefix: `adhocPrefix`,
+`poolPrefix` (nixbot's pool) and the optional `poolPrefixes` map
+(prefix -> pool name).
+
+Each worker shows the Nerd Font glyph of its image: the Glance image
+property `rworker_icon` as a codepoint (`U+F0508`; Glance stores no 4-byte
+UTF-8) and `rworker_label`, a display name, both set when the image is
+published; without them, a glyph for its kind. JSON output carries
+the kind, pool and label, never the glyph.
+
 `rworker machines` lists workers and accepts the aliases `ls`, `nodes`, and
 `instances`. Unique prefixes work too, for example `rworker lo` for `logs`
 and `rworker no` for `nodes`. `rworker info` is an alias for `inspect`, and `flavors` is an alias for `profiles`.
@@ -138,7 +155,7 @@ draws.
 | `RWORKER_KEY` | Public key file handed to new workers (default `~/.ssh/id_ed25519.pub`) |
 | `RWORKER_USER` | Login user override |
 | `RWORKER_AGENT_ID`, `CONCORD_AGENT_ID` | Agent id recorded on `up` and `claim` |
-| `RWORKER_ICONS=0` | No Nerd Font glyphs for the creating agent |
+| `RWORKER_ICONS=0`, `NO_NERD_FONTS` | No Nerd Font glyphs (creating agent, worker image); `ls --no-icons` for one call |
 | `RWORKER_PROBE_TIMEOUT` | Seconds to wait for each overlay address (default 4) |
 | `RWORKER_AWS_CREDENTIALS_FILE` | AWS credentials file `nix-cache` reads its profiles from (else `AWS_SHARED_CREDENTIALS_FILE`, else `~/.aws/credentials`) |
 | `RWORKER_SSH_CONTROL_MASTER=0` | No shared SSH connection to the control host |

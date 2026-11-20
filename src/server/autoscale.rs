@@ -332,7 +332,7 @@ use super::{
     mutations::{self, Compute},
     netbird::NetBird,
     openstack::OpenStack,
-    provision,
+    pools, provision,
     up::{self, Boot},
     worker_ssh,
 };
@@ -387,7 +387,9 @@ impl Pool<'_> {
     fn reconcile(&mut self) -> Result<(), String> {
         let cfg = self.cfg;
         let now = epoch();
-        let prefix = setting(cfg, "namePrefix")?;
+        let own = pools::own_pool(cfg);
+        let classification = legacy_prefixes(cfg);
+        let pools = pools::Pools::from_settings(&classification)?;
         if now - self.last_membership_check > 600.0 {
             self.netbird.ensure_member(
                 setting(cfg, "netbirdNixbotGroup")?,
@@ -398,15 +400,30 @@ impl Pool<'_> {
         if cfg["reapAdhoc"] == true {
             super::reap_command::reap(cfg, false)?;
         }
-        let output = self
-            .compute
-            .command(&["server", "list", "-f", "json", "-c", "ID", "-c", "Name"])?;
+        let output = self.compute.command(&[
+            "server",
+            "list",
+            "-f",
+            "json",
+            "-c",
+            "ID",
+            "-c",
+            "Name",
+            "-c",
+            "Properties",
+        ])?;
         let list: Vec<Value> =
             serde_json::from_slice(&output).map_err(|_| "Invalid OpenStack server listing")?;
         let mut servers = BTreeMap::new();
         for server in &list {
             let name = setting(server, "Name")?;
-            if name.starts_with(prefix) {
+            let listed = server["Properties"]
+                .as_object()
+                .cloned()
+                .unwrap_or_default();
+            // This pool's workers by their metadata; `namePrefix` only for
+            // workers created before `rworker-pool` existed.
+            if pools.classify(name, &listed) == Some(pools::Kind::Pool(own.clone())) {
                 servers.insert(name, setting(server, "ID")?);
             }
         }
@@ -446,6 +463,7 @@ impl Pool<'_> {
                     json!(format!("{}@{}", labels.agent, setting(cfg, "netbirdSelf")?)),
                 ),
                 ("nixbot-worker", json!(labels.kind)),
+                (pools::POOL_KEY, json!(pools::own_pool(cfg))),
                 ("agent", json!(labels.agent)),
                 ("topic", json!(labels.topic)),
             ]
@@ -495,7 +513,7 @@ impl Pool<'_> {
                 "demand: {queued} queued ({} pending, {} building, {slots} slots)",
                 demand.pending, demand.building
             );
-            if let Err(error) = self.create_worker(prefix) {
+            if let Err(error) = self.create_worker(setting(cfg, "namePrefix")?) {
                 eprintln!("not scaling up: {error}");
             }
             self.scale.attempted(now);
@@ -510,6 +528,7 @@ impl Pool<'_> {
         let labels = PoolLabels::from_settings(cfg);
         let metadata = [
             ("nixbot-worker".into(), json!(labels.kind)),
+            (pools::POOL_KEY.into(), json!(pools::own_pool(cfg))),
             (
                 "owner".into(),
                 json!(format!("{}@{}", labels.agent, setting(cfg, "netbirdSelf")?)),
@@ -555,6 +574,7 @@ impl Pool<'_> {
                     .ok_or("Missing worker creation time")?
                 > count(cfg, "bootTimeout")? as f64;
             if !recovering && timed_out {
+                eprintln!("{}", up::boot_diagnostics(cfg, &self.compute, &id, name));
                 self.remove(name, &id, worker, "did not come up in time")?;
                 return Ok(false);
             }
@@ -564,6 +584,7 @@ impl Pool<'_> {
                     eprintln!("cannot recover {name}: server is in ERROR state")
                 }
                 Boot::Failed => {
+                    eprintln!("{}", up::boot_diagnostics(cfg, &self.compute, &id, name));
                     self.remove(name, &id, worker, "server in ERROR state")?;
                     return Ok(false);
                 }
@@ -578,9 +599,7 @@ impl Pool<'_> {
                     let _ = self.compute.delete_metadata(&id, &["setup_key_id"]);
                     if cfg["tailscale"].is_object() {
                         let result = (|| -> Result<(), String> {
-                            let Some((_, metadata)) =
-                                self.compute.worker(setting(cfg, "namePrefix")?, name)?
-                            else {
+                            let Some((_, metadata)) = self.compute.worker(name)? else {
                                 return Ok(());
                             };
                             if let Some(key) = metadata
@@ -680,9 +699,8 @@ impl Pool<'_> {
     }
 
     fn remove(&mut self, name: &str, id: &str, worker: &Value, reason: &str) -> Result<(), String> {
-        let prefix = setting(self.cfg, "namePrefix")?;
         eprintln!("deleting {name} ({reason})");
-        if let Some((current_id, mut metadata)) = self.compute.worker(prefix, name)?
+        if let Some((current_id, mut metadata)) = self.compute.worker(name)?
             && current_id == id
         {
             if let Some(key) = worker["setupKeyId"].as_str() {
@@ -692,6 +710,16 @@ impl Pool<'_> {
         }
         Ok(())
     }
+}
+
+/// Classification settings for this autoscaler: its `namePrefix` is the
+/// legacy fallback for its own pool (no ad-hoc prefix: never ours).
+fn legacy_prefixes(cfg: &Value) -> Value {
+    let mut prefixes = serde_json::Map::new();
+    if let Some(prefix) = cfg["namePrefix"].as_str() {
+        prefixes.insert(prefix.into(), json!(pools::own_pool(cfg)));
+    }
+    json!({ "adhocPrefix": "", "poolPrefixes": prefixes })
 }
 
 /// How the pool's workers are labelled in their OpenStack metadata (`ls`,

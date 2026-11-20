@@ -1,6 +1,6 @@
 @font-face {
   font-family: "rworker agents";
-  src: url("/assets/agents.woff2?v=2") format("woff2");
+  src: url("/assets/agents.woff2?v=3") format("woff2");
   font-display: block;
 }
 :root {
@@ -154,6 +154,7 @@ dialog footer { justify-content: end; border-top: 1px solid var(--line); }
 .agent-icon.claude { color: #d97757; }
 .agent-icon.codex { color: #c8c8c8; }
 .agent-icon.nix { color: #7ebae4; }
+.worker-icon { margin-right: 0.4em; }
 
 .event-tone.good { color: var(--green); }
 .event-tone.bad { color: var(--red); }

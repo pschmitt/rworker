@@ -4,13 +4,14 @@ pub(super) fn reap(cfg: &serde_json::Value, dry_run: bool) -> Result<(), String>
         mutations::{self, Compute},
         netbird::NetBird,
         openstack::{OpenStack, setting},
+        pools::{Kind, Pools},
         worker_ssh,
     };
     use serde_json::{Value, json};
 
     let mut compute = OpenStack::from_settings(cfg)?;
     let netbird = NetBird::from_settings(cfg)?;
-    let prefix = setting(cfg, "adhocPrefix")?;
+    let pools = Pools::from_settings(cfg)?;
     let number = |key: &str| {
         cfg[key]
             .as_f64()
@@ -22,12 +23,29 @@ pub(super) fn reap(cfg: &serde_json::Value, dry_run: bool) -> Result<(), String>
         max_ttl: number("adhocMaxTtl")?,
     };
     let now = super::epoch();
-    let output = compute.command(&["server", "list", "-f", "json", "-c", "ID", "-c", "Name"])?;
+    let output = compute.command(&[
+        "server",
+        "list",
+        "-f",
+        "json",
+        "-c",
+        "ID",
+        "-c",
+        "Name",
+        "-c",
+        "Properties",
+    ])?;
     let servers: Vec<Value> =
         serde_json::from_slice(&output).map_err(|_| "Invalid OpenStack server listing")?;
     for server in servers {
         let name = setting(&server, "Name")?;
-        if !name.starts_with(prefix) {
+        // Only ever ad-hoc workers: pool workers belong to their autoscaler,
+        // whatever their name says.
+        let listed = server["Properties"]
+            .as_object()
+            .cloned()
+            .unwrap_or_default();
+        if pools.classify(name, &listed) != Some(Kind::Adhoc) {
             continue;
         }
         let id = setting(&server, "ID")?.to_owned();

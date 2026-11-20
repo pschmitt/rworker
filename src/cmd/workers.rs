@@ -64,7 +64,7 @@ pub fn cmd_workers(ctx: &Ctx, action: &str) -> R {
         if adhoc_only && get(w, "kind").as_str() != Some("adhoc") {
             continue;
         }
-        let expiry = if get(w, "kind").as_str() == Some("pool") {
+        let expiry = if crate::table::is_pool(w) {
             Some(jq::raw(get(w, "pool_state")))
         } else if jq::gt_num(get(w, "grace_until"), now) {
             Some(format!(

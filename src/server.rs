@@ -9,6 +9,7 @@ mod mutations;
 mod netbird;
 mod niks3;
 mod openstack;
+mod pools;
 mod provision;
 mod reap_command;
 mod reaper;
@@ -154,18 +155,15 @@ pub fn run(ctx: &crate::ctx::Ctx, args: &[String]) -> R {
             up::up(&settings, args)?
         } else if let Some(edit) = edit {
             let mut compute = openstack::OpenStack::from_settings(&settings)?;
-            let prefixes = (
-                openstack::setting(&settings, "adhocPrefix")?,
-                openstack::setting(&settings, "poolPrefix")?,
-            );
+            let pools = pools::Pools::from_settings(&settings)?;
             match action.as_str() {
                 "down" => {
-                    mutations::down(&settings, &mut compute, prefixes, &edit)?;
+                    mutations::down(&settings, &mut compute, &pools, &edit)?;
                     writeln!(io::stdout().lock(), "deleted {}", edit.name)?;
                     return Ok(());
                 }
                 "extend" | "niks3-token" => {
-                    mutations::expiry(&settings, &mut compute, prefixes, &edit)?
+                    mutations::expiry(&settings, &mut compute, &pools, &edit)?
                 }
                 _ => {
                     let action = if let Some(text) = edit.text {
@@ -175,7 +173,7 @@ pub fn run(ctx: &crate::ctx::Ctx, args: &[String]) -> R {
                     };
                     mutations::edit(
                         &mut compute,
-                        prefixes,
+                        &pools,
                         edit.name,
                         edit.owner,
                         edit.force,

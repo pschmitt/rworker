@@ -169,7 +169,11 @@ fn remove(
         return Err("lease does not identify an ad-hoc worker".into());
     }
     let mut cloud = OpenStack::from_settings(settings)?;
-    if let Some((id, metadata)) = cloud.worker(prefix, name)? {
+    let pools = super::pools::Pools::from_settings(settings)?;
+    if let Some((id, metadata)) = cloud.worker(name)? {
+        if pools.classify(name, &metadata) != Some(super::pools::Kind::Adhoc) {
+            return Err("lease does not identify an ad-hoc worker".into());
+        }
         if metadata.get("owner").and_then(Value::as_str)
             != Some(lease["owner"].as_str().unwrap_or(LEGACY_OWNER))
         {
