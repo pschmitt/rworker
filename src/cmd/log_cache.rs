@@ -658,22 +658,28 @@ pub(crate) fn read_at(root: &Path, args: &[String], preview: bool) -> R {
     }
     let lines = lines.parse::<usize>().map_err(|_| Fail(2))?;
     let dir = root.join(worker);
+    let split_exec = !dir.join("exec").is_file()
+        || (dir.join("exec.stdout").is_file() && dir.join("exec.stderr").is_file());
     let mut paths = Vec::new();
     if job.is_empty() {
         for entry in fs::read_dir(&dir).map_err(|_| Fail(1))? {
             let entry = entry.map_err(|_| Fail(1))?;
             if entry.file_type().is_ok_and(|t| t.is_file())
-                && entry.file_name().to_str().is_some_and(component)
+                && entry
+                    .file_name()
+                    .to_str()
+                    .is_some_and(|name| component(name) && !(name == "exec" && split_exec))
             {
                 paths.push(entry.path());
             }
         }
         paths.sort_unstable();
     } else {
-        if job == "exec" {
+        if job == "exec" && split_exec {
             paths.extend([dir.join("exec.stdout"), dir.join("exec.stderr")]);
+        } else {
+            paths.push(dir.join(job));
         }
-        paths.push(dir.join(job));
     }
     let mut stdout = io::stdout().lock();
     let mut found = false;

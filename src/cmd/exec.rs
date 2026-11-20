@@ -157,7 +157,13 @@ pub fn cmd_exec(ctx: &Ctx, args: &[String]) -> R {
 
     let login = format!("agent@{ip}");
     let mut ssh = Command::new("ssh");
-    ssh.args(&opts).arg(&login).args(&cmd);
+    // OpenSSH joins command words with spaces before the remote shell parses
+    // them. Preserve that command string inside the job wrapper.
+    ssh.args(&opts).arg(&login).arg(format!(
+        "bash -c {} -- {}",
+        proc::shell_quote(include_str!("../exec-job.sh")),
+        proc::shell_quote(&cmd.join(" "))
+    ));
     let archive = info["archive_logs"] == true;
     let (rc, stdout, stderr) = if json {
         let o = ssh.output().map_err(|e| {

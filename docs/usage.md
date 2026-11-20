@@ -65,6 +65,12 @@ cached results for ordinary finite log reads and seed the TUI log preview.
 Finite reads fall back to the worker on a cache miss. Following logs uses
 the live worker connection.
 
+Each `rworker exec` run registers an implicit job called `exec`. Its
+combined output is available to `rworker logs -f` while the worker is live.
+The caller still receives stdout, stderr and the command's exit status.
+A command that finishes before discovery can be read from the archive
+when log archiving is enabled.
+
 Use `rworker logs WORKER --redact` to mask common credential formats in
 the local display, including labeled passwords, authorization headers, supported
 tokens, URL passwords and private key blocks. This works with archived snapshots
