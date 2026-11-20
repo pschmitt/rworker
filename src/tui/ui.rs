@@ -457,12 +457,15 @@ impl App {
                 )
             })
             .collect();
+        let name_cap = (table_area.width / 3)
+            .clamp(16, 28)
+            .min(table_area.width.saturating_sub(11).max(4));
         let name_w = visible
             .iter()
             .map(|w| w.name.width())
             .max()
             .unwrap_or(4)
-            .clamp(4, usize::from((table_area.width / 3).max(4))) as u16;
+            .clamp(4, usize::from(name_cap)) as u16;
         let agent_w = visible
             .iter()
             .map(|w| {
