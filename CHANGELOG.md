@@ -6,6 +6,14 @@ Rewritten in Rust from the bash client of nixos-config (`pkgs/rworker`).
 Actions, flags, output, JSON and exit statuses are the same; see
 [PARITY.md](PARITY.md) for the contract and the accepted differences.
 
+### Control inventory and JSON output
+
+- Fetch detailed OpenStack inventory in one command and overlap it with
+  the NetBird and Tailscale reads.
+- Pretty-print JSON on a terminal with syntax colors. `NO_COLOR` disables
+  colors while keeping indentation. Redirected and piped output keeps its
+  existing format.
+
 ### New
 
 - Completions for the values of `--topic`, `--agent` and `--agent-id`: the
