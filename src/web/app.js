@@ -479,7 +479,7 @@ $("unlock").addEventListener("submit", async (event) => {
     $("console").hidden = false;
     $("lock").hidden = false;
     navigate();
-    stream = new EventSource("/v1/workers/events/stream");
+    stream = new EventSource("/v1/ui/updates");
     stream.onmessage = () => { if (state.view === "workers") refresh(); };
   } catch (error) {
     lock();

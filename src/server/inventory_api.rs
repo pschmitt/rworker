@@ -37,8 +37,13 @@ pub(super) fn serve(dir: PathBuf, socket: &str) -> io::Result<()> {
 }
 
 async fn events(State(dir): State<PathBuf>) -> Response {
-    let stream =
-        futures_util::stream::unfold(inventory_cache::Events::new(dir), |mut source| async move {
+    inventory_events(dir, true).await
+}
+
+pub(super) async fn inventory_events(dir: PathBuf, send_snapshot: bool) -> Response {
+    let stream = futures_util::stream::unfold(
+        inventory_cache::Events::new(dir),
+        move |mut source| async move {
             loop {
                 let result = tokio::task::spawn_blocking(move || {
                     let snapshot = source
@@ -52,7 +57,13 @@ async fn events(State(dir): State<PathBuf>) -> Response {
                 match result.1 {
                     Ok(Some(snapshot)) => {
                         return Some((
-                            Ok::<_, std::convert::Infallible>(Event::default().data(snapshot)),
+                            Ok::<_, std::convert::Infallible>(Event::default().data(
+                                if send_snapshot {
+                                    snapshot.as_str()
+                                } else {
+                                    "updated"
+                                },
+                            )),
                             source,
                         ));
                     }
@@ -60,7 +71,8 @@ async fn events(State(dir): State<PathBuf>) -> Response {
                     Err(_) => return None,
                 }
             }
-        });
+        },
+    );
     let mut response = Sse::new(stream)
         .keep_alive(KeepAlive::new().interval(Duration::from_secs(5)))
         .into_response();

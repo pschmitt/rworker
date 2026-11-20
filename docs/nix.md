@@ -98,6 +98,11 @@ See [On-demand Nix builders](nix-builders.md) for gateway and client options.
 
 ## Web console
 
+For an independently configured HTTPS reverse proxy, set `web.origin` to its
+exact public origin and proxy the Unix socket with authentication on all routes.
+Set `web.identityFile` and `web.publicKeyFile` to the matching SSH key pair when
+the operator needs a dedicated identity.
+
 Standard builds include the console through the default Cargo feature `web`.
 To omit it, build with `cargo build --no-default-features` or use the Nix package
 override `pkgs.rworker.override { web = false; }`.

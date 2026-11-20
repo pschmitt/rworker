@@ -370,7 +370,7 @@ pub fn ssh_opts(ctx: &Ctx, name: &str) -> Vec<String> {
     if !known.lines().any(|l| l == line) {
         let _ = append_known_host(ctx, &line);
     }
-    vec![
+    let mut options = vec![
         "-q".to_string(),
         "-o".to_string(),
         format!("UserKnownHostsFile={}", ctx.known_hosts().display()),
@@ -380,7 +380,16 @@ pub fn ssh_opts(ctx: &Ctx, name: &str) -> Vec<String> {
         "StrictHostKeyChecking=yes".to_string(),
         "-o".to_string(),
         "BatchMode=yes".to_string(),
-    ]
+    ];
+    if let Some(identity) =
+        std::env::var_os("RWORKER_IDENTITY_FILE").filter(|path| !path.is_empty())
+    {
+        options.push("-i".into());
+        options.push(identity.to_string_lossy().into_owned());
+        options.push("-o".into());
+        options.push("IdentitiesOnly=yes".into());
+    }
+    options
 }
 
 /// Drop a deleted worker: from the completions' cache right away, and its

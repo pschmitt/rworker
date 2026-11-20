@@ -23,6 +23,13 @@ let
     RWORKER_LOG_CACHE_IDENTITY = cfg.logCache.identityFile;
   };
   socket = "/run/rworker-control.sock";
+  webOrigin =
+    if cfg.web.origin != null then
+      cfg.web.origin
+    else if cfg.api.https != null then
+      "https://${cfg.api.https.serverName}"
+    else
+      null;
   apiSocket = "/run/rworker-inventory-api/http.sock";
   apiGroup = if cfg.api.https == null then cfg.group else "rworker-inventory-api";
   runtimeTools = [
@@ -102,6 +109,17 @@ in
         type = lib.types.nullOr lib.types.str;
         default = cfg.logCache.operator;
         description = "Local account whose rworker permissions and SSH identity the web console uses.";
+      };
+      origin = lib.mkOption {
+        type = lib.types.nullOr lib.types.str;
+        default = null;
+        example = "https://console.example.com";
+        description = "HTTPS origin of an independently configured authenticated reverse proxy. Defaults to the built-in HTTPS API hostname.";
+      };
+      identityFile = lib.mkOption {
+        type = lib.types.nullOr lib.types.str;
+        default = null;
+        description = "Private SSH identity used by the console for worker connections.";
       };
       tokenFile = lib.mkOption {
         type = lib.types.str;
@@ -282,7 +300,8 @@ in
     (lib.mkIf cfg.web.enable {
       assertions = [
         {
-          assertion = cfg.enable && cfg.api.https != null && cfg.web.operator != null;
+          assertion =
+            cfg.enable && webOrigin != null && lib.hasPrefix "https://" webOrigin && cfg.web.operator != null;
           message = "The rworker web console requires the server, an HTTPS API and an operator account.";
         }
         {
@@ -344,10 +363,13 @@ in
             environment = {
               RWORKER_INVENTORY_DIRECTORY = inventoryDirectory;
             }
-            // lib.optionalAttrs (cfg.web.enable && cfg.api.https != null) {
-              RWORKER_WEB_ORIGIN = "https://${cfg.api.https.serverName}";
+            // lib.optionalAttrs (cfg.web.enable && webOrigin != null) {
+              RWORKER_WEB_ORIGIN = webOrigin;
               RWORKER_WEB_TOKEN_FILE = cfg.web.tokenFile;
               RWORKER_CONTROL_SOCKET = socket;
+            }
+            // lib.optionalAttrs (cfg.web.enable && cfg.web.identityFile != null) {
+              RWORKER_IDENTITY_FILE = cfg.web.identityFile;
             }
             // lib.optionalAttrs (cfg.web.enable && cfg.web.publicKeyFile != null) {
               RWORKER_KEY = cfg.web.publicKeyFile;
@@ -361,7 +383,7 @@ in
               Group = apiGroup;
               RuntimeDirectory = "rworker-inventory-api";
               RuntimeDirectoryMode = "0750";
-              UMask = "0007";
+              UMask = if cfg.web.enable then "0077" else "0007";
               Restart = "on-failure";
               ExecStart = command [
                 "server"
@@ -530,7 +552,7 @@ in
           locations = {
             "/v1/workers".proxyPass = "http://unix:${apiSocket}:";
           }
-          // lib.optionalAttrs cfg.web.enable {
+          // lib.optionalAttrs (cfg.web.enable && cfg.web.origin == null) {
             "/".proxyPass = "http://unix:${apiSocket}:";
             "/v1/ui/action" = {
               proxyPass = "http://unix:${apiSocket}:";

@@ -2,7 +2,7 @@
 
 use axum::Router;
 use axum::body::Bytes;
-use axum::extract::{DefaultBodyLimit, Path};
+use axum::extract::{DefaultBodyLimit, Path, State};
 use axum::http::{HeaderMap, StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
@@ -47,6 +47,7 @@ pub(super) fn routes(router: Router<PathBuf>) -> Router<PathBuf> {
                 )
             }),
         )
+        .route("/v1/ui/updates", get(updates))
         .route("/v1/ui/{view}", get(list))
         .route("/v1/ui/{view}/{worker}", get(worker_view))
         .route("/v1/ui/{view}/{worker}/{job}", get(job_view))
@@ -54,6 +55,10 @@ pub(super) fn routes(router: Router<PathBuf>) -> Router<PathBuf> {
             "/v1/ui/action",
             post(action).layer(DefaultBodyLimit::max(32768)),
         )
+}
+
+async fn updates(State(dir): State<PathBuf>) -> Response {
+    super::inventory_api::inventory_events(dir, false).await
 }
 
 fn asset(content_type: &'static str, body: &'static str) -> Response {
