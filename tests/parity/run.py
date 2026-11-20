@@ -324,7 +324,7 @@ def state_snapshot():
     snap = {}
     if root.exists():
         for p in sorted(root.rglob("*")):
-            if p.is_file() and not p.name.startswith("control-"):
+            if p.is_file() and not p.name.startswith(("control-", ".discovery-")):
                 text = p.read_text(errors="replace")
                 if p.name.endswith(".json"):
                     try:
@@ -407,6 +407,34 @@ def run_all(impl, selected):
     return results
 
 
+# These cases reuse a read-only inventory or overlap independent worker SSH
+# commands. Compare the other calls and ensure inventory traffic only drops.
+OPTIMIZED_INVENTORY = {
+    "inspect-boot", "builder-no-identity", "ssh-not-ready", "ssh-unknown",
+    "ssh-probe", "logs-follow", "ps-long", "events",
+}
+
+
+def compare_optimized_calls(name, reference, actual):
+    def split(calls):
+        inventory, other = [], []
+        for call in calls:
+            record = json.loads(call)
+            (inventory if record.get("words") == ["rworker", "ls"] else other).append(call)
+        return inventory, other
+
+    before, before_other = split(reference)
+    after, after_other = split(actual)
+    if name in {"ps-long", "events"}:
+        before_other.sort()
+        after_other.sort()
+    return (
+        before_other == after_other
+        and len(after) <= len(before)
+        and set(after).issubset(before)
+    )
+
+
 def main():
     rust = sys.argv[1]
     only = sys.argv[2] if len(sys.argv) > 2 else ""
@@ -416,7 +444,15 @@ def main():
     differences = accepted = 0
     for name, _, _ in selected:
         a, b = bash[name], ours[name]
+        if name == "logs-follow":
+            # The fake follower's shell may report the killed test sleep.
+            for result in (a, b):
+                result["stderr"] = re.sub(r"(?m)^Terminated +sleep 1\n?", "", result["stderr"])
         diffs = [k for k in ("code", "stdout", "stderr", "calls", "state") if a[k] != b[k]]
+        if name in OPTIMIZED_INVENTORY and "calls" in diffs and compare_optimized_calls(
+            name, a["calls"], b["calls"]
+        ):
+            diffs.remove("calls")
         if not diffs:
             continue
         if name in ACCEPTED:
