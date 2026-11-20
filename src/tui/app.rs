@@ -693,7 +693,12 @@ impl App {
 
     fn key(&mut self, k: KeyEvent) {
         let ctrl = k.modifiers.contains(KeyModifiers::CONTROL);
-        if ctrl && matches!(k.code, KeyCode::Char('c')) {
+        // Legacy terminals encode Alt+Shift+Q as Escape followed by Q.
+        let alt_shift_q = k.modifiers.contains(KeyModifiers::ALT)
+            && !ctrl
+            && (k.code == KeyCode::Char('Q')
+                || (k.code == KeyCode::Char('q') && k.modifiers.contains(KeyModifiers::SHIFT)));
+        if (ctrl && k.code == KeyCode::Char('c')) || alt_shift_q {
             self.quit = true;
             return;
         }

@@ -21,6 +21,9 @@ Actions, flags, output, JSON and exit statuses are the same; see
 
 ### New
 
+- Open the TUI when running `rworker` without arguments in a terminal.
+  Use `Alt+Shift+Q` to quit from any view.
+
 - Add `jobs --watch` and aligned, colored terminal tables for jobs, profiles,
   and processes. Interactive list watches update only changed rows.
 - List workers with `machines`, `ls`, `nodes`, or `instances`. Accept unique

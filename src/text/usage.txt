@@ -1,5 +1,6 @@
 Usage: __ME__ ACTION [ARGS] [-j|--json]
        __ME__ ACTION --help   (or: help ACTION)
+       __ME__                 open the TUI in a terminal
 
 -j, --json prints JSON instead of the human-readable output; every action
 but ssh takes it (scripts and the MCP server use it).

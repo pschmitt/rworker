@@ -536,7 +536,7 @@ impl App {
             row(":", "any rworker action"),
             row("", "(sync, cp, exec, …)"),
             row("esc / q", "back (q on the list quits)"),
-            row("ctrl-c", "quit"),
+            row("ctrl-c / alt-shift-q", "quit"),
         ];
         let rows = left.len().max(right.len()) as u16;
         let area = centered(f.area(), 92, rows + 2);

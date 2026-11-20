@@ -78,12 +78,13 @@ stderr to the control host before deleting the worker. Read the retained
 
 ## Terminal UI
 
-`rworker tui` is an interactive front end over the same actions, in the
+Run `rworker` in a terminal, or type `rworker tui` explicitly. The TUI is an interactive front end over the same actions, in the
 spirit of k9s. The worker list refreshes in the background (`-n SECONDS`,
 default 5) and shows your own workers with a dot and new ones with a `+`;
 a strip below it gives the selected worker's owner, profile, addresses and
 working directory.
 
+- `Alt+Shift+Q` quits from any view.
 - `J` toggles Jobs and Workers. Jobs shows running and registered jobs by
   default. Press `d` in Jobs to include completed and inactive jobs.
 - `h` opens the retired-worker history. Press Enter on a worker to view its

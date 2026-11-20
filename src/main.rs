@@ -367,6 +367,11 @@ fn run(ctx: &Ctx, argv: &[String]) -> R {
             return Ok(());
         }
         "" => {
+            use std::io::IsTerminal;
+            if argv.is_empty() && std::io::stdin().is_terminal() && std::io::stdout().is_terminal()
+            {
+                return tui::cmd_tui(ctx, &[]);
+            }
             // The overview, colored like --help.
             ctx.err_raw(&help::painted_usage(ctx));
             return Err(Fail(2));
