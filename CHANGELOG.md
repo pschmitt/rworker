@@ -4,6 +4,17 @@
 
 The Rust client and controller replace the original Bash client.
 
+### Autoscaler pools other than nixbot's
+
+- Scale a pool on Circus CI demand (`demand.source = "circus"`: pending
+  builds per system from the queue-runner's `/api/v1/operator/queue`, API key
+  read from a file and passed to curl on stdin).
+- Run a pool without a Nix machines file, choose its worker `profile`, label
+  its workers (`poolLabels`) and hand them secrets through `userDataFiles`,
+  read when a worker is created.
+- Name the autoscaler unit (`services.rworker.autoscaler.unitName`), so a
+  host can run such a pool next to or instead of nixbot's.
+
 ### Control inventory and JSON output
 
 - Share a control-host inventory snapshot across SSH and local clients.

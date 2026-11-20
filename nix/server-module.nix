@@ -284,6 +284,20 @@ in
         default = "nixbot";
         description = "Existing group running the autoscaler.";
       };
+      unitName = lib.mkOption {
+        type = lib.types.str;
+        default = "nixbot-autoscaler";
+        example = "circus-autoscaler";
+        description = ''
+          Systemd unit of the autoscaler, so a host can run a pool other than
+          nixbot's (for example one scaled on Circus demand) under its own name.
+        '';
+      };
+      description = lib.mkOption {
+        type = lib.types.str;
+        default = "Autoscale the nixbot worker pool";
+        description = "Description of the autoscaler unit.";
+      };
     };
     package = lib.mkOption {
       type = lib.types.package;
@@ -691,8 +705,8 @@ in
       };
     })
     (lib.mkIf cfg.autoscaler.enable {
-      systemd.services.nixbot-autoscaler = {
-        description = "Autoscale the nixbot worker pool";
+      systemd.services.${cfg.autoscaler.unitName} = {
+        inherit (cfg.autoscaler) description;
         wantedBy = [ "multi-user.target" ];
         after = [ "network-online.target" ];
         wants = [ "network-online.target" ];

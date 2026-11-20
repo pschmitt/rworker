@@ -74,6 +74,73 @@ impl Demand {
     pub fn queued(&self, slots: u64) -> u64 {
         self.pending + self.building.saturating_sub(slots)
     }
+
+    /// Demand of the configured source: nixbot's database (the default) or
+    /// a Circus queue-runner (`demand.source = "circus"`).
+    pub fn from_settings(cfg: &Value) -> Result<Self, String> {
+        match cfg["demand"]["source"].as_str() {
+            None | Some("nixbot") => Self::read(setting(cfg, "databaseUrl")?),
+            Some("circus") => Self::read_circus(&cfg["demand"]),
+            Some(other) => Err(format!("Unknown demand source: {other}")),
+        }
+    }
+
+    /// Runnable builds Circus has not dispatched yet, from its operator
+    /// queue. The API key goes to curl on stdin, never in argv.
+    fn read_circus(demand: &Value) -> Result<Self, String> {
+        let url = format!(
+            "{}/api/v1/operator/queue",
+            setting(demand, "url")?.trim_end_matches('/')
+        );
+        let key = fs::read_to_string(setting(demand, "apiKeyFile")?)
+            .map_err(|error| format!("Read Circus API key: {error}"))?;
+        let mut child = Command::new("curl")
+            .args([
+                "--fail",
+                "--silent",
+                "--show-error",
+                "--max-time",
+                "20",
+                "--header",
+                "@-",
+                &url,
+            ])
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null())
+            .spawn()
+            .map_err(|error| format!("Read Circus demand: {error}"))?;
+        if let Some(mut stdin) = child.stdin.take() {
+            writeln!(stdin, "Authorization: Bearer {}", key.trim())
+                .map_err(|error| format!("Read Circus demand: {error}"))?;
+        }
+        let output = child
+            .wait_with_output()
+            .map_err(|error| format!("Read Circus demand: {error}"))?;
+        if !output.status.success() {
+            return Err(format!("Read Circus demand: curl {}", output.status));
+        }
+        parse_circus_queue(
+            &output.stdout,
+            demand["system"].as_str().unwrap_or("x86_64-linux"),
+        )
+    }
+}
+
+/// `GET /api/v1/operator/queue` answers `[{"system": ..., "count": ...}]`:
+/// pending builds per system, which is all the pool needs.
+pub(super) fn parse_circus_queue(body: &[u8], system: &str) -> Result<Demand, String> {
+    let queue: Vec<Value> =
+        serde_json::from_slice(body).map_err(|_| "Invalid Circus queue response")?;
+    let pending = queue
+        .iter()
+        .filter(|entry| entry["system"] == system)
+        .map(|entry| entry["count"].as_u64().unwrap_or(0))
+        .sum();
+    Ok(Demand {
+        pending,
+        building: 0,
+    })
 }
 
 pub(super) struct Capacity {
@@ -128,8 +195,10 @@ type Workers = BTreeMap<String, Value>;
 pub(super) struct PoolFiles {
     state: PathBuf,
     known_hosts: PathBuf,
-    machines: PathBuf,
-    static_machines: PathBuf,
+    /// Nix machines file of nixbot's pool; a pool without builders (Circus
+    /// agents dial in themselves) has none.
+    machines: Option<PathBuf>,
+    static_machines: Option<PathBuf>,
 }
 
 impl PoolFiles {
@@ -138,8 +207,8 @@ impl PoolFiles {
         Ok(Self {
             state: state_dir.join("state.json"),
             known_hosts: state_dir.join("known_hosts"),
-            machines: PathBuf::from(setting(cfg, "machinesFile")?),
-            static_machines: PathBuf::from(setting(cfg, "staticMachinesFile")?),
+            machines: cfg["machinesFile"].as_str().map(PathBuf::from),
+            static_machines: cfg["staticMachinesFile"].as_str().map(PathBuf::from),
         })
     }
 
@@ -159,7 +228,10 @@ impl PoolFiles {
     }
 
     pub fn static_slots(&self, local: u64) -> Result<u64, String> {
-        let text = fs::read_to_string(&self.static_machines)
+        let Some(static_machines) = &self.static_machines else {
+            return Ok(local);
+        };
+        let text = fs::read_to_string(static_machines)
             .map_err(|error| format!("Read static builders: {error}"))?;
         Ok(text.lines().fold(local, |slots, line| {
             slots
@@ -172,8 +244,14 @@ impl PoolFiles {
     }
 
     pub fn write_builders(&self, cfg: &Value, workers: &Workers) -> Result<(), String> {
-        let static_machines = fs::read_to_string(&self.static_machines)
-            .map_err(|error| format!("Read static builders: {error}"))?;
+        let Some(machines_file) = &self.machines else {
+            return self.write_known_hosts(workers);
+        };
+        let static_machines = match &self.static_machines {
+            Some(path) => fs::read_to_string(path)
+                .map_err(|error| format!("Read static builders: {error}"))?,
+            None => String::new(),
+        };
         let mut machines: String = static_machines
             .split_terminator('\n')
             .filter(|line| !line.trim().is_empty())
@@ -209,8 +287,25 @@ impl PoolFiles {
         }
         replace(&self.known_hosts, known.as_bytes(), 0o644)
             .map_err(|error| format!("Publish pool known_hosts: {error}"))?;
-        replace(&self.machines, machines.as_bytes(), 0o644)
+        replace(machines_file, machines.as_bytes(), 0o644)
             .map_err(|error| format!("Publish pool builders: {error}"))
+    }
+
+    /// The pool's host keys only, for a pool that publishes no builders.
+    fn write_known_hosts(&self, workers: &Workers) -> Result<(), String> {
+        let mut known = String::new();
+        for worker in workers.values().filter(|worker| worker["ready"] == true) {
+            let key = setting(worker, "hostKey")?;
+            let mut ips = BTreeSet::from([setting(worker, "ip")?]);
+            if let Some(overlays) = worker["ips"].as_object() {
+                ips.extend(overlays.values().filter_map(Value::as_str));
+            }
+            for ip in ips {
+                known.push_str(&format!("{ip} {key}\n"));
+            }
+        }
+        replace(&self.known_hosts, known.as_bytes(), 0o644)
+            .map_err(|error| format!("Publish pool known_hosts: {error}"))
     }
 }
 
@@ -343,15 +438,16 @@ impl Pool<'_> {
             };
             let id = id.to_owned();
             let metadata = self.compute.metadata(&id)?;
+            let labels = PoolLabels::from_settings(cfg);
             let wanted = [
                 ("host_key", json!(setting(worker, "hostKey")?)),
                 (
                     "owner",
-                    json!(format!("nixbot@{}", setting(cfg, "netbirdSelf")?)),
+                    json!(format!("{}@{}", labels.agent, setting(cfg, "netbirdSelf")?)),
                 ),
-                ("nixbot-worker", json!("pool")),
-                ("agent", json!("nixbot")),
-                ("topic", json!("build pool")),
+                ("nixbot-worker", json!(labels.kind)),
+                ("agent", json!(labels.agent)),
+                ("topic", json!(labels.topic)),
             ]
             .into_iter()
             .filter(|(key, value)| metadata.get(*key) != Some(value))
@@ -361,7 +457,7 @@ impl Pool<'_> {
                 self.compute.set_metadata(&id, wanted)?;
             }
         }
-        let demand = Demand::read(setting(cfg, "databaseUrl")?)?;
+        let demand = Demand::from_settings(cfg)?;
         let active = self
             .workers
             .values()
@@ -411,14 +507,15 @@ impl Pool<'_> {
         let cfg = self.cfg;
         let suffix = super::niks3::token_id().map_err(|error| error.to_string())?;
         let name = format!("{prefix}{}", &suffix[..8]);
+        let labels = PoolLabels::from_settings(cfg);
         let metadata = [
-            ("nixbot-worker".into(), json!("pool")),
+            ("nixbot-worker".into(), json!(labels.kind)),
             (
                 "owner".into(),
-                json!(format!("nixbot@{}", setting(cfg, "netbirdSelf")?)),
+                json!(format!("{}@{}", labels.agent, setting(cfg, "netbirdSelf")?)),
             ),
-            ("agent".into(), json!("nixbot")),
-            ("topic".into(), json!("build pool")),
+            ("agent".into(), json!(labels.agent)),
+            ("topic".into(), json!(labels.topic)),
         ]
         .into_iter()
         .collect();
@@ -430,9 +527,9 @@ impl Pool<'_> {
                 group: setting(cfg, "netbirdWorkersGroup")?,
                 flavor: setting(cfg, "flavor")?,
                 disk: count(cfg, "volumeSize")? as i64,
-                profile: "standard",
+                profile: cfg["profile"].as_str().unwrap_or("standard"),
                 metadata,
-                user_data: Default::default(),
+                user_data: user_data(cfg)?,
             },
         )?;
         self.workers.insert(name, json!({
@@ -594,5 +691,111 @@ impl Pool<'_> {
             mutations::delete(self.cfg, &self.compute, &self.netbird, id, name, &metadata)?;
         }
         Ok(())
+    }
+}
+
+/// How the pool's workers are labelled in their OpenStack metadata (`ls`,
+/// the console): nixbot's pool by default, another pool (Circus) by setting
+/// `poolLabels`.
+pub(super) struct PoolLabels<'a> {
+    pub kind: &'a str,
+    pub agent: &'a str,
+    pub topic: &'a str,
+}
+
+impl<'a> PoolLabels<'a> {
+    pub fn from_settings(cfg: &'a Value) -> Self {
+        let labels = &cfg["poolLabels"];
+        Self {
+            kind: labels["kind"].as_str().unwrap_or("pool"),
+            agent: labels["agent"].as_str().unwrap_or("nixbot"),
+            topic: labels["topic"].as_str().unwrap_or("build pool"),
+        }
+    }
+}
+
+/// User-data for a new worker from `userDataFiles` (key -> secret file),
+/// read at creation so the values never sit in the settings file. The
+/// worker reads them from its metadata service at boot.
+pub(super) fn user_data(cfg: &Value) -> Result<serde_json::Map<String, Value>, String> {
+    let mut data = serde_json::Map::new();
+    if let Some(files) = cfg["userDataFiles"].as_object() {
+        for (key, path) in files {
+            let path = path
+                .as_str()
+                .ok_or_else(|| format!("Invalid userDataFiles entry: {key}"))?;
+            let value = fs::read_to_string(path)
+                .map_err(|error| format!("Read user-data {key}: {error}"))?;
+            let value = value.trim();
+            if value.is_empty() {
+                return Err(format!("Empty user-data {key}"));
+            }
+            data.insert(key.clone(), json!(value));
+        }
+    }
+    Ok(data)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn circus_queue_counts_only_the_pool_system() {
+        let body = br#"[{"system":"x86_64-linux","count":7},{"system":"aarch64-linux","count":3}]"#;
+        let demand = parse_circus_queue(body, "x86_64-linux").unwrap();
+        assert_eq!(demand.pending, 7);
+        assert_eq!(demand.building, 0);
+        assert_eq!(demand.queued(16), 7);
+    }
+
+    #[test]
+    fn circus_queue_without_the_system_is_idle() {
+        let demand = parse_circus_queue(b"[]", "x86_64-linux").unwrap();
+        assert_eq!(demand.pending, 0);
+        assert!(parse_circus_queue(b"{}", "x86_64-linux").is_err());
+    }
+
+    #[test]
+    fn unknown_demand_source_is_an_error() {
+        let cfg = json!({"demand": {"source": "jenkins"}});
+        assert!(Demand::from_settings(&cfg).is_err());
+    }
+
+    #[test]
+    fn labels_default_to_nixbots_pool() {
+        let cfg = json!({});
+        let labels = PoolLabels::from_settings(&cfg);
+        assert_eq!(
+            (labels.kind, labels.agent, labels.topic),
+            ("pool", "nixbot", "build pool")
+        );
+        let cfg = json!({"poolLabels": {"kind": "circus-pool", "agent": "circus", "topic": "circus pool"}});
+        let labels = PoolLabels::from_settings(&cfg);
+        assert_eq!(
+            (labels.kind, labels.agent, labels.topic),
+            ("circus-pool", "circus", "circus pool")
+        );
+    }
+
+    #[test]
+    fn user_data_reads_and_trims_files() {
+        let dir = std::env::temp_dir().join(format!("rworker-ud-{}", std::process::id()));
+        fs::create_dir_all(&dir).unwrap();
+        let file = dir.join("token");
+        fs::write(&file, "secret-value\n").unwrap();
+        let cfg = json!({"userDataFiles": {"circus_join_token": file.to_str().unwrap()}});
+        let data = user_data(&cfg).unwrap();
+        assert_eq!(data["circus_join_token"], "secret-value");
+        fs::write(&file, "\n").unwrap();
+        assert!(user_data(&cfg).is_err());
+        assert!(user_data(&json!({})).unwrap().is_empty());
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn pool_without_machines_counts_local_slots_only() {
+        let files = PoolFiles::from_settings(&json!({"stateDir": "/nonexistent"})).unwrap();
+        assert_eq!(files.static_slots(4).unwrap(), 4);
     }
 }
