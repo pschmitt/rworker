@@ -78,41 +78,61 @@ let
     libraries = [ python3Packages.mcp ];
     flakeIgnore = [ "E501" ];
   } (builtins.readFile ../mcp/rworker-mcp.py);
+
+  # The compiled client. It does not depend on extraRuntimeInputs or
+  # sshControlMaster, so overriding those (TermuxPP does) only rebuilds the
+  # wrapper below, and every consumer shares this binary and its cache entry.
+  unwrapped = craneLib.buildPackage (
+    common
+    // {
+      pname = "rworker-unwrapped";
+      cargoArtifacts = deps;
+      nativeBuildInputs = [ installShellFiles ];
+      # The unit tests run here, reusing the built dependencies.
+      doCheck = true;
+
+      # The completion scripts are part of the binary (`rworker completions`),
+      # so they always match the commands it has.
+      postInstall = lib.optionalString (stdenv.buildPlatform.canExecute stdenv.hostPlatform) ''
+        $out/bin/rworker completions zsh > _rworker
+        $out/bin/rworker completions bash > rworker.bash
+        installShellCompletion --zsh _rworker
+        installShellCompletion --bash --name rworker rworker.bash
+      '';
+
+      meta = meta // {
+        description = "${meta.description} (unwrapped)";
+      };
+    }
+  );
+
+  meta = {
+    description = "Client for ad-hoc build workers: disposable, encrypted OpenStack VMs";
+    homepage = "https://github.com/pschmitt/rworker";
+    license = lib.licenses.gpl3Only;
+    maintainers = [ lib.maintainers.pschmitt ];
+    mainProgram = "rworker";
+    platforms = lib.platforms.linux;
+  };
 in
-craneLib.buildPackage (
-  common
-  // {
-    cargoArtifacts = deps;
-    nativeBuildInputs = [
-      installShellFiles
-      makeWrapper
-    ];
-    # The unit tests run here, reusing the built dependencies.
-    doCheck = true;
-
-    postInstall = ''
-      wrapProgram $out/bin/rworker \
-        --prefix PATH : ${runtimePath} \
-        ${lib.optionalString (!sshControlMaster) "--set RWORKER_SSH_CONTROL_MASTER 0"}
-    ''
-    # The completion scripts are part of the binary (`rworker completions`),
-    # so they always match the commands it has.
-    + lib.optionalString (stdenv.buildPlatform.canExecute stdenv.hostPlatform) ''
-      $out/bin/rworker completions zsh > _rworker
-      $out/bin/rworker completions bash > rworker.bash
-      installShellCompletion --zsh _rworker
-      installShellCompletion --bash --name rworker rworker.bash
-    '';
-
-    passthru = { inherit mcp; };
-
-    meta = {
-      description = "Client for ad-hoc build workers: disposable, encrypted OpenStack VMs";
-      homepage = "https://github.com/pschmitt/rworker";
-      license = lib.licenses.gpl3Only;
-      maintainers = [ lib.maintainers.pschmitt ];
-      mainProgram = "rworker";
-      platforms = lib.platforms.linux;
+runCommand "rworker-${version}"
+  {
+    pname = "rworker";
+    inherit version meta;
+    nativeBuildInputs = [ makeWrapper ];
+    passthru = {
+      inherit mcp unwrapped;
+      # CI (ci-workflows nix-build) also pushes the crane dependency build
+      # and vendored sources it finds on the package.
+      inherit (unwrapped) cargoArtifacts cargoVendorDir;
     };
   }
-)
+  ''
+    makeWrapper ${unwrapped}/bin/rworker $out/bin/rworker \
+      --prefix PATH : ${runtimePath} \
+      ${lib.optionalString (!sshControlMaster) "--set RWORKER_SSH_CONTROL_MASTER 0"}
+    if [ -d ${unwrapped}/share ]
+    then
+      ln -s ${unwrapped}/share $out/share
+    fi
+  ''

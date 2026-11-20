@@ -49,7 +49,7 @@ runCommand "rworker-parity"
     chmod -R u+w tests
     patchShebangs tests
     export PARITY_DIR=$TMPDIR/parity
-    unwrapped=${rworker}/bin/.rworker-wrapped
+    unwrapped=${rworker.unwrapped}/bin/rworker
     FAKE_SSH_STDIN=0 python3 tests/parity/run.py $unwrapped
     python3 tests/parity/run.py $unwrapped
     python3 tests/server-parity/inventory-cache.py $unwrapped
