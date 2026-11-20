@@ -21,6 +21,9 @@ Actions, flags, output, JSON and exit statuses are the same; see
 
 ### New
 
+- The TUI moves worker details beside the table on wide terminals and
+  prioritizes essential columns on narrow ones.
+
 - The TUI uses the same agent icon colors as `rworker ls`.
 
 - `rworker tui`: an interactive terminal UI (k9s style). The worker list,

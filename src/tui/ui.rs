@@ -2,7 +2,7 @@
 //! and overlays (prompt, confirmation, help).
 
 use super::ansi;
-use super::app::{App, Jobs, Sub, TextView, Urgency};
+use super::app::{App, Jobs, Sub, TextView, Urgency, Worker};
 use crate::{paint, table::glyph};
 use ratatui::Frame;
 use ratatui::layout::{Alignment, Constraint, Layout, Rect};
@@ -48,6 +48,82 @@ fn agent_cell(agent: &str, icons: bool) -> Line<'static> {
     };
     label.push_span(agent.to_owned());
     label
+}
+
+enum WorkerDetails {
+    Sidebar(Rect),
+    Below(Rect),
+    Hidden,
+}
+
+fn workers_layout(area: Rect, has_selection: bool) -> (Rect, WorkerDetails) {
+    if !has_selection {
+        return (area, WorkerDetails::Hidden);
+    }
+    if area.width >= 116 && area.height >= 10 {
+        let sidebar_width = (area.width / 3).clamp(36, 56);
+        let [table, details] =
+            Layout::horizontal([Constraint::Fill(1), Constraint::Length(sidebar_width)])
+                .areas(area);
+        (table, WorkerDetails::Sidebar(details))
+    } else if area.height >= 14 {
+        let height = if area.width < 80 { 7 } else { 5 };
+        let [table, details] =
+            Layout::vertical([Constraint::Fill(1), Constraint::Length(height)]).areas(area);
+        (table, WorkerDetails::Below(details))
+    } else {
+        (area, WorkerDetails::Hidden)
+    }
+}
+
+fn draw_worker_details(f: &mut Frame, details: WorkerDetails, w: &Worker) {
+    let (area, sidebar) = match details {
+        WorkerDetails::Sidebar(area) => (area, true),
+        WorkerDetails::Below(area) => (area, false),
+        WorkerDetails::Hidden => return,
+    };
+    let field = |label: &str, value: &str| {
+        [
+            Span::styled(format!("{label} "), dim()),
+            Span::raw(if value.is_empty() { "-" } else { value }.to_owned()),
+        ]
+    };
+    let fields = [
+        field("owner", &w.owner),
+        field("profile", &w.profile),
+        field("flavor", &w.flavor),
+        field("ip", &w.ips),
+        field("agent id", &w.agent_id),
+        field("cwd", &w.cwd),
+    ];
+    let lines: Vec<Line> = if sidebar {
+        fields
+            .into_iter()
+            .map(|field| Line::from(Vec::from(field)))
+            .collect()
+    } else {
+        fields
+            .chunks(2)
+            .map(|pair| {
+                let mut spans = Vec::from(pair[0].clone());
+                spans.push(Span::raw("   "));
+                spans.extend(pair[1].clone());
+                Line::from(spans)
+            })
+            .collect()
+    };
+    f.render_widget(
+        Paragraph::new(lines).wrap(Wrap { trim: true }).block(
+            Block::bordered()
+                .border_type(BorderType::Rounded)
+                .border_style(dim())
+                .title(Span::styled(
+                    format!(" {} ", w.name),
+                    Style::new().fg(ACCENT),
+                )),
+        ),
+        area,
+    );
 }
 
 fn status_style(status: &str) -> Style {
@@ -259,7 +335,6 @@ impl App {
 
     fn draw_workers(&mut self, f: &mut Frame, area: Rect) {
         let now = crate::time::now() as f64;
-        let wide = area.width >= 150;
         let selected = self.selected().map(|w| w.name.clone());
         let visible = self.visible();
         let mut title = vec![Span::styled(" workers ", Style::new().bold())];
@@ -278,9 +353,21 @@ impl App {
                 dim(),
             ));
         }
-        let detail_h = if area.height > 14 { 4 } else { 0 };
-        let [table_area, detail_area] =
-            Layout::vertical([Constraint::Fill(1), Constraint::Length(detail_h)]).areas(area);
+        let (table_area, details) = workers_layout(area, selected.is_some() && !visible.is_empty());
+        let wide = table_area.width >= 150;
+        let mask = [
+            table_area.width >= 48, // row marker
+            true,                   // name
+            table_area.width >= 70, // kind
+            true,                   // status
+            table_area.width >= 55, // agent
+            table_area.width >= 37, // topic
+            table_area.width >= 48, // expires
+            table_area.width >= 82, // age
+            wide,
+            wide,
+            wide,
+        ];
         let block = Block::bordered()
             .border_type(BorderType::Rounded)
             .border_style(dim())
@@ -362,7 +449,12 @@ impl App {
                     cells.push(Cell::from(Span::styled(w.profile.clone(), dim())));
                     cells.push(Cell::from(Span::styled(w.ips.clone(), dim())));
                 }
-                Row::new(cells)
+                Row::new(
+                    cells
+                        .into_iter()
+                        .zip(mask)
+                        .filter_map(|(cell, show)| show.then_some(cell)),
+                )
             })
             .collect();
         let name_w = visible
@@ -370,7 +462,7 @@ impl App {
             .map(|w| w.name.width())
             .max()
             .unwrap_or(4)
-            .max(4) as u16;
+            .clamp(4, usize::from((table_area.width / 3).max(4))) as u16;
         let agent_w = visible
             .iter()
             .map(|w| {
@@ -383,7 +475,7 @@ impl App {
             })
             .max()
             .unwrap_or(5)
-            .max(5) as u16;
+            .clamp(5, 16) as u16;
         let mut widths = vec![
             Constraint::Length(1),
             Constraint::Length(name_w),
@@ -401,53 +493,34 @@ impl App {
                 Constraint::Length(31),
             ]);
         }
-        let table = Table::new(rows, widths)
-            .header(
-                Row::new(header).style(Style::new().add_modifier(Modifier::BOLD | Modifier::DIM)),
+        let table = Table::new(
+            rows,
+            widths
+                .into_iter()
+                .zip(mask)
+                .filter_map(|(width, show)| show.then_some(width)),
+        )
+        .header(
+            Row::new(
+                header
+                    .into_iter()
+                    .zip(mask)
+                    .filter_map(|(label, show)| show.then_some(label)),
             )
-            .block(block)
-            .column_spacing(2)
-            .row_highlight_style(
-                Style::new()
-                    .bg(Color::Indexed(236))
-                    .add_modifier(Modifier::BOLD),
-            );
+            .style(Style::new().add_modifier(Modifier::BOLD | Modifier::DIM)),
+        )
+        .block(block)
+        .column_spacing(if table_area.width < 82 { 1 } else { 2 })
+        .row_highlight_style(
+            Style::new()
+                .bg(Color::Indexed(236))
+                .add_modifier(Modifier::BOLD),
+        );
         f.render_stateful_widget(table, table_area, &mut self.table);
 
-        if detail_h > 0
-            && let Some(w) = selected.and_then(|n| self.workers.iter().find(|w| w.name == n))
+        if let Some(worker) = selected.and_then(|name| self.workers.iter().find(|w| w.name == name))
         {
-            let kv = |k: &str, v: &str| {
-                vec![
-                    Span::styled(format!("{k} "), dim()),
-                    Span::raw(if v.is_empty() {
-                        "-".to_string()
-                    } else {
-                        v.to_string()
-                    }),
-                    Span::raw("   "),
-                ]
-            };
-            let l1: Vec<Span> = [
-                kv("owner", &w.owner),
-                kv("profile", &w.profile),
-                kv("flavor", &w.flavor),
-                kv("ip", &w.ips),
-            ]
-            .concat();
-            let l2: Vec<Span> = [kv("agent id", &w.agent_id), kv("cwd", &w.cwd)].concat();
-            f.render_widget(
-                Paragraph::new(vec![Line::from(l1), Line::from(l2)]).block(
-                    Block::bordered()
-                        .border_type(BorderType::Rounded)
-                        .border_style(dim())
-                        .title(Span::styled(
-                            format!(" {} ", w.name),
-                            Style::new().fg(ACCENT),
-                        )),
-                ),
-                detail_area,
-            );
+            draw_worker_details(f, details, worker);
         }
     }
 
@@ -704,6 +777,32 @@ fn draw_text(f: &mut Frame, area: Rect, v: &mut TextView, tick: u64) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn details_follow_terminal_geometry() {
+        let area = Rect::new(0, 1, 120, 28);
+        let (table, WorkerDetails::Sidebar(sidebar)) = workers_layout(area, true) else {
+            panic!("expected sidebar on wide terminal");
+        };
+        assert_eq!(sidebar.x, table.right());
+        assert_eq!(sidebar.height, table.height);
+
+        let area = Rect::new(0, 1, 72, 24);
+        let (table, WorkerDetails::Below(details)) = workers_layout(area, true) else {
+            panic!("expected details under the table");
+        };
+        assert_eq!(details.y, table.bottom());
+        assert_eq!(details.width, table.width);
+
+        let area = Rect::new(0, 1, 72, 10);
+        assert!(
+            matches!(workers_layout(area, true), (table, WorkerDetails::Hidden) if table == area)
+        );
+        let area = Rect::new(0, 1, 160, 28);
+        assert!(
+            matches!(workers_layout(area, false), (table, WorkerDetails::Hidden) if table == area)
+        );
+    }
 
     #[test]
     fn agent_cell_uses_cli_icon_palette() {
