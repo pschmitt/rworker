@@ -8,10 +8,10 @@ action up create a worker and wait until it is ready
 action image build or upload worker disk images
 action profiles list available worker profiles
 action server run a control-host command
-action ls list all workers (ad-hoc and pool)
-alias machines ls list all workers (ad-hoc and pool)
-alias nodes ls list all workers (ad-hoc and pool)
-alias instances ls list all workers (ad-hoc and pool)
+action machines list all workers (ad-hoc and pool)
+alias ls machines list all workers (ad-hoc and pool)
+alias nodes machines list all workers (ad-hoc and pool)
+alias instances machines list all workers (ad-hoc and pool)
 alias info inspect show everything known about a worker
 alias flavors profiles list available worker profiles
 action exec create a worker, run a command on it, delete it
@@ -71,8 +71,8 @@ flag up --topic=topic what the worker is for (none unless given)
 flag up --profile=profile worker profile (standard, browser-daemon or large-builder)
 flag exec --topic=topic what the worker is for (none unless given)
 flag exec --profile=profile worker profile (standard, browser-daemon or large-builder)
-flag ls -o=format output format (json or wide)
-flag ls --wide add owner, profile and IP addresses
+flag machines -o=format output format (json or wide)
+flag machines --wide add owner, profile and IP addresses
 flag inspect --boot also show the worker's own boot metadata (over SSH)
 flag exec --ttl=duration lifetime of the worker
 flag exec --flavor=flavor OpenStack flavor
@@ -85,15 +85,15 @@ flag exec --keep-on-failure keep the worker if the command fails
 flag ssh --create create a worker first (same as up --ssh; up's options follow)
 flag ssh --profile=profile worker image profile when creating
 flag ssh -l=user log in as this user (like ssh -l)
-flag ls --fresh wait for a fresh inventory snapshot
+flag machines --fresh wait for a fresh inventory snapshot
 flag jobs --watch redraw the jobs list in place
 flag jobs -w short for --watch
 flag jobs --interval=seconds refresh interval in seconds (with --watch)
 flag jobs -n=interval short for --interval
-flag ls --watch redraw in place, marking changes
-flag ls -w short for --watch
-flag ls --interval=seconds refresh interval in seconds (with --watch; same as -n)
-flag ls -n=interval refresh interval in seconds (with --watch)
+flag machines --watch redraw in place, marking changes
+flag machines -w short for --watch
+flag machines --interval=seconds refresh interval in seconds (with --watch; same as -n)
+flag machines -n=interval refresh interval in seconds (with --watch)
 flag extend --ttl=duration new lifetime from now
 flag prune --all every ad-hoc worker, whoever owns it
 flag down --force delete someone else's worker or a pool worker
@@ -104,9 +104,9 @@ flag claim --topic=topic what the worker is for now
 flag claim --agent-id=id your agent id (Concord)
 flag up --agent-id=id the creating agent's id (Concord)
 flag exec --agent-id=id the creating agent's id (Concord)
-flag ls --topic=topic-re only workers whose topic matches this regex (prefix with ! to invert)
-flag ls --agent=agent-re only workers whose creating agent matches this regex (prefix with ! to invert)
-flag ls --agent-id=id-re only workers whose agent id matches this regex (prefix with ! to invert)
+flag machines --topic=topic-re only workers whose topic matches this regex (prefix with ! to invert)
+flag machines --agent=agent-re only workers whose creating agent matches this regex (prefix with ! to invert)
+flag machines --agent-id=id-re only workers whose agent id matches this regex (prefix with ! to invert)
 flag logs --agent-id=id-re limit to workers whose agent id matches this regex (prefix with ! to invert)
 flag events --agent-id=id-re limit to workers whose agent id matches this regex (prefix with ! to invert)
 flag prune --yes do not ask

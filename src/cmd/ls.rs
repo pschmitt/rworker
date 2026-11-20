@@ -178,8 +178,13 @@ fn watch_ls(ctx: &Ctx, interval: &str, topic: &str, agent: &str) -> R {
         } else {
             plain_lines.clone()
         };
+        let command = if std::io::stdout().is_terminal() {
+            "machines"
+        } else {
+            "ls"
+        };
         let mut frame = format!(
-            "Every {interval}s: rworker ls    {}    {} workers    (q quits, any key refreshes)\n",
+            "Every {interval}s: rworker {command}    {}    {} workers    (q quits, any key refreshes)\n",
             crate::time::now_hms(),
             cur_sig.len()
         );

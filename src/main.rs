@@ -31,7 +31,7 @@ pub const ACTIONS: &[&str] = &[
     "image",
     "profiles",
     "server",
-    "ls",
+    "machines",
     "down",
     "prune",
     "exec",
@@ -50,9 +50,9 @@ pub const ACTIONS: &[&str] = &[
 ];
 
 const ALIASES: &[(&str, &str)] = &[
-    ("machines", "ls"),
-    ("nodes", "ls"),
-    ("instances", "ls"),
+    ("ls", "machines"),
+    ("nodes", "machines"),
+    ("instances", "machines"),
     ("info", "inspect"),
     ("flavors", "profiles"),
 ];
@@ -258,7 +258,7 @@ fn dispatch(ctx: &Ctx, action: &str, args: &[String]) -> R {
         "up" => cmd::up::up(ctx, args, false).map(|_| ()),
         "image" => cmd::image::run(ctx, args),
         "profiles" => cmd::simple::cmd_profiles(ctx, args),
-        "ls" => cmd::ls::cmd_ls(ctx, args),
+        "machines" => cmd::ls::cmd_ls(ctx, args),
         "down" => cmd::simple::cmd_down(ctx, args),
         "prune" => cmd::inspect::cmd_prune(ctx, args),
         "exec" => cmd::exec::cmd_exec(ctx, args),
@@ -460,7 +460,7 @@ mod tests {
             "instanc",
             "instances",
         ] {
-            assert_eq!(resolve_action(name), Ok("ls"));
+            assert_eq!(resolve_action(name), Ok("machines"));
         }
         assert_eq!(resolve_action("info"), Ok("inspect"));
         assert_eq!(resolve_action("fl"), Ok("profiles"));
