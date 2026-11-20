@@ -136,18 +136,40 @@ pub(super) fn up(cfg: &Value, args: Args<'_>) -> Result<Value, String> {
     let suffix = super::niks3::token_id().map_err(|err| err.to_string())?;
     let name = format!("{prefix}{}", &suffix[..8]);
     let expires = (epoch() + ttl as f64) as i64;
+    let owner = args.owner.unwrap_or_default();
     let mut metadata: Map<String, Value> = [
         ("nixbot-worker", "adhoc".into()),
         ("expires_at", expires.to_string()),
         ("created_at", (epoch() as i64).to_string()),
         ("max_lifetime", lifetime.to_string()),
-        ("owner", args.owner.unwrap_or_default().into()),
+        ("owner", owner.into()),
         ("worker_profile", profile.into()),
     ]
     .into_iter()
     .map(|(key, value)| (key.into(), Value::String(value)))
     .collect();
     metadata.extend(metadata::creator_metadata(&args.pairs)?);
+    let mut user_data = Map::from_iter([("agent_authorized_keys".into(), json!(args.keys))]);
+    if let Some(path) = cfg["logCollectorPublicKeyFile"].as_str()
+        && let Some((owner, _)) = owner.split_once('@')
+        && cfg["logCollectorOperator"].as_str() == Some(owner)
+    {
+        let key = std::fs::read_to_string(path)
+            .map_err(|err| format!("could not read the log collector public key: {err}"))?;
+        let mut words = key.split_whitespace();
+        let blob = words
+            .next()
+            .filter(|kind| *kind == "ssh-ed25519")
+            .and_then(|_| words.next())
+            .filter(|blob| {
+                blob.len() == 68
+                    && blob
+                        .bytes()
+                        .all(|b| b.is_ascii_alphanumeric() || b"+/=".contains(&b))
+            })
+            .ok_or("invalid Ed25519 collector public key")?;
+        user_data.insert("log_collector_key".into(), json!(blob));
+    }
     let (id, mut metadata) = provision::create(
         cfg,
         &compute,
@@ -158,9 +180,7 @@ pub(super) fn up(cfg: &Value, args: Args<'_>) -> Result<Value, String> {
             disk,
             profile,
             metadata,
-            user_data: [("agent_authorized_keys".into(), json!(args.keys))]
-                .into_iter()
-                .collect(),
+            user_data,
         },
     )?;
     let result = (|| -> Result<Option<Value>, String> {

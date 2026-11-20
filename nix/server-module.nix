@@ -54,6 +54,11 @@ in
         default = null;
         description = "Unix account that collects and reads cached job logs. It must already have pinned SSH access to its workers without an interactive agent.";
       };
+      identityFile = lib.mkOption {
+        type = lib.types.nullOr lib.types.str;
+        default = null;
+        description = "Dedicated worker SSH private key path on the control host.";
+      };
       workerUser = lib.mkOption {
         type = lib.types.nullOr lib.types.str;
         default = null;
@@ -239,6 +244,9 @@ in
         }
         // lib.optionalAttrs (cfg.logCache.workerUser != null) {
           RWORKER_USER = cfg.logCache.workerUser;
+        }
+        // lib.optionalAttrs (cfg.logCache.identityFile != null) {
+          RWORKER_LOG_CACHE_IDENTITY = cfg.logCache.identityFile;
         };
         serviceConfig = {
           Type = "oneshot";

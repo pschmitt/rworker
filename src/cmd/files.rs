@@ -68,7 +68,25 @@ pub fn ssh_command(ctx: &Ctx, args: &[String]) -> R<Command> {
     }
     let ip = state::worker_ip(ctx, &t.name)?;
     let user = target_user(ctx, &t).map_err(|_| Fail(1))?;
-    let opts = state::ssh_opts(ctx, &t.name);
+    let mut opts = state::ssh_opts(ctx, &t.name);
+    if let Ok(identity) = std::env::var("RWORKER_LOG_CACHE_IDENTITY") {
+        if opts.is_empty() {
+            return Err(Fail(1));
+        }
+        opts.splice(
+            0..0,
+            [
+                "-o".into(),
+                "IdentitiesOnly=yes".into(),
+                "-o".into(),
+                "IdentityAgent=none".into(),
+                "-o".into(),
+                "ConnectTimeout=5".into(),
+                "-i".into(),
+                identity,
+            ],
+        );
+    }
     let mut cmd = state::worker_ssh(&opts, &format!("{user}@{ip}"));
     cmd.args(&args[1..]);
     Ok(cmd)
