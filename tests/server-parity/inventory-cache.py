@@ -23,13 +23,18 @@ def verify(binary, root):
         "netbirdApi": "https://example.invalid",
     }))
     calls = root / "calls"
+    pause = root / "pause"
     fixture = json.dumps([{"Name": "example-worker", "Status": "ACTIVE", "Properties": {}}])
     for name, program in {
-        "curl": "printf '[]\\n'\n",
-        "openstack": f"printf 'read\\n' >> '{calls}'\nprintf '%s\\n' '{fixture}'\n",
+        "curl": "print('[]')",
+        "openstack": f"with open({str(calls)!r}, 'a') as log:\n"
+                     f"    print('read', file=log)\n"
+                     f"from pathlib import Path\nimport time\n"
+                     f"if Path({str(pause)!r}).exists():\n    time.sleep(0.5)\n"
+                     f"print({fixture!r})",
     }.items():
         path = root / name
-        path.write_text(f"#!/bin/sh\n" + program)
+        path.write_text(f"#!{sys.executable}\n{program}\n")
         path.chmod(0o700)
     env = dict(os.environ, PATH=f"{root}:{os.environ['PATH']}", RWORKER_INVENTORY_DIRECTORY=str(root))
     command = [str(binary), "server", str(settings)]
@@ -52,7 +57,16 @@ def verify(binary, root):
                 with ThreadPoolExecutor(8) as pool:
                     assert all(x == workers for x in pool.map(lambda _: ls(), range(12)))
                 assert calls.read_text().splitlines() == ["read"]
-                assert ls("--fresh") == workers
+                pause.touch()
+                with ThreadPoolExecutor(1) as pool:
+                    refreshing = pool.submit(ls, "--fresh")
+                    deadline = time.monotonic() + 3
+                    while not (root / "refresh").exists() and time.monotonic() < deadline:
+                        time.sleep(0.01)
+                    assert (root / "refresh").exists()
+                    assert json.loads(request("/v1/workers")[1]) == workers
+                    assert refreshing.result() == workers
+                pause.unlink()
                 assert calls.read_text().splitlines() == ["read", "read"]
                 headers, body = request("/v1/workers")
                 assert json.loads(body) == workers

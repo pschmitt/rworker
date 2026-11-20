@@ -45,7 +45,7 @@ async fn worker(
 
 async fn inventory(dir: PathBuf, headers: HeaderMap, name: Option<String>) -> Response {
     let Ok(Some((mut workers, age))) =
-        tokio::task::spawn_blocking(move || inventory_cache::read(&dir)).await
+        tokio::task::spawn_blocking(move || inventory_cache::read(&dir, false)).await
     else {
         return error(StatusCode::SERVICE_UNAVAILABLE, "inventory unavailable");
     };

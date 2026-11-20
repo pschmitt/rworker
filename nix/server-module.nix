@@ -128,7 +128,7 @@ in
           rworker-inventory-api = {
             description = "rworker inventory HTTP API";
             wantedBy = [ "multi-user.target" ];
-            requires = [ "rworker-inventory.service" ];
+            wants = [ "rworker-inventory.service" ];
             after = [ "rworker-inventory.service" ];
             environment.RWORKER_INVENTORY_DIRECTORY = inventoryDirectory;
             serviceConfig = {

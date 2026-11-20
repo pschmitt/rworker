@@ -36,7 +36,7 @@ NOW = int(time.time())  # reset at the start of every case
 # with FAKE_SSH_STDIN=0 every case must match.
 STDIN_BUG = "PARITY.md bug 2: bash's control-host ssh swallows a list or script meant for later"
 ACCEPTED = {
-    "spec": "CHANGELOG: dynamic value sets for the completions, the completions and tui actions",
+    "spec": "CHANGELOG: dynamic value sets for the completions, the completions and tui actions, and ls --fresh",
     **{case: "CHANGELOG: the usage lists the completions and tui actions" for case in
        ("usage-empty", "help", "help-flag", "help-bogus", "unknown-action")},
     **{case: "CHANGELOG: RWORKER_AWS_CREDENTIALS_FILE in the help" for case in
@@ -448,6 +448,13 @@ def main():
             # The fake follower's shell may report the killed test sleep.
             for result in (a, b):
                 result["stderr"] = re.sub(r"(?m)^Terminated +sleep 1\n?", "", result["stderr"])
+        if name in {"ls-h", "ls-o-bogus", "ls-o-missing", "ls-interval-zero", "ls-unknown"}:
+            # Compare everything except the new --fresh usage and option lines.
+            for stream in ("stdout", "stderr"):
+                b[stream] = b[stream].replace("\x1b[36m--fresh\x1b[0m | ", "")
+                b[stream] = b[stream].replace(
+                    "  \x1b[36m--fresh\x1b[0m        wait for a fresh inventory snapshot\n", ""
+                )
         diffs = [k for k in ("code", "stdout", "stderr", "calls", "state") if a[k] != b[k]]
         if name in OPTIMIZED_INVENTORY and "calls" in diffs and compare_optimized_calls(
             name, a["calls"], b["calls"]

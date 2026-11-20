@@ -15,8 +15,8 @@ pub(super) fn directory() -> Option<PathBuf> {
     std::env::var_os("RWORKER_INVENTORY_DIRECTORY").map(PathBuf::from)
 }
 
-fn generation(dir: &Path) -> io::Result<String> {
-    match fs::read_to_string(dir.join("refresh")) {
+fn generation(dir: &Path, marker: &str) -> io::Result<String> {
+    match fs::read_to_string(dir.join(marker)) {
         Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(String::new()),
         result => result,
     }
@@ -39,32 +39,37 @@ fn replace(
 }
 
 pub(super) fn invalidate(dir: &Path) -> io::Result<()> {
+    mark(dir, "mutation")
+}
+
+fn mark(dir: &Path, marker: &str) -> io::Result<()> {
     let now = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map_err(io::Error::other)?;
-    replace(dir, "refresh", |file| {
+    replace(dir, marker, |file| {
         write!(file, "{}:{}", now.as_nanos(), std::process::id())
     })
 }
 
-pub(super) fn read(dir: &Path) -> Option<(Value, Duration)> {
+pub(super) fn read(dir: &Path, fresh: bool) -> Option<(Value, Duration)> {
     let snapshot = File::open(dir.join("inventory.json")).ok()?;
     let age = snapshot.metadata().ok()?.modified().ok()?.elapsed().ok()?;
     if age >= MAX_AGE {
         return None;
     }
     let mut snapshot: Value = serde_json::from_reader(BufReader::new(snapshot)).ok()?;
-    (snapshot["generation"].as_str()? == generation(dir).ok()?)
-        .then(|| (snapshot["workers"].take(), age))
+    (snapshot["mutation"].as_str()? == generation(dir, "mutation").ok()?
+        && (!fresh || snapshot["refresh"].as_str()? == generation(dir, "refresh").ok()?))
+    .then(|| (snapshot["workers"].take(), age))
 }
 
 pub(super) fn list(dir: &Path, fresh: bool) -> Result<Value, String> {
-    if fresh && read(dir).is_some() {
-        invalidate(dir).map_err(|error| format!("Request inventory refresh: {error}"))?;
+    if fresh && read(dir, true).is_some() {
+        mark(dir, "refresh").map_err(|error| format!("Request inventory refresh: {error}"))?;
     }
     let deadline = Instant::now() + READ_TIMEOUT;
     loop {
-        if let Some((workers, _)) = read(dir) {
+        if let Some((workers, _)) = read(dir, fresh) {
             return Ok(workers);
         }
         if Instant::now() >= deadline {
@@ -77,7 +82,8 @@ pub(super) fn list(dir: &Path, fresh: bool) -> Result<Value, String> {
 pub(super) fn refresh_forever(config: &str, dir: &Path) -> Result<(), Box<dyn std::error::Error>> {
     let binary = std::env::current_exe()?;
     loop {
-        let current = generation(dir)?;
+        let mutation = generation(dir, "mutation")?;
+        let refresh = generation(dir, "refresh")?;
         let output = Command::new("timeout")
             .args(["--kill-after=2s", "10s"])
             .arg(&binary)
@@ -92,7 +98,8 @@ pub(super) fn refresh_forever(config: &str, dir: &Path) -> Result<(), Box<dyn st
             .then(|| serde_json::from_slice::<Value>(&output.stdout))
         {
             Some(Ok(workers)) => {
-                let snapshot = json!({"generation": current, "workers": workers});
+                let snapshot =
+                    json!({"mutation": mutation, "refresh": refresh, "workers": workers});
                 replace(dir, "inventory.json", |file| {
                     serde_json::to_writer(file, &snapshot).map_err(io::Error::other)
                 })?;
@@ -101,7 +108,10 @@ pub(super) fn refresh_forever(config: &str, dir: &Path) -> Result<(), Box<dyn st
             None => eprintln!("Refresh worker inventory: {}", output.status),
         }
         let deadline = Instant::now() + REFRESH_INTERVAL;
-        while Instant::now() < deadline && generation(dir)? == current {
+        while Instant::now() < deadline
+            && generation(dir, "mutation")? == mutation
+            && generation(dir, "refresh")? == refresh
+        {
             thread::sleep(Duration::from_millis(250));
         }
     }

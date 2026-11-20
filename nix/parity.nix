@@ -7,6 +7,7 @@
   rworker,
   bashInteractive,
   coreutils,
+  curl,
   gawk,
   gnugrep,
   gnused,
@@ -23,6 +24,7 @@ runCommand "rworker-parity"
     nativeBuildInputs = [
       bashInteractive
       coreutils
+      curl
       gawk
       gnugrep
       gnused
@@ -36,7 +38,10 @@ runCommand "rworker-parity"
     ];
     src = lib.fileset.toSource {
       root = ./..;
-      fileset = ../tests/parity;
+      fileset = lib.fileset.unions [
+        ../tests/parity
+        ../tests/server-parity/inventory-cache.py
+      ];
     };
   }
   ''
@@ -47,5 +52,6 @@ runCommand "rworker-parity"
     unwrapped=${rworker}/bin/.rworker-wrapped
     FAKE_SSH_STDIN=0 python3 tests/parity/run.py $unwrapped
     python3 tests/parity/run.py $unwrapped
+    python3 tests/server-parity/inventory-cache.py $unwrapped
     touch $out
   ''
