@@ -147,6 +147,6 @@ The Rust client and controller replace the original Bash client.
 - `rworker server CONFIG reap --dry-run` reports deletion candidates and
   skips provider mutations. NixOS can select it with
   `services.rworker.reaper.dryRun`.
-- Setting `reapProtectInUse` in the control settings preserves workers
-  with an owner or topic and requires a successful idle probe before
-  deleting other candidates.
+- Setting `reapProtectInUse` in the control settings requires a successful
+  idle probe before deleting a worker, including at maximum lifetime.
+  Ownership and topic metadata do not affect the activity check.

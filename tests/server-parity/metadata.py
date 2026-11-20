@@ -35,7 +35,14 @@ def characterize(oracle, binary=None, directory=None):
         token = directory / "token"
         token.write_text("fake")
         curl = directory / "curl"
-        curl.write_text(f"#!{sys.executable}\nimport sys\nassert '/peers' in sys.stdin.read()\nprint('[]')\n")
+        probe_trace = directory / "probe"
+        curl.write_text(f"""#!{sys.executable}
+import sys
+from pathlib import Path
+assert '/peers' in sys.stdin.read()
+Path({str(probe_trace)!r}).touch()
+print('[]')
+""")
         curl.chmod(0o700)
         config.write_text(json.dumps({
             **cfg, "openstackSecretFile": str(secret), "openstackSecretName": "test",
@@ -175,10 +182,11 @@ else:
         for flags, verb, reason, protect, expected in [
             ([], "deleting", "maximum lifetime reached", False, [["delete", name]]),
             (["--dry-run"], "would delete", "maximum lifetime reached", False, []),
-            ([], "keeping", "reserved or activity could not be ruled out", True, []),
+            ([], "keeping", "activity could not be ruled out", True, []),
         ]:
             config.write_text(json.dumps({**current, **cfg, "reapProtectInUse": protect}))
             trace.write_text("")
+            probe_trace.unlink(missing_ok=True)
             actual = subprocess.run(
                 [str(binary), "server", str(config), "reap", *flags], capture_output=True, text=True,
                 timeout=10, env={
@@ -189,10 +197,12 @@ else:
             )
             assert (actual.returncode, actual.stdout) == (0, ""), actual
             assert actual.stderr == f"{verb} {name} ({reason})\n", actual
+            if protect:
+                assert probe_trace.exists(), "owner and topic must not skip the activity probe"
             assert [json.loads(line) for line in trace.read_text().splitlines()] == expected
         print("Rust vs Python reaper CLI: 1 case compared, 0 differences")
         print("Reaper dry run: deletion reported, zero mutations")
-        print("Reaper cutover safeguard: reserved worker preserved, zero mutations")
+        print("Reaper cutover safeguard: unreachable worker preserved, zero mutations")
     return 8
 
 

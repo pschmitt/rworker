@@ -45,73 +45,63 @@ pub(super) fn reap(cfg: &serde_json::Value, dry_run: bool) -> Result<(), String>
             last_active: number("last_active").unwrap_or_default(),
             token_expires_at: number("niks3_token_exp").unwrap_or_default(),
         };
-        let reason = match policy.before_probe(&worker, now) {
+        let decision = policy.before_probe(&worker, now);
+        if decision == BeforeProbe::Keep {
+            continue;
+        }
+        let protect_in_use = cfg["reapProtectInUse"] == true;
+        let active = if decision == BeforeProbe::Probe || protect_in_use {
+            let key = metadata
+                .get("host_key")
+                .and_then(Value::as_str)
+                .filter(|key| !key.is_empty());
+            match key {
+                Some(key) => {
+                    worker_ssh::route(cfg, name)?.and_then(|ip| worker_ssh::active(cfg, ip, key))
+                }
+                None => None,
+            }
+        } else {
+            None
+        };
+        let reason = match decision {
             BeforeProbe::Keep => continue,
             BeforeProbe::DeleteUnready => "never became ready",
             BeforeProbe::DeleteAtMaximumLifetime => "maximum lifetime reached",
-            BeforeProbe::Probe => {
-                let ip = worker_ssh::route(cfg, name)?;
-                let key = metadata
-                    .get("host_key")
-                    .and_then(Value::as_str)
-                    .filter(|key| !key.is_empty());
-                let active = ip
-                    .zip(key)
-                    .and_then(|(ip, key)| worker_ssh::active(cfg, ip, key));
-                match policy.after_probe(&worker, now, active) {
-                    AfterProbe::Keep => continue,
-                    AfterProbe::DeleteExpired => "expired and idle",
-                    AfterProbe::Busy {
-                        record_activity,
-                        report_expired,
-                        renew_token_until,
-                    } => {
-                        if record_activity && !dry_run {
-                            compute.set_metadata(
-                                &id,
-                                [("last_active".into(), json!((now as i64).to_string()))]
-                                    .into_iter()
-                                    .collect(),
-                            )?;
-                        }
-                        if report_expired {
-                            eprintln!("{name} expired but is in use; keeping it");
-                        }
-                        if let Some(end) = renew_token_until.filter(|_| !dry_run) {
-                            super::niks3::install(
-                                cfg,
-                                &mut compute,
-                                &id,
-                                name,
-                                &metadata,
-                                end as i64,
-                            )?;
-                        }
-                        continue;
+            BeforeProbe::Probe => match policy.after_probe(&worker, now, active) {
+                AfterProbe::Keep => continue,
+                AfterProbe::DeleteExpired => "expired and idle",
+                AfterProbe::Busy {
+                    record_activity,
+                    report_expired,
+                    renew_token_until,
+                } => {
+                    if record_activity && !dry_run {
+                        compute.set_metadata(
+                            &id,
+                            [("last_active".into(), json!((now as i64).to_string()))]
+                                .into_iter()
+                                .collect(),
+                        )?;
                     }
+                    if report_expired {
+                        eprintln!("{name} expired but is in use; keeping it");
+                    }
+                    if let Some(end) = renew_token_until.filter(|_| !dry_run) {
+                        super::niks3::install(cfg, &mut compute, &id, name, &metadata, end as i64)?;
+                    }
+                    continue;
                 }
-            }
+            },
         };
-        if cfg["reapProtectInUse"] == true {
-            let reserved = ["owner", "topic"].iter().any(|key| {
-                metadata
-                    .get(*key)
-                    .and_then(Value::as_str)
-                    .is_some_and(|value| !value.is_empty())
-            });
-            let idle = if reserved {
-                false
-            } else if let Some(key) = metadata.get("host_key").and_then(Value::as_str)
-                && let Some(ip) = worker_ssh::route(cfg, name)?
-            {
-                worker_ssh::active(cfg, ip, key) == Some(false)
+        if protect_in_use && active != Some(false) {
+            let activity = if active == Some(true) {
+                "worker is active"
             } else {
-                false
+                "activity could not be ruled out"
             };
-            if !idle {
-                eprintln!("keeping {name} (reserved or activity could not be ruled out)");
-                continue;
-            }
+            eprintln!("keeping {name} ({activity})");
+            continue;
         }
         if dry_run {
             eprintln!("would delete {name} ({reason})");
