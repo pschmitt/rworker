@@ -16,6 +16,7 @@ mod selection;
 pub(crate) mod socket;
 mod tailscale;
 mod up;
+mod web;
 mod worker_ssh;
 
 use std::fs::File;

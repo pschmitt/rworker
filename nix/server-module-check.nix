@@ -26,6 +26,10 @@ let
           };
           reaper.enable = true;
           logCache.operator = "operator";
+          web = {
+            enable = true;
+            tokenFile = "/run/secrets/web-token";
+          };
           logCache.workerUser = "agent";
           api.https = {
             serverName = "control.example.com";
@@ -51,6 +55,9 @@ assert sockets.rworker-control.socketConfig.Accept;
 assert sockets.rworker-control.socketConfig.SocketMode == "0660";
 assert services."rworker-control@".serviceConfig.StandardInput == "socket";
 assert services.rworker-inventory-api.serviceConfig.Group == "rworker-inventory-api";
+assert services.rworker-inventory-api.serviceConfig.User == "operator";
+assert
+  services.rworker-inventory-api.environment.RWORKER_WEB_ORIGIN == "https://control.example.com";
 assert
   (builtins.head config.services.nginx.virtualHosts."control.example.com".listen).addr == "127.0.0.1";
 assert timers.rworker-reaper.timerConfig.OnUnitActiveSec == "1m";

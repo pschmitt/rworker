@@ -38,6 +38,11 @@ def verify(binary, root):
         path.chmod(0o700)
     env = dict(os.environ, PATH=f"{root}:{os.environ['PATH']}",
                RWORKER_INVENTORY_DIRECTORY=str(root), RWORKER_EVENT_DIRECTORY=str(root))
+    web_token = root / "web-token"
+    fixture_token = "fixture" * 6
+    web_token.write_text(fixture_token)
+    origin = "https://rworker.example.invalid"
+    env.update(RWORKER_WEB_TOKEN_FILE=str(web_token), RWORKER_WEB_ORIGIN=origin)
     command = [str(binary), "server", str(settings)]
     socket = root / "http.sock"
 
@@ -86,6 +91,16 @@ def verify(binary, root):
                 assert conditional.startswith("HTTP/1.1 304"), conditional
                 assert json.loads(request("/v1/workers/example-worker")[1]) == workers[0]
                 assert request("/v1/workers/other")[0].startswith("HTTP/1.1 404")
+                headers, body = request("/")
+                assert headers.startswith("HTTP/1.1 200") and "content-security-policy:" in headers
+                assert "/assets/app.js" in body
+                assert request("/assets/app.js")[0].startswith("HTTP/1.1 200")
+                assert request("/v1/ui/events")[0].startswith("HTTP/1.1 401")
+                auth = ("-H", f"Authorization: Bearer {fixture_token}")
+                assert request("/v1/ui/unknown", *auth)[0].startswith("HTTP/1.1 404")
+                action = (*auth, "-H", "Content-Type: application/json", "--data", '{"action":"unknown"}')
+                assert request("/v1/ui/action", *action)[0].startswith("HTTP/1.1 403")
+                assert request("/v1/ui/action", *action, "-H", f"Origin: {origin}")[0].startswith("HTTP/1.1 400")
                 cache.terminate()
                 cache.wait(timeout=5)
                 expired = time.time() - 31

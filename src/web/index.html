@@ -1,0 +1,69 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Workers · rworker</title>
+  <link rel="stylesheet" href="/assets/app.css">
+  <script defer src="/assets/app.js"></script>
+</head>
+<body>
+  <div class="shell">
+    <aside class="rail">
+      <a class="brand" href="#workers"><span class="mark" aria-hidden="true"><i></i><i></i><i></i></span>rworker</a>
+      <nav aria-label="Console">
+        <a href="#workers" data-view="workers"><span aria-hidden="true">▦</span>Workers</a>
+        <a href="#jobs" data-view="jobs"><span aria-hidden="true">▤</span>Jobs</a>
+        <a href="#events" data-view="events"><span aria-hidden="true">◇</span>Events</a>
+        <a href="#profiles" data-view="profiles"><span aria-hidden="true">⊞</span>Profiles</a>
+      </nav>
+      <div class="rail-status"><span class="signal" id="signal"></span><span id="connection">Locked</span><button type="button" id="lock" title="Lock console" hidden>Lock</button></div>
+    </aside>
+    <main id="main">
+      <header class="page-head">
+        <div><h1 id="heading">Workers</h1><p id="subtitle">Manage worker leases and inspect build output.</p></div>
+        <button class="primary" id="create" type="button" hidden><span aria-hidden="true">＋</span> New worker</button>
+      </header>
+      <div id="notice" class="notice" aria-live="polite" hidden></div>
+      <section id="login" class="login" aria-labelledby="login-title">
+        <h2 id="login-title">Unlock console</h2>
+        <form id="unlock">
+          <label for="token">Operator access token</label>
+          <div class="login-controls"><input id="token" type="password" autocomplete="off" required><button class="primary">Unlock</button></div>
+        </form>
+      </section>
+      <div id="console" hidden>
+        <div id="summary" class="summary"></div>
+        <div class="workspace" id="workspace">
+          <section class="inventory" aria-label="Results">
+            <div class="toolbar">
+              <label class="search"><span aria-hidden="true">⌕</span><input id="search" type="search" aria-label="Filter results" placeholder="Filter workers"></label>
+              <label class="toggle" id="extra-toggle"><input type="checkbox" id="extra"><span id="extra-label">Show retired</span></label>
+              <button id="refresh" type="button" title="Refresh" aria-label="Refresh">↻</button>
+            </div>
+            <div id="results"></div>
+          </section>
+          <aside id="detail" class="detail" aria-label="Worker details" hidden>
+            <div class="detail-head">
+              <div><div id="detail-state"></div><h2 id="detail-name"></h2></div>
+              <button id="close-detail" type="button" title="Close details" aria-label="Close details">×</button>
+            </div>
+            <dl id="metadata" class="metadata"></dl>
+            <div id="worker-actions" class="worker-actions"></div>
+            <div class="details-nav" id="detail-tabs" aria-label="Worker views"></div>
+            <div id="detail-output"></div>
+          </aside>
+        </div>
+      </div>
+    </main>
+  </div>
+  <dialog id="dialog">
+    <form id="action-form">
+      <header><h2 id="dialog-title"></h2><button type="button" id="cancel" aria-label="Close">×</button></header>
+      <div id="form-fields"></div>
+      <p id="form-error" role="alert" hidden></p>
+      <footer><button type="button" id="dismiss">Cancel</button><button id="confirm" class="primary">Save</button></footer>
+    </form>
+  </dialog>
+</body>
+</html>

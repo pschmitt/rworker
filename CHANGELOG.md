@@ -19,6 +19,9 @@ The Rust client and controller replace the original Bash client.
 
 ### New
 
+- Add a responsive, embedded web console for workers, jobs, events, profiles,
+  and operator controls.
+
 - Retain observed worker and job lifecycle events on the controller and follow
   them with `events -w` or the TUI.
 

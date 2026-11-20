@@ -96,6 +96,24 @@ in
 {
   options.services.rworker = {
     enable = lib.mkEnableOption "the rworker control socket and local client";
+    web = {
+      enable = lib.mkEnableOption "the HTTPS rworker operator console";
+      operator = lib.mkOption {
+        type = lib.types.nullOr lib.types.str;
+        default = cfg.logCache.operator;
+        description = "Local account whose rworker permissions and SSH identity the web console uses.";
+      };
+      tokenFile = lib.mkOption {
+        type = lib.types.str;
+        example = "/run/secrets/rworker-web-token";
+        description = "Runtime file containing a random token of at least 32 characters, readable by the console operator.";
+      };
+      publicKeyFile = lib.mkOption {
+        type = lib.types.nullOr lib.types.str;
+        default = null;
+        description = "Operator SSH public key used when creating a worker. Defaults to the CLI's usual key.";
+      };
+    };
     api.https = lib.mkOption {
       default = null;
       description = "Serve the read API through nginx with mandatory client certificates on a private address.";
@@ -261,6 +279,18 @@ in
   };
 
   config = lib.mkMerge [
+    (lib.mkIf cfg.web.enable {
+      assertions = [
+        {
+          assertion = cfg.enable && cfg.api.https != null && cfg.web.operator != null;
+          message = "The rworker web console requires the server, an HTTPS API and an operator account.";
+        }
+        {
+          assertion = lib.hasPrefix "/" cfg.web.tokenFile;
+          message = "The rworker web tokenFile must be an absolute runtime path.";
+        }
+      ];
+    })
     (lib.mkIf cfg.enable {
       environment.systemPackages = [ client ];
       systemd.tmpfiles.rules = [
@@ -305,11 +335,29 @@ in
           rworker-inventory-api = {
             description = "rworker inventory HTTP API";
             wantedBy = [ "multi-user.target" ];
-            wants = [ "rworker-inventory.service" ];
-            after = [ "rworker-inventory.service" ];
-            environment.RWORKER_INVENTORY_DIRECTORY = inventoryDirectory;
+            wants = [ "rworker-inventory.service" ] ++ lib.optional cfg.web.enable "rworker-control.socket";
+            after = [ "rworker-inventory.service" ] ++ lib.optional cfg.web.enable "rworker-control.socket";
+            path = lib.optionals cfg.web.enable [
+              pkgs.coreutils
+              pkgs.openssh
+            ];
+            environment = {
+              RWORKER_INVENTORY_DIRECTORY = inventoryDirectory;
+            }
+            // lib.optionalAttrs (cfg.web.enable && cfg.api.https != null) {
+              RWORKER_WEB_ORIGIN = "https://${cfg.api.https.serverName}";
+              RWORKER_WEB_TOKEN_FILE = cfg.web.tokenFile;
+              RWORKER_CONTROL_SOCKET = socket;
+            }
+            // lib.optionalAttrs (cfg.web.enable && cfg.web.publicKeyFile != null) {
+              RWORKER_KEY = cfg.web.publicKeyFile;
+            }
+            // lib.optionalAttrs (cfg.web.enable && cfg.builderGateway.enable) {
+              RWORKER_BUILDER_ARCHIVE = "1";
+            };
             serviceConfig = {
-              User = cfg.user;
+              User = if cfg.web.enable && cfg.web.operator != null then cfg.web.operator else cfg.user;
+              SupplementaryGroups = lib.optional cfg.web.enable cfg.group;
               Group = apiGroup;
               RuntimeDirectory = "rworker-inventory-api";
               RuntimeDirectoryMode = "0750";
@@ -479,8 +527,15 @@ in
             ssl_client_certificate ${cfg.api.https.clientCAFile};
             ssl_verify_client on;
           '';
-          locations."/v1/workers" = {
-            proxyPass = "http://unix:${apiSocket}:";
+          locations = {
+            "/v1/workers".proxyPass = "http://unix:${apiSocket}:";
+          }
+          // lib.optionalAttrs cfg.web.enable {
+            "/".proxyPass = "http://unix:${apiSocket}:";
+            "/v1/ui/action" = {
+              proxyPass = "http://unix:${apiSocket}:";
+              extraConfig = "proxy_read_timeout 920s;";
+            };
           };
         };
       };

@@ -76,7 +76,7 @@ rworker down "$w"                                    # delete it
 | Topic | |
 | --- | --- |
 | [Usage](docs/usage.md) | Actions, worker names, environment variables |
-| [Nix](docs/nix.md) | Flake outputs, overlay options and the MCP server |
+| [Nix](docs/nix.md) | Flake outputs, overlay options, the web console and MCP server |
 | [On-demand Nix builders](docs/nix-builders.md) | Gateway, machines entry and worker leases |
 | [Worker images](docs/images.md) | Building, uploading and booting worker images |
 | [Development](docs/development.md) | Building and testing |

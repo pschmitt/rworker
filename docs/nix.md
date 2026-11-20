@@ -94,3 +94,34 @@ The TUI can use this HTTPS endpoint or its existing authenticated control connec
 
 The NixOS module can provision workers on demand through a stable SSH gateway.
 See [On-demand Nix builders](nix-builders.md) for gateway and client options.
+
+
+## Web console
+
+Enable the console on a controller that already has `services.rworker.api.https`
+configured. The browser uses the same HTTPS listener and client certificate as
+the inventory API. The operator console also requires a separate access token.
+
+```nix
+services.rworker.web = {
+  enable = true;
+  operator = "operator";
+  tokenFile = "/run/secrets/rworker-web-token";
+  publicKeyFile = "/run/secrets/rworker-operator.pub";
+};
+```
+
+Generate a random token, for example with `openssl rand -hex 32`, and store it
+in the runtime file. Make the file readable by the configured operator. That
+account needs a working SSH identity for the workers it manages. All console
+actions run with the account's existing rworker permissions.
+
+Open the configured HTTPS hostname in a browser with its client certificate,
+then enter the operator token. The console provides workers and history, job
+management, profiles, events, inspection, process lists, and log snapshots with
+follow and optional redaction. It can copy an SSH command or a Nix builder entry.
+Use the CLI for local file transfers, image workflows, interactive SSH, and
+one-shot commands that need terminal I/O.
+
+The HTML, styles and scripts are embedded in the rworker binary and the browser
+loads them from the controller.
