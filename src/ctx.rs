@@ -28,6 +28,7 @@ pub struct Ctx {
     pub json: Cell<bool>,
     pub wide: Cell<bool>,
     pub quiet: Cell<bool>,
+    pub resolution_snapshot: RefCell<Option<String>>,
     pub filter_agent_id: RefCell<String>,
     mute: Cell<u32>,
 }
@@ -89,6 +90,7 @@ impl Ctx {
             json: Cell::new(false),
             wide: Cell::new(false),
             quiet: Cell::new(env("__RWORKER_QUIET") == "1"),
+            resolution_snapshot: RefCell::new(None),
             filter_agent_id: RefCell::new(String::new()),
             mute: Cell::new(0),
         }

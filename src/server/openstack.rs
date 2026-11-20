@@ -62,6 +62,21 @@ impl OpenStack {
     }
 }
 
+impl OpenStack {
+    pub(super) fn metadata(&self, id: &str) -> Result<Map<String, Value>, String> {
+        let output =
+            self.command(&["server", "show", "-f", "json", "-c", "properties", "--", id])?;
+        let mut detail: Value = serde_json::from_slice(&output)
+            .map_err(|_| "Invalid OpenStack server detail".to_string())?;
+        let metadata = match detail["properties"].take() {
+            Value::Object(metadata) => metadata,
+            Value::Null => Map::new(),
+            _ => return Err("Invalid OpenStack server properties".into()),
+        };
+        Ok(metadata)
+    }
+}
+
 pub(super) fn setting<'a>(settings: &'a Value, key: &str) -> Result<&'a str, String> {
     settings[key]
         .as_str()
@@ -83,16 +98,7 @@ impl Compute for OpenStack {
             return Ok(None);
         };
         let id = setting(server, "ID")?;
-        let output =
-            self.command(&["server", "show", "-f", "json", "-c", "properties", "--", id])?;
-        let mut detail: Value = serde_json::from_slice(&output)
-            .map_err(|_| "Invalid OpenStack server detail".to_string())?;
-        let metadata = match detail["properties"].take() {
-            Value::Object(metadata) => metadata,
-            Value::Null => Map::new(),
-            _ => return Err("Invalid OpenStack server properties".into()),
-        };
-        Ok(Some((id.into(), metadata)))
+        Ok(Some((id.into(), self.metadata(id)?)))
     }
 
     fn set_metadata(

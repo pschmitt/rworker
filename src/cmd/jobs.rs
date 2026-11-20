@@ -55,6 +55,32 @@ fn jobs_capture(ctx: &Ctx, args: &[String]) -> R<String> {
     Ok(out)
 }
 
+/// Poll a bounded group of independent workers and retain request order.
+fn poll_jobs(ctx: &Ctx, requests: &[Vec<String>]) -> Vec<R<String>> {
+    let quiet = ctx.quiet.get();
+    requests
+        .chunks(4)
+        .flat_map(|batch| {
+            std::thread::scope(|scope| {
+                let tasks: Vec<_> = batch
+                    .iter()
+                    .map(|args| {
+                        scope.spawn(move || {
+                            let ctx = Ctx::from_env();
+                            ctx.quiet.set(quiet);
+                            jobs_capture(&ctx, args)
+                        })
+                    })
+                    .collect();
+                tasks
+                    .into_iter()
+                    .map(|task| task.join().unwrap_or(Err(Fail(1))))
+                    .collect::<Vec<_>>()
+            })
+        })
+        .collect()
+}
+
 /// `__jobs WORKER`: job names for the completions.
 pub fn jobs_names(ctx: &Ctx, worker: &str) -> R {
     let out = jobs_capture(ctx, &["jobs".to_string(), worker.to_string()]);
@@ -326,7 +352,7 @@ fn logs_all_follow(
             stop(&mut followers, &mut events);
             return Err(Fail(if sig == libc::SIGINT { 130 } else { 143 }));
         }
-        let Ok(out) = state::remote_ls(ctx) else {
+        let Ok(out) = state::poll_ls(ctx) else {
             ctx.err("could not refresh worker list; retrying");
             signals::sleep(discovery);
             continue;
@@ -530,7 +556,7 @@ pub fn cmd_events(ctx: &Ctx, args: &[String]) -> R {
     let mut prev_workers: BTreeSet<String> = BTreeSet::new();
     let mut prev_jobs: BTreeMap<String, String> = BTreeMap::new();
     loop {
-        let Ok(out) = state::remote_ls(ctx) else {
+        let Ok(out) = state::poll_ls(ctx) else {
             ctx.err("could not refresh worker list; retrying");
             proc::sleep_secs(secs);
             continue;
@@ -560,13 +586,10 @@ pub fn cmd_events(ctx: &Ctx, args: &[String]) -> R {
                 }
             }
         }
-        for w in ready(&list) {
-            if w.is_empty() {
-                continue;
-            }
-            let Ok(jobs) = jobs_capture(ctx, &s(&["jobs", &w])) else {
-                continue;
-            };
+        let workers: Vec<_> = ready(&list).into_iter().filter(|w| !w.is_empty()).collect();
+        let requests: Vec<_> = workers.iter().map(|w| s(&["jobs", w])).collect();
+        for (w, jobs) in workers.into_iter().zip(poll_jobs(ctx, &requests)) {
+            let Ok(jobs) = jobs else { continue };
             polled.insert(w.clone(), true);
             for line in jobs.lines() {
                 // `read job state started` with IFS=tab: empty fields merge.
@@ -644,22 +667,29 @@ pub fn cmd_ps(ctx: &Ctx, args: &[String]) -> R {
     };
     let mut rows = String::from("WORKER\tJOB\tPID\tPPID\tELAPSED\tCOMMAND");
     let mut status = Ok(());
-    for (worker, kind) in workers {
-        if worker.is_empty() {
-            continue;
-        }
-        let login = if target.contains('@') {
-            target.clone()
-        } else if kind == "adhoc" {
-            format!("agent@{worker}")
-        } else {
-            worker.clone()
-        };
-        let mut a = s(&["ps", &login]);
-        if long {
-            a.push("--long".into());
-        }
-        let Ok(processes) = jobs_capture(ctx, &a) else {
+    let workers: Vec<_> = workers
+        .into_iter()
+        .filter(|(worker, _)| !worker.is_empty())
+        .collect();
+    let requests: Vec<_> = workers
+        .iter()
+        .map(|(worker, kind)| {
+            let login = if target.contains('@') {
+                target.clone()
+            } else if kind == "adhoc" {
+                format!("agent@{worker}")
+            } else {
+                worker.clone()
+            };
+            let mut a = s(&["ps", &login]);
+            if long {
+                a.push("--long".into());
+            }
+            a
+        })
+        .collect();
+    for ((worker, _), processes) in workers.into_iter().zip(poll_jobs(ctx, &requests)) {
+        let Ok(processes) = processes else {
             ctx.err(&format!("could not read job processes from {worker}"));
             status = Err(Fail(1));
             continue;

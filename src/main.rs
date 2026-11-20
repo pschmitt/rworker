@@ -59,7 +59,11 @@ fn resolve_worker(ctx: &Ctx, frag: &str) -> R<String> {
     let names: Vec<String> = ctx
         .muted(|| state::remote_ls(ctx))
         .ok()
-        .and_then(|out| serde_json::from_str::<serde_json::Value>(&out).ok())
+        .and_then(|out| {
+            let workers = serde_json::from_str::<serde_json::Value>(&out).ok()?;
+            *ctx.resolution_snapshot.borrow_mut() = Some(out);
+            Some(workers)
+        })
         .and_then(|v| {
             jq::items(&v).map(|items| {
                 items

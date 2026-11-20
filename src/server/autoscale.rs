@@ -335,12 +335,14 @@ impl Pool<'_> {
             self.publish()?;
         }
         for (name, worker) in &self.workers {
-            if worker["ready"] != true || !servers.contains_key(name.as_str()) {
+            if worker["ready"] != true {
                 continue;
             }
-            let Some((id, metadata)) = self.compute.worker(prefix, name)? else {
+            let Some(&id) = servers.get(name.as_str()) else {
                 continue;
             };
+            let id = id.to_owned();
+            let metadata = self.compute.metadata(&id)?;
             let wanted = [
                 ("host_key", json!(setting(worker, "hostKey")?)),
                 (

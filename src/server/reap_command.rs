@@ -30,9 +30,8 @@ pub(super) fn reap(cfg: &serde_json::Value, dry_run: bool) -> Result<(), String>
         if !name.starts_with(prefix) {
             continue;
         }
-        let Some((id, metadata)) = compute.worker(prefix, name)? else {
-            continue;
-        };
+        let id = setting(&server, "ID")?.to_owned();
+        let metadata = compute.metadata(&id)?;
         let number = |key| {
             metadata
                 .get(key)
