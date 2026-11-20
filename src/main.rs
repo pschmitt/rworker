@@ -175,25 +175,9 @@ fn resolve_args(ctx: &Ctx, action: &str, args: &[String]) -> R<Vec<String>> {
     if action == "logs" && out.iter().any(|arg| arg == "--cached") {
         return Ok(out);
     }
-    const VALUE_FLAGS: &[&str] = &[
-        "--lines",
-        "--redact",
-        "--topic",
-        "--agent",
-        "--agent-id",
-        "--ttl",
-        "--owner",
-        "--name",
-        "--workdir",
-        "--interval",
-        "-n",
-        "-l",
-        "-o",
-        "--log",
-        "--flavor",
-        "--disk",
-        "--profile",
-    ];
+    let value_flags: Vec<_> = help::flags(action)
+        .filter_map(|(flag, takes_value)| takes_value.then_some(flag))
+        .collect();
     let mut skip_next = false;
     let mut pos = 0;
     #[allow(clippy::needless_range_loop)] // out[i] is rewritten in place
@@ -206,7 +190,7 @@ fn resolve_args(ctx: &Ctx, action: &str, args: &[String]) -> R<Vec<String>> {
         if arg == "--" {
             break;
         }
-        if VALUE_FLAGS.contains(&arg.as_str()) {
+        if arg == "--owner" || value_flags.contains(&arg.as_str()) {
             skip_next = true;
             continue;
         }
@@ -303,6 +287,89 @@ fn dispatch(ctx: &Ctx, action: &str, args: &[String]) -> R {
     }
 }
 
+struct Options {
+    args: Vec<String>,
+    json: bool,
+    help: bool,
+}
+
+fn normalize_options(action: &str, args: &[String]) -> Options {
+    let create = action == "ssh" && args.first().is_some_and(|arg| arg == "--create");
+    let flags: std::collections::HashMap<_, _> = help::flags(action)
+        .chain(help::flags("up").filter(|_| create))
+        .chain([("-h", false), ("--help", false)])
+        .chain(
+            [("-j", false), ("--json", false)]
+                .into_iter()
+                .filter(|_| action != "ssh"),
+        )
+        .collect();
+    let mut options = Options {
+        args: Vec::with_capacity(args.len()),
+        json: false,
+        help: false,
+    };
+    let mut remaining = args.iter();
+    while let Some(arg) = remaining.next() {
+        if arg == "--" || (matches!(action, "exec" | "ssh") && !create && !arg.starts_with('-')) {
+            options.args.push(arg.clone());
+            options.args.extend(remaining.cloned());
+            break;
+        }
+
+        let mut inline = None;
+        let mut names = Vec::new();
+        if flags.contains_key(arg.as_str()) {
+            names.push(arg.clone());
+        } else if let Some((name, value)) = arg.split_once('=')
+            && name.starts_with("--")
+            && flags.get(name) == Some(&true)
+        {
+            names.push(name.to_string());
+            inline = Some(value);
+        } else if let Some(cluster) = arg.strip_prefix('-').filter(|rest| !rest.starts_with('-')) {
+            for (offset, letter) in cluster.char_indices() {
+                let name = format!("-{letter}");
+                let Some(&takes_value) = flags.get(name.as_str()) else {
+                    names.clear();
+                    break;
+                };
+                names.push(name);
+                if takes_value {
+                    let suffix = &cluster[offset + letter.len_utf8()..];
+                    inline = (!suffix.is_empty()).then_some(suffix);
+                    break;
+                }
+            }
+        }
+
+        if names.is_empty() {
+            options.args.push(arg.clone());
+            // Retain compatibility for the controller's older client options.
+            if arg == "--owner" {
+                options.args.extend(remaining.next().cloned());
+            }
+            continue;
+        }
+        for name in names {
+            let takes_value = flags[name.as_str()];
+            match name.as_str() {
+                "-h" | "--help" => options.help = true,
+                "-j" | "--json" => options.json = true,
+                _ => options.args.push(name),
+            }
+            if takes_value {
+                options.args.extend(
+                    inline
+                        .map(str::to_owned)
+                        .or_else(|| remaining.next().cloned()),
+                );
+            }
+        }
+    }
+    options
+}
+
 fn run(ctx: &Ctx, argv: &[String]) -> R {
     let raw = argv.first().map_or("", String::as_str);
     let action = resolve_action(raw).map_err(|matches| {
@@ -379,37 +446,17 @@ fn run(ctx: &Ctx, argv: &[String]) -> R {
         }
         _ => {}
     }
-    let mut args: Vec<String> = argv[1..].to_vec();
-    // --json anywhere (but not for ssh, whose arguments are ssh's).
-    if action != "ssh" {
-        let mut rest = Vec::new();
-        let mut in_cmd = false;
-        for a in args {
-            if in_cmd {
-                rest.push(a);
-            } else if a == "--json" || a == "-j" {
-                ctx.json.set(true);
-            } else {
-                // exec: everything from -- on belongs to the command.
-                in_cmd = a == "--";
-                rest.push(a);
-            }
-        }
-        args = rest;
+    let Options {
+        mut args,
+        json,
+        help: show_help,
+    } = normalize_options(action, &argv[1..]);
+    if json {
+        ctx.json.set(true);
     }
-    // `ACTION --help`, except where the arguments belong to ssh or the
-    // command once a worker or command is given.
-    for a in &args {
-        if a == "--" {
-            break;
-        }
-        if (action == "ssh" || action == "exec") && !a.starts_with('-') {
-            break;
-        }
-        if a == "-h" || a == "--help" {
-            ctx::out(&help::painted(ctx, action));
-            return Ok(());
-        }
+    if show_help {
+        ctx::out(&help::painted(ctx, action));
+        return Ok(());
     }
     if action != "ssh" || args.first().map(String::as_str) != Some("--create") {
         args = resolve_args(ctx, action, &args)?;
@@ -482,6 +529,58 @@ mod tests {
         assert_eq!(resolve_action("lo"), Ok("logs"));
         assert!(resolve_action("in").is_err());
         assert_eq!(resolve_action("__jobs"), Ok("__jobs"));
+    }
+
+    #[test]
+    fn normalizes_options_using_each_actions_flag_arity() {
+        let options = |action, args: &[&str]| {
+            normalize_options(
+                action,
+                &args.iter().map(|arg| (*arg).to_owned()).collect::<Vec<_>>(),
+            )
+        };
+        assert_eq!(options("machines", &["-Aw"]).args, ["-A", "-w"]);
+        assert_eq!(
+            options("machines", &["-wAon"]).args,
+            ["-w", "-A", "-o", "n"]
+        );
+        assert_eq!(options("jobs", &["-wn5"]).args, ["-w", "-n", "5"]);
+        assert_eq!(options("logs", &["-fq"]).args, ["-f", "-q"]);
+        assert_eq!(
+            options("prune", &["-yn", "worker"]).args,
+            ["-y", "-n", "worker"]
+        );
+        assert_eq!(options("machines", &["-Aq"]).args, ["-Aq"]);
+        assert_eq!(options("machines", &["--topic=-j"]).args, ["--topic", "-j"]);
+        assert!(!options("machines", &["--topic", "-j"]).json);
+        assert!(options("machines", &["-Ajh"]).help);
+        assert!(options("machines", &["-Ajh"]).json);
+    }
+
+    #[test]
+    fn option_normalization_preserves_remote_command_arguments() {
+        let options = |action, args: &[&str]| {
+            normalize_options(
+                action,
+                &args.iter().map(|arg| (*arg).to_owned()).collect::<Vec<_>>(),
+            )
+        };
+        assert_eq!(
+            options("ssh", &["-lagent", "worker", "-jqh"]).args,
+            ["-l", "agent", "worker", "-jqh"],
+        );
+        assert_eq!(
+            options("ssh", &["--create", "--profile=standard", "-lagent"]).args,
+            ["--create", "--profile", "standard", "-l", "agent"],
+        );
+        assert_eq!(
+            options("exec", &["command", "--json", "-h"]).args,
+            ["command", "--json", "-h"],
+        );
+        assert_eq!(
+            options("start", &["worker", "--", "-jqh"]).args,
+            ["worker", "--", "-jqh"],
+        );
     }
 
     fn spec_lines(kind: &str) -> Vec<String> {

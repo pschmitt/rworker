@@ -5,6 +5,17 @@
 use crate::ctx::Ctx;
 
 pub const SPEC: &str = include_str!("text/spec.txt");
+pub fn flags(action: &str) -> impl Iterator<Item = (&str, bool)> {
+    SPEC.lines().filter_map(move |line| {
+        let (owner, rest) = line.strip_prefix("flag ")?.split_once(' ')?;
+        let flag = rest.split_whitespace().next()?;
+        (owner == action).then(|| {
+            flag.split_once('=')
+                .map_or((flag, false), |(name, _)| (name, true))
+        })
+    })
+}
+
 const USAGE: &str = include_str!("text/usage.txt");
 
 pub const HELP: &[(&str, &str)] = &[

@@ -45,6 +45,10 @@ and the side effects out. The side effects are
 
 ## Acceptable differences
 
+- Grouped short options and attached values are recognized before dispatch.
+  Option values and arguments passed to remote commands are kept literal.
+  Help flags following another option’s value are recognized.
+
 - Regex dialect of `--topic/--agent/--agent-id`: Rust's `regex` instead of
   Oniguruma (jq). Lookaround and backreferences are rejected as invalid.
 - Error wording of failures that came from jq, column or coreutils

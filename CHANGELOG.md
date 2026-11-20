@@ -21,6 +21,8 @@ Actions, flags, output, JSON and exit statuses are the same; see
 
 ### New
 
+- Accept grouped short options such as `ls -Aw` and attached option values.
+
 - Offer an opt-in NixOS SSH gateway and machines entry for on-demand Nix builds.
   Record the initiating machine, preserve retired builders in history and archive
   their Nix derivation logs.

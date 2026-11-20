@@ -41,6 +41,7 @@ ACCEPTED = {
        ("usage-empty", "help", "help-flag", "help-bogus", "unknown-action")},
     **{case: "CHANGELOG: RWORKER_AWS_CREDENTIALS_FILE in the help" for case in
        ("nix-cache-missing", "nix-cache-bogus")},
+    "exec-h-after-value": "PARITY.md: help is recognized after an option value",
     "prune-yes-all-mine": STDIN_BUG,
     "logs-all": STDIN_BUG,
     "logs-follow": STDIN_BUG,
@@ -478,16 +479,19 @@ def main():
             for result in (a, b):
                 result["stdout"] = re.sub(r"\x1b\[[0-9;]*m", "", result["stdout"])
         if name == "logs-unknown":
-            # Keep comparing the original diagnostic and usage after the two
-            # new log options have been accounted for.
+            # Compare the original diagnostic and usage without archive help.
             b["stderr"] = b["stderr"].replace(" [--redact REGEX]", "")
             b["stderr"] = re.sub(r"(?m)^ +rworker logs WORKER \[JOB\] --cached \[--lines N\]\n", "", b["stderr"])
+            b["stderr"] = b["stderr"].removesuffix(
+                "\nFor WORKER [JOB] snapshots, fall back to the archive when live logs are unavailable.\n"
+                "Use --cached to read only the archive.\n"
+            )
         if name == "logs-follow":
             # The fake follower's shell may report the killed test sleep.
             for result in (a, b):
                 result["stderr"] = re.sub(r"(?m)^Terminated +sleep 1\n?", "", result["stderr"])
         if name in {"ls-h", "ls-o-bogus", "ls-o-missing", "ls-interval-zero", "ls-unknown"}:
-            # Compare everything except the new --fresh usage and option lines.
+            # Compare the diagnostics independently of newly added options.
             for stream in ("stdout", "stderr"):
                 b[stream] = b[stream].replace("machines", "ls")
                 b[stream] = b[stream].replace("Aliases: ls, nodes, instances.\n\n", "")
@@ -500,6 +504,13 @@ def main():
                     "with status, creating agent, topic, time to expiry and age.",
                 )
                 b[stream] = b[stream].replace(" | \x1b[36m--wide\x1b[0m", "")
+                b[stream] = b[stream].replace(
+                    "[-A|\x1b[36m--all\x1b[0m|\x1b[36m--history\x1b[0m] ", ""
+                )
+                b[stream] = b[stream].replace(
+                    "  \x1b[36m-A, --all, --history\x1b[0m\n"
+                    "                 also include retired workers from history\n", ""
+                )
                 b[stream] = b[stream].replace(
                     "  \x1b[36m--wide, -o\x1b[0m wide\n                 add the owner, profile and \x1b[33mIP\x1b[0m addresses",
                     "  \x1b[36m-o\x1b[0m wide        add the agent id, flavor, NetBird IP and cwd",
