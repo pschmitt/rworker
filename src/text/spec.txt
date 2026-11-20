@@ -5,6 +5,7 @@ action logs show job logs on one or all workers
 action events stream worker and job lifecycle events
 action register register an existing log file
 action up create a worker and wait until it is ready
+action image build or upload worker disk images
 action profiles list available worker profiles
 action server run a control-host command
 action ls list all workers (ad-hoc and pool)
@@ -120,3 +121,7 @@ dynamic topic topic-re agent agent-re id id-re
 worker down extend topic claim niks3-token ssh sync builder prune inspect nix-cache start jobs ps logs register
 global --json force JSON output
 global -j short for --json
+flag image --flake=installable build a Nix worker image
+flag image --upload upload the built image to OpenStack
+flag image --name=name set the OpenStack image name
+flag image --tag=tag set an OpenStack image tag

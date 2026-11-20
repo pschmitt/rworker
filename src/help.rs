@@ -17,6 +17,7 @@ pub const HELP: &[(&str, &str)] = &[
     ("profiles", include_str!("text/help-profiles.txt")),
     ("server", include_str!("text/help-server.txt")),
     ("up", include_str!("text/help-up.txt")),
+    ("image", include_str!("text/help-image.txt")),
     ("ls", include_str!("text/help-ls.txt")),
     ("exec", include_str!("text/help-exec.txt")),
     ("down", include_str!("text/help-down.txt")),

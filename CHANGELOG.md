@@ -21,6 +21,9 @@ Actions, flags, output, JSON and exit statuses are the same; see
 
 ### New
 
+- Build worker disk images with `rworker image create` and upload private
+  images to OpenStack with `rworker image upload`.
+
 - Remove the worker row markers from the TUI and the `KIND` column from
   the TUI and `ls` tables. The JSON schema still includes `kind`.
 

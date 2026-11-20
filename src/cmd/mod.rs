@@ -1,5 +1,6 @@
 pub mod exec;
 pub mod files;
+pub mod image;
 pub mod inspect;
 pub mod jobs;
 pub mod ls;
