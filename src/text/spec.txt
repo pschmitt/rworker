@@ -22,6 +22,7 @@ action nix-cache let a worker substitute from this host's S3 cache
 action cp copy files from or to a worker (NAME:PATH)
 action inspect show everything known about a worker
 action completions print the zsh or bash completion script
+action tui interactive terminal UI: workers, jobs, logs and actions
 action help show the help of an action
 flag start --name=job name the registered job
 flag start --workdir=path working directory on the worker
@@ -98,6 +99,8 @@ flag prune --yes do not ask
 flag prune -y short for --yes
 flag prune -n short for --dry-run
 flag prune --dry-run only show what would be deleted
+flag tui --interval=seconds refresh interval of the worker list
+flag tui -n=interval short for --interval
 values duration 30m 1h 2h 4h 8h 24h
 values flavor s1.large s1.xlarge s1.2xlarge
 values profile standard browser-daemon large-builder

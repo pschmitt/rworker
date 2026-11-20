@@ -38,6 +38,29 @@ worker, `jobs NAME` lists them with their state, `logs NAME [JOB]` prints
 their output and `logs -f` follows every job on every worker, with
 lifecycle events and a periodic worker count on stderr.
 
+## Terminal UI
+
+`rworker tui` is an interactive front end over the same actions, in the
+spirit of k9s. The worker list refreshes in the background (`-n SECONDS`,
+default 5) and shows your own workers with a dot and new ones with a `+`;
+a strip below it gives the selected worker's owner, profile, addresses and
+working directory.
+
+- `⏎` opens the worker's jobs, `⏎` on a job follows its log; `l` follows
+  all jobs of the worker, `L` all workers, `E` the lifecycle events.
+- `s` logs in over ssh (the TUI comes back when the session ends), `i`
+  inspects, `p` lists the job processes.
+- `e`, `t`, `c` and `d` extend, retopic, claim and delete the worker (`d`
+  asks first); `n` creates one, `X` prunes yours.
+- In a log, scrolling up pauses it and `G` follows again; `/` filters
+  lines, `w` wraps them.
+- `:` runs any other action (`sync`, `cp`, `exec`, `nix-cache`, ...) with
+  its output in a view of its own; `?` lists all keys.
+
+The TUI runs this program again for every list, stream and action, so it
+behaves exactly like the commands and never waits on the network while it
+draws.
+
 ## Environment
 
 | Variable | Meaning |

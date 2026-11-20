@@ -1,0 +1,1239 @@
+//! The TUI's state and keys. The worker list is the base view; jobs and
+//! text views (logs, events, inspect, ps, command output) stack on it and
+//! Esc goes back.
+
+use super::proc::{self, Msg, Stream};
+use crate::ctx::Ctx;
+use crate::jq::{self, get};
+use ratatui::crossterm::event::{Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
+use ratatui::widgets::TableState;
+use serde_json::Value;
+use std::collections::{HashMap, HashSet, VecDeque};
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::mpsc::{self, Receiver, Sender};
+use std::time::{Duration, Instant};
+
+/// Lines kept per text view.
+const MAX_LINES: usize = 20_000;
+
+pub struct Worker {
+    pub name: String,
+    pub kind: String,
+    pub profile: String,
+    pub status: String,
+    pub owner: String,
+    pub agent: String,
+    pub agent_id: String,
+    pub topic: String,
+    pub flavor: String,
+    pub ips: String,
+    pub cwd: String,
+    pub created: Option<i64>,
+    pub mine: bool,
+    raw: Value,
+}
+
+/// How soon a worker goes away, for the EXPIRES color.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum Urgency {
+    None,
+    Soon,
+    Now,
+    Idle,
+}
+
+impl Worker {
+    fn from(v: &Value, owner: &str) -> Worker {
+        let s = |k: &str| jq::or_empty(get(v, k));
+        let owner_v = s("owner");
+        let kind = s("kind");
+        Worker {
+            name: s("name"),
+            profile: match s("profile") {
+                p if p.is_empty() => "standard".into(),
+                p => p,
+            },
+            status: s("status").to_ascii_uppercase(),
+            mine: kind == "adhoc" && owner_v == owner,
+            kind,
+            owner: owner_v,
+            agent: s("agent"),
+            agent_id: s("agent_id"),
+            topic: s("topic"),
+            flavor: s("flavor"),
+            ips: jq::or_empty(&crate::table::ips_label(v)),
+            cwd: s("cwd"),
+            created: get(v, "created_at")
+                .as_str()
+                .and_then(crate::time::created_epoch),
+            raw: v.clone(),
+        }
+    }
+
+    /// EXPIRES of `ls`: the time left, the grace period, or a pool
+    /// worker's state.
+    pub fn expiry(&self, now: f64) -> (String, Urgency) {
+        let w = &self.raw;
+        let pool_state = get(w, "pool_state");
+        if self.kind == "pool" && jq::truthy(pool_state) {
+            let last_busy = get(w, "last_busy");
+            if pool_state.as_str() == Some("idle") && jq::truthy(last_busy) {
+                let idle = crate::table::dur(now - jq::as_f64(last_busy));
+                (format!("idle {idle}"), Urgency::Idle)
+            } else {
+                (jq::raw(pool_state), Urgency::None)
+            }
+        } else if jq::gt_num(get(w, "grace_until"), now) {
+            let left = jq::as_f64(get(w, "grace_until")) - now;
+            (format!("grace {}", crate::table::dur(left)), Urgency::Now)
+        } else if jq::gt_num(get(w, "expires_at"), 0.0) {
+            let left = jq::as_f64(get(w, "expires_at")) - now;
+            let u = if left < 0.0 {
+                Urgency::Now
+            } else if left < 900.0 {
+                Urgency::Soon
+            } else {
+                Urgency::None
+            };
+            (crate::table::dur(left), u)
+        } else {
+            ("-".into(), Urgency::None)
+        }
+    }
+
+    pub fn age(&self, now: f64) -> String {
+        self.created
+            .map_or("-".into(), |c| crate::table::dur(now - c as f64))
+    }
+
+    fn matches(&self, needle: &str) -> bool {
+        needle.is_empty()
+            || [
+                &self.name,
+                &self.kind,
+                &self.status,
+                &self.owner,
+                &self.agent,
+                &self.agent_id,
+                &self.topic,
+                &self.profile,
+            ]
+            .iter()
+            .any(|f| f.to_lowercase().contains(needle))
+    }
+}
+
+pub struct Jobs {
+    pub worker: String,
+    pub rows: Vec<[String; 3]>,
+    pub state: TableState,
+    pub loading: Option<u64>,
+    pub error: Option<String>,
+}
+
+pub struct TextView {
+    pub title: String,
+    pub id: u64,
+    pub lines: VecDeque<(String, bool)>,
+    pub stream: Option<Stream>,
+    /// How the process ended, once it has.
+    pub exit: Option<Option<i32>>,
+    pub follow: bool,
+    pub top: usize,
+    pub wrap: bool,
+    pub filter: String,
+    /// Rows of the last draw, for paging.
+    pub height: usize,
+    /// The `WORKER/` (or `WORKER/JOB `) prefix of job log lines, which
+    /// says nothing in a view of one worker (or job): pattern and
+    /// replacement.
+    trim: Option<(regex::Regex, &'static str)>,
+}
+
+pub enum Sub {
+    Jobs(Jobs),
+    Text(TextView),
+}
+
+#[derive(Clone)]
+pub enum PromptKind {
+    Filter,
+    TextFilter,
+    Extend(String),
+    Topic(String),
+    Claim(String),
+    Up,
+    Start(String),
+    Command,
+}
+
+pub struct Prompt {
+    pub kind: PromptKind,
+    pub title: String,
+    pub input: String,
+    /// Cursor position in characters.
+    pub cursor: usize,
+    pub hint: String,
+}
+
+pub struct Confirm {
+    pub text: String,
+    pub args: Vec<String>,
+    pub label: String,
+}
+
+/// What a background action is for.
+enum Pending {
+    Status(String),
+    JobList,
+}
+
+pub struct Flash {
+    pub text: String,
+    pub error: bool,
+    at: Instant,
+}
+
+pub struct App {
+    pub control_host: String,
+    pub owner: String,
+    pub icons: bool,
+    pub workers: Vec<Worker>,
+    pub table: TableState,
+    pub filter: String,
+    pub mine_only: bool,
+    pub refreshing: bool,
+    pub refreshed: Option<(Instant, Duration)>,
+    pub stale: bool,
+    pub refresh_error: Option<String>,
+    pub new_at: HashMap<String, Instant>,
+    pub stack: Vec<Sub>,
+    pub prompt: Option<Prompt>,
+    pub confirm: Option<Confirm>,
+    pub help: bool,
+    pub flash: Option<Flash>,
+    pub tick: u64,
+    pending: HashMap<u64, Pending>,
+    next_id: u64,
+    tx: Sender<Msg>,
+    refresh: Sender<()>,
+    suspend: Option<Vec<String>>,
+    quit: bool,
+}
+
+impl App {
+    /// The workers shown, after the filter, sorted like `ls`.
+    pub fn visible(&self) -> Vec<&Worker> {
+        let needle = self.filter.to_lowercase();
+        self.workers
+            .iter()
+            .filter(|w| (!self.mine_only || w.mine) && w.matches(&needle))
+            .collect()
+    }
+
+    pub fn selected(&self) -> Option<&Worker> {
+        self.visible().get(self.table.selected()?).copied()
+    }
+
+    pub fn pending_actions(&self) -> usize {
+        self.pending
+            .values()
+            .filter(|p| matches!(p, Pending::Status(_)))
+            .count()
+    }
+
+    pub fn flash_live(&self) -> Option<&Flash> {
+        self.flash
+            .as_ref()
+            .filter(|f| f.at.elapsed() < Duration::from_secs(if f.error { 15 } else { 6 }))
+    }
+
+    fn say(&mut self, text: impl Into<String>, error: bool) {
+        self.flash = Some(Flash {
+            text: text.into(),
+            error,
+            at: Instant::now(),
+        });
+    }
+
+    fn id(&mut self) -> u64 {
+        self.next_id += 1;
+        self.next_id
+    }
+
+    fn set_workers(&mut self, list: &[Value]) {
+        let keep = self.selected().map(|w| w.name.clone());
+        let before: HashSet<String> = self.workers.iter().map(|w| w.name.clone()).collect();
+        let mut workers: Vec<Worker> = list.iter().map(|v| Worker::from(v, &self.owner)).collect();
+        workers.sort_by(|a, b| a.kind.cmp(&b.kind).then_with(|| a.name.cmp(&b.name)));
+        if self.refreshed.is_some() {
+            for w in &workers {
+                if !before.contains(&w.name) {
+                    self.new_at.insert(w.name.clone(), Instant::now());
+                }
+            }
+        }
+        self.new_at
+            .retain(|_, at| at.elapsed() < Duration::from_secs(30));
+        self.workers = workers;
+        self.reselect(keep);
+    }
+
+    /// Keep the selection on the same worker when the list changes.
+    fn reselect(&mut self, name: Option<String>) {
+        let visible = self.visible();
+        let idx = name
+            .and_then(|n| visible.iter().position(|w| w.name == n))
+            .or_else(|| {
+                (!visible.is_empty())
+                    .then(|| self.table.selected().unwrap_or(0).min(visible.len() - 1))
+            });
+        self.table.select(idx);
+    }
+
+    /// Run `rworker ARGS` in the background; LABEL is shown when it ends.
+    fn act(&mut self, args: Vec<String>, label: impl Into<String>) {
+        let label = label.into();
+        let id = self.id();
+        self.say(format!("{label}…"), false);
+        self.pending.insert(id, Pending::Status(label));
+        proc::action(id, args, self.tx.clone());
+    }
+
+    /// Open a text view on the output of `rworker ARGS`.
+    fn open_text(&mut self, title: impl Into<String>, args: Vec<String>) {
+        let id = self.id();
+        let mut view = TextView {
+            title: title.into(),
+            id,
+            lines: VecDeque::new(),
+            stream: None,
+            exit: None,
+            follow: true,
+            top: 0,
+            wrap: false,
+            filter: String::new(),
+            height: 20,
+            trim: log_prefix(&args),
+        };
+        match Stream::spawn(id, &args, &self.tx) {
+            Ok(s) => view.stream = Some(s),
+            Err(e) => {
+                view.lines
+                    .push_back((format!("could not start: {e}"), true));
+                view.exit = Some(None);
+            }
+        }
+        self.stack.push(Sub::Text(view));
+    }
+
+    fn open_jobs(&mut self, worker: String) {
+        let id = self.id();
+        self.pending.insert(id, Pending::JobList);
+        proc::action(id, vec!["jobs".into(), worker.clone()], self.tx.clone());
+        let mut state = TableState::default();
+        state.select(Some(0));
+        self.stack.push(Sub::Jobs(Jobs {
+            worker,
+            rows: Vec::new(),
+            state,
+            loading: Some(id),
+            error: None,
+        }));
+    }
+
+    fn reload_jobs(&mut self) {
+        let id = self.id();
+        if let Some(Sub::Jobs(j)) = self.stack.last_mut() {
+            j.loading = Some(id);
+            let worker = j.worker.clone();
+            self.pending.insert(id, Pending::JobList);
+            proc::action(id, vec!["jobs".into(), worker], self.tx.clone());
+        }
+    }
+
+    fn ask(&mut self, kind: PromptKind, title: &str, input: &str, hint: &str) {
+        self.prompt = Some(Prompt {
+            kind,
+            title: title.into(),
+            cursor: input.chars().count(),
+            input: input.into(),
+            hint: hint.into(),
+        });
+    }
+
+    fn handle(&mut self, msg: Msg) {
+        match msg {
+            Msg::Input(Event::Key(k)) if k.kind != KeyEventKind::Release => self.key(k),
+            Msg::Input(_) => {}
+            Msg::Refreshing => self.refreshing = true,
+            Msg::Workers { result, took } => {
+                self.refreshing = false;
+                match result {
+                    Ok(list) => {
+                        self.set_workers(&list);
+                        self.refreshed = Some((Instant::now(), took));
+                        self.stale = false;
+                        self.refresh_error = None;
+                    }
+                    Err(e) => self.refresh_error = Some(e),
+                }
+            }
+            Msg::Line { id, text, err } => {
+                for sub in &mut self.stack {
+                    if let Sub::Text(v) = sub
+                        && v.id == id
+                    {
+                        let text = match &v.trim {
+                            Some((re, rep)) => re.replace(&text, *rep).into_owned(),
+                            None => text,
+                        };
+                        v.lines.push_back((text, err));
+                        if v.lines.len() > MAX_LINES {
+                            v.lines.pop_front();
+                            v.top = v.top.saturating_sub(1);
+                        }
+                        break;
+                    }
+                }
+            }
+            Msg::Exit { id } => {
+                for sub in &mut self.stack {
+                    if let Sub::Text(v) = sub
+                        && v.id == id
+                    {
+                        v.exit = Some(v.stream.as_mut().and_then(Stream::code));
+                        v.stream = None;
+                    }
+                }
+            }
+            Msg::Done { id, ok, out, err } => match self.pending.remove(&id) {
+                Some(Pending::Status(label)) => {
+                    if ok {
+                        let detail = proc::last_line(&out);
+                        if detail.is_empty() || detail.starts_with('{') || detail.starts_with('[') {
+                            self.say(format!("{label}: done"), false);
+                        } else {
+                            self.say(format!("{label}: {detail}"), false);
+                        }
+                    } else {
+                        let why = proc::last_line(&err);
+                        self.say(
+                            format!(
+                                "{label} failed: {}",
+                                if why.is_empty() { "error" } else { &why }
+                            ),
+                            true,
+                        );
+                    }
+                    let _ = self.refresh.send(());
+                }
+                Some(Pending::JobList) => {
+                    for sub in &mut self.stack {
+                        if let Sub::Jobs(j) = sub
+                            && j.loading == Some(id)
+                        {
+                            j.loading = None;
+                            if ok {
+                                j.error = None;
+                                j.rows = out
+                                    .lines()
+                                    .filter(|l| !l.is_empty())
+                                    .map(|l| {
+                                        let mut p = l.splitn(3, '\t').map(String::from);
+                                        [
+                                            p.next().unwrap_or_default(),
+                                            p.next().unwrap_or_default(),
+                                            p.next().unwrap_or_default(),
+                                        ]
+                                    })
+                                    .collect();
+                                let n = j.rows.len();
+                                let sel = j.state.selected().unwrap_or(0).min(n.saturating_sub(1));
+                                j.state.select((n > 0).then_some(sel));
+                            } else {
+                                let why = proc::last_line(&err);
+                                j.error = Some(if why.is_empty() {
+                                    "could not list jobs".into()
+                                } else {
+                                    why
+                                });
+                            }
+                        }
+                    }
+                }
+                None => {}
+            },
+        }
+    }
+
+    fn key(&mut self, k: KeyEvent) {
+        let ctrl = k.modifiers.contains(KeyModifiers::CONTROL);
+        if ctrl && matches!(k.code, KeyCode::Char('c')) {
+            self.quit = true;
+            return;
+        }
+        if self.prompt.is_some() {
+            self.prompt_key(k);
+            return;
+        }
+        if let Some(c) = self.confirm.take() {
+            match k.code {
+                KeyCode::Char('y' | 'Y') | KeyCode::Enter => self.act(c.args, c.label),
+                _ => self.say("cancelled", false),
+            }
+            return;
+        }
+        if self.help {
+            self.help = false;
+            return;
+        }
+        match k.code {
+            KeyCode::Char('?') => {
+                self.help = true;
+                return;
+            }
+            KeyCode::Char(':') => {
+                self.ask(
+                    PromptKind::Command,
+                    "rworker",
+                    "",
+                    "e.g. sync NAME ~/src · ssh takes the terminal",
+                );
+                return;
+            }
+            _ => {}
+        }
+        match self.stack.last() {
+            None => self.workers_key(k),
+            Some(Sub::Jobs(_)) => self.jobs_key(k),
+            Some(Sub::Text(_)) => self.text_key(k),
+        }
+    }
+
+    fn workers_key(&mut self, k: KeyEvent) {
+        let n = self.visible().len();
+        let sel = self.table.selected().unwrap_or(0);
+        let ctrl = k.modifiers.contains(KeyModifiers::CONTROL);
+        let name = self.selected().map(|w| w.name.clone());
+        let need = |app: &mut App| -> Option<String> {
+            if name.is_none() {
+                app.say("no worker selected", true);
+            }
+            name.clone()
+        };
+        match k.code {
+            KeyCode::Char('q') => self.quit = true,
+            KeyCode::Esc => {
+                if !self.filter.is_empty() || self.mine_only {
+                    self.filter.clear();
+                    self.mine_only = false;
+                    self.reselect(name.clone());
+                }
+            }
+            KeyCode::Down | KeyCode::Char('j') if n > 0 => {
+                self.table.select(Some((sel + 1).min(n - 1)))
+            }
+            KeyCode::Up | KeyCode::Char('k') if n > 0 => {
+                self.table.select(Some(sel.saturating_sub(1)))
+            }
+            KeyCode::Home | KeyCode::Char('g') if n > 0 => self.table.select(Some(0)),
+            KeyCode::End | KeyCode::Char('G') if n > 0 => self.table.select(Some(n - 1)),
+            KeyCode::PageDown if n > 0 => self.table.select(Some((sel + 10).min(n - 1))),
+            KeyCode::PageUp if n > 0 => self.table.select(Some(sel.saturating_sub(10))),
+            KeyCode::Char('d') if ctrl && n > 0 => self.table.select(Some((sel + 10).min(n - 1))),
+            KeyCode::Char('u') if ctrl && n > 0 => self.table.select(Some(sel.saturating_sub(10))),
+            KeyCode::Char('/') => {
+                let f = self.filter.clone();
+                self.ask(
+                    PromptKind::Filter,
+                    "filter",
+                    &f,
+                    "name, topic, agent, owner, …",
+                );
+            }
+            KeyCode::Char('m') => {
+                self.mine_only = !self.mine_only;
+                self.reselect(name.clone());
+            }
+            KeyCode::Char('r') => {
+                let _ = self.refresh.send(());
+            }
+            KeyCode::Char('L') => self.open_text("logs · all workers", s(&["logs", "--follow"])),
+            KeyCode::Char('E') => self.open_text("events", s(&["events"])),
+            KeyCode::Char('P') => self.open_text("profiles", s(&["profiles"])),
+            KeyCode::Char('n') => self.ask(
+                PromptKind::Up,
+                "new worker",
+                "--ttl 2h --topic ",
+                "up options: --ttl --profile --flavor --disk --topic …",
+            ),
+            KeyCode::Char('X') => {
+                let mine: Vec<String> = self
+                    .workers
+                    .iter()
+                    .filter(|w| w.mine)
+                    .map(|w| w.name.clone())
+                    .collect();
+                if mine.is_empty() {
+                    self.say("none of the ad-hoc workers is yours", false);
+                } else {
+                    self.confirm = Some(Confirm {
+                        text: format!(
+                            "Delete all {} of your ad-hoc workers?\n{}",
+                            mine.len(),
+                            mine.join(" ")
+                        ),
+                        args: s(&["prune", "--yes"]),
+                        label: format!("prune {} workers", mine.len()),
+                    });
+                }
+            }
+            KeyCode::Enter | KeyCode::Char('o') => {
+                if let Some(w) = need(self) {
+                    self.open_jobs(w);
+                }
+            }
+            KeyCode::Char('l') => {
+                if let Some(w) = need(self) {
+                    self.open_text(
+                        format!("logs · {w}"),
+                        vec!["logs".into(), w, "--follow".into()],
+                    );
+                }
+            }
+            KeyCode::Char('i') => {
+                if let Some(w) = need(self) {
+                    self.open_text(format!("inspect · {w}"), vec!["inspect".into(), w]);
+                }
+            }
+            KeyCode::Char('I') => {
+                if let Some(w) = need(self) {
+                    self.open_text(
+                        format!("inspect --boot · {w}"),
+                        vec!["inspect".into(), w, "--boot".into()],
+                    );
+                }
+            }
+            KeyCode::Char('p') => {
+                if let Some(w) = need(self) {
+                    self.open_text(format!("ps · {w}"), vec!["ps".into(), w, "--long".into()]);
+                }
+            }
+            KeyCode::Char('b') => {
+                if let Some(w) = need(self) {
+                    self.open_text(format!("builder · {w}"), vec!["builder".into(), w]);
+                }
+            }
+            KeyCode::Char('s') => {
+                if let Some(w) = need(self) {
+                    self.suspend = Some(vec!["ssh".into(), w]);
+                }
+            }
+            KeyCode::Char('y') => {
+                if let Some(w) = need(self) {
+                    copy(&w);
+                    self.say(format!("copied {w}"), false);
+                }
+            }
+            KeyCode::Char('e') => {
+                if let Some(w) = need(self) {
+                    self.ask(
+                        PromptKind::Extend(w),
+                        "extend: new lifetime from now",
+                        "2h",
+                        "e.g. 90m, 4h, 24h",
+                    );
+                }
+            }
+            KeyCode::Char('t') => {
+                if let Some(w) = self.selected().map(|w| (w.name.clone(), w.topic.clone())) {
+                    self.ask(PromptKind::Topic(w.0), "topic", &w.1, "empty clears it");
+                }
+            }
+            KeyCode::Char('c') => {
+                if let Some(w) = self.selected().map(|w| (w.name.clone(), w.topic.clone())) {
+                    self.ask(
+                        PromptKind::Claim(w.0),
+                        "claim: new topic",
+                        &w.1,
+                        "take the worker over",
+                    );
+                }
+            }
+            KeyCode::Char('K') => {
+                if let Some(w) = need(self) {
+                    self.act(
+                        vec!["niks3-token".into(), w.clone()],
+                        format!("niks3 token for {w}"),
+                    );
+                }
+            }
+            KeyCode::Char('N') => {
+                if let Some(w) = need(self) {
+                    self.act(
+                        vec!["nix-cache".into(), w.clone()],
+                        format!("nix-cache {w}"),
+                    );
+                }
+            }
+            KeyCode::Char('d') | KeyCode::Delete => {
+                if let Some(w) = self.selected() {
+                    let force = !w.mine;
+                    let mut args = vec!["down".to_string(), w.name.clone()];
+                    if force {
+                        args.push("--force".into());
+                    }
+                    let whose = if w.kind == "pool" {
+                        " This is a pool worker: its builds fail.".to_string()
+                    } else if force {
+                        format!(
+                            " It belongs to {}.",
+                            if w.owner.is_empty() {
+                                "someone else"
+                            } else {
+                                &w.owner
+                            }
+                        )
+                    } else {
+                        String::new()
+                    };
+                    self.confirm = Some(Confirm {
+                        text: format!("Delete {}?{whose}", w.name),
+                        label: format!("down {}", w.name),
+                        args,
+                    });
+                }
+            }
+            _ => {}
+        }
+    }
+
+    fn jobs_key(&mut self, k: KeyEvent) {
+        let Some(Sub::Jobs(j)) = self.stack.last_mut() else {
+            return;
+        };
+        let n = j.rows.len();
+        let sel = j.state.selected().unwrap_or(0);
+        let worker = j.worker.clone();
+        let job = j
+            .state
+            .selected()
+            .and_then(|i| j.rows.get(i))
+            .map(|r| r[0].clone());
+        match k.code {
+            KeyCode::Esc | KeyCode::Char('q') | KeyCode::Backspace | KeyCode::Char('h') => {
+                self.stack.pop();
+            }
+            KeyCode::Down | KeyCode::Char('j') if n > 0 => {
+                j.state.select(Some((sel + 1).min(n - 1)))
+            }
+            KeyCode::Up | KeyCode::Char('k') if n > 0 => {
+                j.state.select(Some(sel.saturating_sub(1)))
+            }
+            KeyCode::Char('g') if n > 0 => j.state.select(Some(0)),
+            KeyCode::Char('G') if n > 0 => j.state.select(Some(n - 1)),
+            KeyCode::Char('r') => self.reload_jobs(),
+            KeyCode::Enter | KeyCode::Char('l') => match job {
+                Some(job) if k.code == KeyCode::Enter => self.open_text(
+                    format!("logs · {worker}/{job}"),
+                    vec![
+                        "logs".into(),
+                        worker,
+                        job,
+                        "--follow".into(),
+                        "--lines".into(),
+                        "1000".into(),
+                    ],
+                ),
+                _ => self.open_text(
+                    format!("logs · {worker}"),
+                    vec!["logs".into(), worker, "--follow".into()],
+                ),
+            },
+            KeyCode::Char('p') => {
+                self.open_text(
+                    format!("ps · {worker}"),
+                    vec!["ps".into(), worker, "--long".into()],
+                );
+            }
+            KeyCode::Char('n') => self.ask(
+                PromptKind::Start(worker),
+                "start job: command",
+                "",
+                "runs from ~ on the worker; output goes to its log",
+            ),
+            KeyCode::Char('s') => self.suspend = Some(vec!["ssh".into(), worker]),
+            _ => {}
+        }
+    }
+
+    fn text_key(&mut self, k: KeyEvent) {
+        let Some(Sub::Text(v)) = self.stack.last_mut() else {
+            return;
+        };
+        let page = v.height.max(2) - 1;
+        let ctrl = k.modifiers.contains(KeyModifiers::CONTROL);
+        let down = |v: &mut TextView, by: usize| {
+            v.top += by;
+            // The draw clamps and turns following back on at the bottom.
+        };
+        let up = |v: &mut TextView, by: usize| {
+            v.follow = false;
+            v.top = v.top.saturating_sub(by);
+        };
+        match k.code {
+            KeyCode::Esc | KeyCode::Char('q') | KeyCode::Backspace | KeyCode::Char('h') => {
+                if k.code == KeyCode::Esc && !v.filter.is_empty() {
+                    v.filter.clear();
+                    v.follow = true;
+                } else {
+                    self.stack.pop();
+                }
+            }
+            KeyCode::Down | KeyCode::Char('j') => down(v, 1),
+            KeyCode::Up | KeyCode::Char('k') => up(v, 1),
+            KeyCode::PageDown | KeyCode::Char(' ') => down(v, page),
+            KeyCode::PageUp => up(v, page),
+            KeyCode::Char('d') if ctrl => down(v, page / 2),
+            KeyCode::Char('u') if ctrl => up(v, page / 2),
+            KeyCode::Home | KeyCode::Char('g') => up(v, usize::MAX),
+            KeyCode::End | KeyCode::Char('G') => v.follow = true,
+            KeyCode::Char('f') => v.follow = !v.follow,
+            KeyCode::Char('w') => v.wrap = !v.wrap,
+            KeyCode::Char('c') => {
+                v.lines.clear();
+                v.top = 0;
+            }
+            KeyCode::Char('/') => {
+                let f = v.filter.clone();
+                self.ask(
+                    PromptKind::TextFilter,
+                    "filter lines",
+                    &f,
+                    "case-insensitive text",
+                );
+            }
+            _ => {}
+        }
+    }
+
+    fn prompt_key(&mut self, k: KeyEvent) {
+        let Some(p) = self.prompt.as_mut() else {
+            return;
+        };
+        let ctrl = k.modifiers.contains(KeyModifiers::CONTROL);
+        let byte = |s: &str, c: usize| s.char_indices().nth(c).map_or(s.len(), |(i, _)| i);
+        match k.code {
+            KeyCode::Esc => {
+                let kind = p.kind.clone();
+                self.prompt = None;
+                match kind {
+                    PromptKind::Filter => {
+                        self.filter.clear();
+                        let keep = self.selected().map(|w| w.name.clone());
+                        self.reselect(keep);
+                    }
+                    PromptKind::TextFilter => {
+                        if let Some(Sub::Text(v)) = self.stack.last_mut() {
+                            v.filter.clear();
+                        }
+                    }
+                    _ => {}
+                }
+                return;
+            }
+            KeyCode::Enter => {
+                let p = self.prompt.take().expect("prompt");
+                self.submit(p);
+                return;
+            }
+            KeyCode::Char('u') if ctrl => {
+                let at = byte(&p.input, p.cursor);
+                p.input.replace_range(..at, "");
+                p.cursor = 0;
+            }
+            KeyCode::Char('a') if ctrl => p.cursor = 0,
+            KeyCode::Char('e') if ctrl => p.cursor = p.input.chars().count(),
+            KeyCode::Char('w') if ctrl => {
+                let at = byte(&p.input, p.cursor);
+                let head = p.input[..at].trim_end();
+                let cut = head.rfind(' ').map_or(0, |i| i + 1);
+                p.input.replace_range(cut..at, "");
+                p.cursor = p.input[..cut].chars().count();
+            }
+            KeyCode::Char(c) if !ctrl => {
+                let at = byte(&p.input, p.cursor);
+                p.input.insert(at, c);
+                p.cursor += 1;
+            }
+            KeyCode::Backspace if p.cursor > 0 => {
+                let at = byte(&p.input, p.cursor - 1);
+                p.input.remove(at);
+                p.cursor -= 1;
+            }
+            KeyCode::Delete if p.cursor < p.input.chars().count() => {
+                let at = byte(&p.input, p.cursor);
+                p.input.remove(at);
+            }
+            KeyCode::Left => p.cursor = p.cursor.saturating_sub(1),
+            KeyCode::Right => p.cursor = (p.cursor + 1).min(p.input.chars().count()),
+            KeyCode::Home => p.cursor = 0,
+            KeyCode::End => p.cursor = p.input.chars().count(),
+            _ => {}
+        }
+        // Filters apply while typing.
+        let (kind, input) = (p.kind.clone(), p.input.clone());
+        match kind {
+            PromptKind::Filter => {
+                let keep = self.selected().map(|w| w.name.clone());
+                self.filter = input;
+                self.reselect(keep);
+            }
+            PromptKind::TextFilter => {
+                if let Some(Sub::Text(v)) = self.stack.last_mut() {
+                    v.filter = input;
+                    v.follow = true;
+                }
+            }
+            _ => {}
+        }
+    }
+
+    fn submit(&mut self, p: Prompt) {
+        let input = p.input.trim().to_string();
+        match p.kind {
+            PromptKind::Filter | PromptKind::TextFilter => {}
+            PromptKind::Extend(w) if !input.is_empty() => {
+                self.act(
+                    vec!["extend".into(), w.clone(), "--ttl".into(), input.clone()],
+                    format!("extend {w} by {input}"),
+                );
+            }
+            PromptKind::Topic(w) => {
+                let mut args = vec!["topic".to_string(), w.clone()];
+                if !self.workers.iter().any(|x| x.name == w && x.mine) {
+                    args.push("--force".into());
+                }
+                args.push(input);
+                self.act(args, format!("topic of {w}"));
+            }
+            PromptKind::Claim(w) => {
+                let mut args = vec!["claim".to_string(), w.clone()];
+                if !self.workers.iter().any(|x| x.name == w && x.mine) {
+                    args.push("--force".into());
+                }
+                if !input.is_empty() {
+                    args.extend(["--topic".into(), input]);
+                }
+                self.act(args, format!("claim {w}"));
+            }
+            PromptKind::Up => match split_words(&input) {
+                Ok(mut words) => {
+                    let mut args = vec!["up".to_string()];
+                    if words.iter().any(|w| w == "--ssh") {
+                        args.append(&mut words);
+                        self.suspend = Some(args);
+                    } else {
+                        args.append(&mut words);
+                        args.push("--quiet-topic-warning".into());
+                        self.act(args, "new worker");
+                    }
+                }
+                Err(e) => self.say(e, true),
+            },
+            PromptKind::Start(w) if !input.is_empty() => {
+                let id = self.id();
+                self.pending
+                    .insert(id, Pending::Status(format!("start on {w}")));
+                self.say(format!("start on {w}…"), false);
+                proc::action(
+                    id,
+                    vec!["start".into(), w, "--".into(), input],
+                    self.tx.clone(),
+                );
+                self.reload_jobs();
+            }
+            PromptKind::Command if !input.is_empty() => match split_words(&input) {
+                Ok(mut words) => {
+                    if words.first().map(String::as_str) == Some("rworker") {
+                        words.remove(0);
+                    }
+                    let interactive =
+                        matches!(words.first().map(String::as_str), Some("ssh" | "tui"))
+                            || words.iter().any(|w| w == "--ssh")
+                            || (words.first().map(String::as_str) == Some("prune")
+                                && !words.iter().any(|w| {
+                                    matches!(
+                                        w.as_str(),
+                                        "-y" | "--yes" | "-n" | "--dry-run" | "--json" | "-j"
+                                    )
+                                }));
+                    if interactive {
+                        self.suspend = Some(words);
+                    } else {
+                        self.open_text(input, words);
+                    }
+                }
+                Err(e) => self.say(e, true),
+            },
+            _ => {}
+        }
+    }
+}
+
+/// The prefix trim for `logs WORKER [JOB] ...`.
+fn log_prefix(args: &[String]) -> Option<(regex::Regex, &'static str)> {
+    let positional: Vec<&String> = args
+        .iter()
+        .skip(1)
+        .take_while(|a| !a.starts_with('-'))
+        .collect();
+    if args.first().map(String::as_str) != Some("logs") {
+        return None;
+    }
+    let (pattern, rep) = match positional.as_slice() {
+        [w] => (format!(r"^(\x1b\[[0-9;]*m){}/", regex::escape(w)), "$1"),
+        [w, j] => (
+            format!(
+                r"^\x1b\[[0-9;]*m{}/{}\x1b\[0m ",
+                regex::escape(w),
+                regex::escape(j)
+            ),
+            "",
+        ),
+        _ => return None,
+    };
+    regex::Regex::new(&pattern).ok().map(|re| (re, rep))
+}
+
+fn s(words: &[&str]) -> Vec<String> {
+    words.iter().map(|w| (*w).to_string()).collect()
+}
+
+/// Shell-like words: whitespace splits, quotes and backslashes group.
+pub fn split_words(text: &str) -> Result<Vec<String>, String> {
+    let mut words = Vec::new();
+    let mut cur = String::new();
+    let mut any = false;
+    let mut chars = text.chars();
+    while let Some(c) = chars.next() {
+        match c {
+            '\'' => {
+                any = true;
+                loop {
+                    match chars.next() {
+                        Some('\'') => break,
+                        Some(x) => cur.push(x),
+                        None => return Err("unterminated '".into()),
+                    }
+                }
+            }
+            '"' => {
+                any = true;
+                loop {
+                    match chars.next() {
+                        Some('"') => break,
+                        Some('\\') => match chars.next() {
+                            Some(x) => cur.push(x),
+                            None => return Err("unterminated \"".into()),
+                        },
+                        Some(x) => cur.push(x),
+                        None => return Err("unterminated \"".into()),
+                    }
+                }
+            }
+            '\\' => {
+                any = true;
+                if let Some(x) = chars.next() {
+                    cur.push(x);
+                }
+            }
+            c if c.is_whitespace() => {
+                if any {
+                    words.push(std::mem::take(&mut cur));
+                    any = false;
+                }
+            }
+            c => {
+                any = true;
+                cur.push(c);
+            }
+        }
+    }
+    if any {
+        words.push(cur);
+    }
+    Ok(words)
+}
+
+/// Put TEXT on the clipboard of the terminal (OSC 52).
+fn copy(text: &str) {
+    use std::io::Write;
+    const B64: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    let mut enc = String::new();
+    for chunk in text.as_bytes().chunks(3) {
+        let b = [
+            chunk[0],
+            *chunk.get(1).unwrap_or(&0),
+            *chunk.get(2).unwrap_or(&0),
+        ];
+        let n = (u32::from(b[0]) << 16) | (u32::from(b[1]) << 8) | u32::from(b[2]);
+        for i in 0..4 {
+            if i <= chunk.len() {
+                enc.push(B64[((n >> (18 - 6 * i)) & 63) as usize] as char);
+            } else {
+                enc.push('=');
+            }
+        }
+    }
+    let mut out = std::io::stdout();
+    let _ = write!(out, "\x1b]52;c;{enc}\x07");
+    let _ = out.flush();
+}
+
+/// The cached worker list of the completions, for the first frame.
+fn cached(ctx: &Ctx) -> Option<Vec<Value>> {
+    let text = std::fs::read_to_string(ctx.ls_cache()).ok()?;
+    match serde_json::from_str(&text).ok()? {
+        Value::Array(a) => Some(a),
+        _ => None,
+    }
+}
+
+pub fn run(ctx: &Ctx, interval: Duration) -> std::io::Result<()> {
+    let (tx, rx): (Sender<Msg>, Receiver<Msg>) = mpsc::channel();
+    let (refresh_tx, refresh_rx) = mpsc::channel();
+    let paused = Arc::new(AtomicBool::new(false));
+    let parked = Arc::new(AtomicBool::new(false));
+    let mut app = App {
+        control_host: ctx.control_host.clone(),
+        owner: ctx.owner(),
+        icons: ctx.icons,
+        workers: Vec::new(),
+        table: TableState::default(),
+        filter: String::new(),
+        mine_only: false,
+        refreshing: false,
+        refreshed: None,
+        stale: false,
+        refresh_error: None,
+        new_at: HashMap::new(),
+        stack: Vec::new(),
+        prompt: None,
+        confirm: None,
+        help: false,
+        flash: None,
+        tick: 0,
+        pending: HashMap::new(),
+        next_id: 0,
+        tx: tx.clone(),
+        refresh: refresh_tx,
+        suspend: None,
+        quit: false,
+    };
+    if let Some(list) = cached(ctx) {
+        app.set_workers(&list);
+        app.stale = true;
+    }
+    proc::refresher(tx.clone(), interval, refresh_rx);
+    proc::input(tx, paused.clone(), parked.clone());
+
+    // A closed terminal or a kill ends the TUI cleanly, stopping its
+    // streams; SIGINT (from an ssh session sharing the terminal) does not.
+    let stop = Arc::new(AtomicBool::new(false));
+    let interrupt = Arc::new(AtomicBool::new(false));
+    for sig in [signal_hook::consts::SIGHUP, signal_hook::consts::SIGTERM] {
+        let _ = signal_hook::flag::register(sig, Arc::clone(&stop));
+    }
+    let _ = signal_hook::flag::register(signal_hook::consts::SIGINT, Arc::clone(&interrupt));
+
+    let mut term = ratatui::init();
+    let result = (|| -> std::io::Result<()> {
+        loop {
+            term.draw(|f| app.draw(f))?;
+            match rx.recv_timeout(Duration::from_millis(250)) {
+                Ok(msg) => {
+                    app.handle(msg);
+                    // Take everything that is queued before drawing again.
+                    let t0 = Instant::now();
+                    while t0.elapsed() < Duration::from_millis(30) {
+                        match rx.try_recv() {
+                            Ok(m) => app.handle(m),
+                            Err(_) => break,
+                        }
+                    }
+                }
+                Err(mpsc::RecvTimeoutError::Timeout) => {}
+                Err(mpsc::RecvTimeoutError::Disconnected) => return Ok(()),
+            }
+            app.tick = app.tick.wrapping_add(1);
+            interrupt.store(false, Ordering::SeqCst);
+            if app.quit || stop.load(Ordering::SeqCst) {
+                return Ok(());
+            }
+            if let Some(args) = app.suspend.take() {
+                paused.store(true, Ordering::SeqCst);
+                let t0 = Instant::now();
+                while !parked.load(Ordering::SeqCst) && t0.elapsed() < Duration::from_secs(1) {
+                    std::thread::sleep(Duration::from_millis(10));
+                }
+                ratatui::restore();
+                let status = proc::interactive(&args);
+                if !matches!(status, Ok(Some(0))) {
+                    use std::io::Write;
+                    let mut out = std::io::stdout();
+                    let _ = write!(
+                        out,
+                        "\n[rworker {} ended: {}] press Enter to return ",
+                        args.join(" "),
+                        match &status {
+                            Ok(Some(c)) => format!("exit {c}"),
+                            Ok(None) => "killed".into(),
+                            Err(e) => e.to_string(),
+                        }
+                    );
+                    let _ = out.flush();
+                    let mut line = String::new();
+                    let _ = std::io::stdin().read_line(&mut line);
+                }
+                term = ratatui::init();
+                term.clear()?;
+                paused.store(false, Ordering::SeqCst);
+                let _ = app.refresh.send(());
+            }
+        }
+    })();
+    ratatui::restore();
+    // Stop the streams before the process ends.
+    app.stack.clear();
+    result
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn log_prefixes() {
+        let args = |a: &[&str]| a.iter().map(|x| x.to_string()).collect::<Vec<_>>();
+        let line = "\x1b[1;31mw1/job-a\x1b[0m hello";
+        let (re, rep) = log_prefix(&args(&["logs", "w1", "--follow"])).unwrap();
+        assert_eq!(re.replace(line, rep), "\x1b[1;31mjob-a\x1b[0m hello");
+        let (re, rep) = log_prefix(&args(&["logs", "w1", "job-a", "--follow"])).unwrap();
+        assert_eq!(re.replace(line, rep), "hello");
+        assert!(log_prefix(&args(&["logs", "--follow"])).is_none());
+        assert!(log_prefix(&args(&["inspect", "w1"])).is_none());
+    }
+
+    #[test]
+    fn words() {
+        assert_eq!(
+            split_words(r#"sync w 'a b' "c \" d" e\ f"#).unwrap(),
+            ["sync", "w", "a b", "c \" d", "e f"]
+        );
+        assert_eq!(split_words("--topic ''").unwrap(), ["--topic", ""]);
+        assert!(split_words("'x").is_err());
+    }
+}

@@ -31,6 +31,8 @@ when its time runs out.
   worker substitute from this host's S3 cache over SSH only.
 - **Live list**: `ls --watch` redraws in place and marks new, changed and
   gone workers; `--topic`, `--agent` and `--agent-id` filter by regex.
+- **Terminal UI**: `tui` shows the workers, their jobs and logs, followed
+  live, and runs the actions on the selected worker with a key or two.
 - **Scripting**: `--json` on every action but `ssh`; an MCP server
   (`rworker-mcp`) exposes the same actions to agents.
 - **Shell completions**: zsh and bash, for actions, flags, worker names and

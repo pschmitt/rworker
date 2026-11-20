@@ -16,6 +16,12 @@ Actions, flags, output, JSON and exit statuses are the same; see
 
 ### New
 
+- `rworker tui`: an interactive terminal UI (k9s style). The worker list,
+  refreshed in the background; the jobs of a worker; job logs, all logs
+  and lifecycle events, followed live with scrolling and a line filter;
+  ssh, inspect, ps, extend, topic, claim, down, up, prune, niks3-token,
+  nix-cache and builder on the selected worker; `:` for any other action.
+
 - Completions for the values of `--topic`, `--agent` and `--agent-id`: the
   topics, agents and agent ids of the current workers, with the workers
   that have them (`rworker logs -f --topic rwor<TAB>`). The filters of `ls`,

@@ -36,8 +36,8 @@ NOW = int(time.time())  # reset at the start of every case
 # with FAKE_SSH_STDIN=0 every case must match.
 STDIN_BUG = "PARITY.md bug 2: bash's control-host ssh swallows a list or script meant for later"
 ACCEPTED = {
-    "spec": "CHANGELOG: dynamic value sets for the completions, the completions action",
-    **{case: "CHANGELOG: the usage lists the completions action" for case in
+    "spec": "CHANGELOG: dynamic value sets for the completions, the completions and tui actions",
+    **{case: "CHANGELOG: the usage lists the completions and tui actions" for case in
        ("usage-empty", "help", "help-flag", "help-bogus", "unknown-action")},
     **{case: "CHANGELOG: RWORKER_AWS_CREDENTIALS_FILE in the help" for case in
        ("nix-cache-missing", "nix-cache-bogus")},

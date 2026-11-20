@@ -15,6 +15,7 @@ mod signals;
 mod state;
 mod table;
 mod time;
+mod tui;
 
 use ctx::{Ctx, Fail, R};
 
@@ -44,6 +45,7 @@ pub const ACTIONS: &[&str] = &[
     "inspect",
     "cp",
     "completions",
+    "tui",
 ];
 
 pub const ZSH_COMPLETION: &str = include_str!("completions/_rworker");
@@ -237,6 +239,7 @@ fn dispatch(ctx: &Ctx, action: &str, args: &[String]) -> R {
         "nix-cache" => cmd::nix_cache::cmd_nix_cache(ctx, args),
         "inspect" => cmd::inspect::cmd_inspect(ctx, args),
         "cp" => cmd::files::cmd_cp(ctx, args),
+        "tui" => tui::cmd_tui(ctx, args),
         "completions" => match args {
             [shell] if shell == "zsh" => {
                 ctx::out(ZSH_COMPLETION);

@@ -32,6 +32,7 @@ pub const HELP: &[(&str, &str)] = &[
     ("builder", include_str!("text/help-builder.txt")),
     ("nix-cache", include_str!("text/help-nix-cache.txt")),
     ("completions", include_str!("text/help-completions.txt")),
+    ("tui", include_str!("text/help-tui.txt")),
 ];
 
 pub fn usage(ctx: &Ctx) -> String {

@@ -1,0 +1,10 @@
+Usage: __ME__ tui [-n|--interval SECONDS]
+
+An interactive terminal UI: the worker list (refreshed in the background,
+every 5 seconds by default), the jobs of a worker, their logs and the
+lifecycle events, followed live, and the actions on the selected worker
+(ssh, inspect, ps, extend, topic, claim, down, new worker, ...).
+: runs any other action (sync, cp, exec, nix-cache, ...). ? lists the keys.
+
+  -n SECONDS, --interval SECONDS
+                 refresh interval of the worker list
