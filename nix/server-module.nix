@@ -121,6 +121,11 @@ in
         default = null;
         description = "Single authenticated Remote-User accepted from a trusted reverse proxy that overwrites the header on every console route.";
       };
+      signOutUrl = lib.mkOption {
+        type = lib.types.nullOr lib.types.str;
+        default = null;
+        description = "HTTPS sign-out URL of a trusted reverse proxy's identity provider.";
+      };
       identityFile = lib.mkOption {
         type = lib.types.nullOr lib.types.str;
         default = null;
@@ -381,6 +386,15 @@ in
             // lib.optionalAttrs (cfg.web.enable && cfg.web.proxyUser != null) {
               RWORKER_WEB_PROXY_USER = cfg.web.proxyUser;
             }
+            // lib.optionalAttrs (cfg.web.enable && cfg.web.signOutUrl != null) {
+              RWORKER_WEB_SIGN_OUT_URL = cfg.web.signOutUrl;
+            }
+            //
+              lib.optionalAttrs
+                (cfg.web.enable && cfg.web.operator == cfg.logCache.operator && cfg.logCache.identityFile != null)
+                {
+                  RWORKER_WEB_LOG_IDENTITY = cfg.logCache.identityFile;
+                }
             // lib.optionalAttrs (cfg.web.enable && cfg.web.identityFile != null) {
               RWORKER_IDENTITY_FILE = cfg.web.identityFile;
             }
@@ -567,6 +581,10 @@ in
           }
           // lib.optionalAttrs (cfg.web.enable && cfg.web.origin == null) {
             "/".proxyPass = "http://unix:${apiSocket}:";
+            "/v1/ui/follow/" = {
+              proxyPass = "http://unix:${apiSocket}:";
+              proxyWebsockets = true;
+            };
             "/v1/ui/action" = {
               proxyPass = "http://unix:${apiSocket}:";
               extraConfig = "proxy_read_timeout 920s;";

@@ -3,10 +3,35 @@ from concurrent.futures import ThreadPoolExecutor
 import json
 import os
 from pathlib import Path
+import socket
 import subprocess
 import sys
 import tempfile
 import time
+
+
+def verify_log_stream(address, origin):
+    with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as connection:
+        connection.settimeout(5)
+        connection.connect(str(address))
+        connection.sendall((
+            "GET /v1/ui/follow/raw-logs/example-worker/compile HTTP/1.1\r\n"
+            "Host: localhost\r\nConnection: Upgrade\r\nUpgrade: websocket\r\n"
+            "Sec-WebSocket-Version: 13\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n"
+            f"Origin: {origin}\r\nRemote-User: operator\r\n\r\n"
+        ).encode())
+        with connection.makefile("rb") as response:
+            assert response.readline().startswith(b"HTTP/1.1 101")
+            while (line := response.readline()) != b"\r\n":
+                assert line
+            received = b""
+            while b"fixture log second" not in received:
+                opcode, size = response.read(2)
+                assert size < 126
+                payload = response.read(size)
+                if opcode == 0x82:
+                    received += payload
+            assert received == b"fixture log first\nfixture log second\n"
 
 
 def verify(binary, root, web_enabled):
@@ -27,6 +52,8 @@ def verify(binary, root, web_enabled):
     fixture = json.dumps([{"Name": "example-worker", "Status": "ACTIVE", "Properties": {}}])
     for name, program in {
         "curl": "print('[]')",
+        "ssh": "import time\nprint('fixture log first', flush=True)\n"
+               "time.sleep(0.1)\nprint('fixture log second', flush=True)",
         "openstack": f"with open({str(calls)!r}, 'a') as log:\n"
                      f"    print('read', file=log)\n"
                      f"from pathlib import Path\nimport time\n"
@@ -45,6 +72,10 @@ def verify(binary, root, web_enabled):
     archive = root / "rworker" / "job-logs" / "example-worker"
     archive.mkdir(parents=True)
     (archive / "compile").write_text("cached build")
+    (root / "rworker" / "example-worker.json").write_text(json.dumps({
+        "ip": "127.0.0.1", "ips": {"netbird": "127.0.0.1"},
+        "host_key": "fixture-host-key", "user": "agent",
+    }))
     env.update(RWORKER_WEB_TOKEN_FILE=str(web_token), RWORKER_WEB_ORIGIN=origin,
                RWORKER_WEB_PROXY_USER="operator", XDG_STATE_HOME=str(root),
                RWORKER_CONTROL_SOCKET=str(root / "control.sock"))
@@ -106,6 +137,7 @@ def verify(binary, root, web_enabled):
                     assert request("/v1/ui/session", "-H", "Remote-User: operator")[0].startswith("HTTP/1.1 200")
                     jobs = json.loads(request("/v1/ui/jobs", "-H", "Remote-User: operator")[1])["data"]
                     assert jobs == [{"worker": "example-worker", "job": "compile", "state": "archived"}]
+                    verify_log_stream(socket, origin)
                     assert json.loads(request("/v1/ui/jobs/example-worker", "-H", "Remote-User: operator")[1])["data"] == jobs
                     auth = ("-H", f"Authorization: Bearer {fixture_token}")
                     assert request("/v1/ui/unknown", *auth)[0].startswith("HTTP/1.1 404")

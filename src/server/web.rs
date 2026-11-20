@@ -13,6 +13,8 @@ use std::path::PathBuf;
 use std::process::{Command, Stdio};
 use tokio::sync::Semaphore;
 
+mod log_stream;
+
 const MAX_OUTPUT: u64 = 2 * 1024 * 1024;
 static REQUESTS: Semaphore = Semaphore::const_new(8);
 
@@ -56,6 +58,7 @@ pub(super) fn routes(router: Router<PathBuf>) -> Router<PathBuf> {
                 )
             }),
         )
+        .merge(log_stream::routes())
         .route("/v1/ui/session", get(session))
         .route("/v1/ui/updates", get(updates))
         .route("/v1/ui/{view}", get(list))
@@ -100,7 +103,10 @@ fn failure((status, message): Failure) -> Response {
 
 async fn session(headers: HeaderMap) -> Response {
     match authorized(&headers) {
-        Ok(()) => reply(StatusCode::OK, json!({"data": true})),
+        Ok(()) => reply(
+            StatusCode::OK,
+            json!({"data": {"signOutUrl": std::env::var("RWORKER_WEB_SIGN_OUT_URL").ok()}}),
+        ),
         Err(error) => failure(error),
     }
 }

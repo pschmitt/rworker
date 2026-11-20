@@ -388,6 +388,8 @@ pub fn ssh_opts(ctx: &Ctx, name: &str) -> Vec<String> {
         options.push(identity.to_string_lossy().into_owned());
         options.push("-o".into());
         options.push("IdentitiesOnly=yes".into());
+        options.push("-o".into());
+        options.push("ConnectTimeout=5".into());
     }
     options
 }

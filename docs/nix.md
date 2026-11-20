@@ -103,7 +103,9 @@ exact public origin and proxy the Unix socket with authentication on all routes.
 To reuse the proxy session for one operator, set `web.proxyUser`. The proxy must
 strip any incoming `Remote-User` header and replace it with the identity from its
 own authentication check. Only the proxy and trusted local accounts should have
-access to the Unix socket.
+access to the Unix socket. Optionally set `web.signOutUrl` to the sign-out page
+of the identity provider. If you configure your own reverse proxy, enable
+WebSocket upgrades on `/v1/ui/follow/` for live logs.
 Set `web.identityFile` and `web.publicKeyFile` to the matching SSH key pair when
 the operator needs a dedicated identity.
 

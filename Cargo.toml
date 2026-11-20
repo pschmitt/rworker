@@ -10,7 +10,7 @@ readme = "README.md"
 
 [features]
 default = ["web"]
-web = []
+web = ["axum/ws", "tokio/io-util", "tokio/macros", "tokio/process"]
 
 [dependencies]
 axum = { version = "0.8", default-features = false, features = ["http1", "tokio"] }

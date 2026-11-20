@@ -12,6 +12,8 @@ const state = {
   showRetired: false, showFinished: false, redact: true, follow: true, limit: 200,
 };
 let stream;
+let logSocket;
+let logRetryAt = 0;
 let loading = false;
 let detailRequest = 0;
 let detailLoading = false;
@@ -68,6 +70,7 @@ async function request(path, data) {
 }
 
 function lock() {
+  closeLogStream();
   state.authenticated = false;
   state.token = "";
   try { sessionStorage.removeItem("rworker.operator"); } catch { /* Storage disabled. */ }
@@ -79,6 +82,7 @@ function lock() {
   $("console").hidden = true;
   $("login").hidden = false;
   $("lock").hidden = true;
+  $("sign-out").hidden = true;
   $("create").hidden = true;
   $("results").replaceChildren();
   $("detail-output").replaceChildren();
@@ -133,10 +137,42 @@ function agentLabel(agent) {
 function badge(value) {
   const text = String(value || "Unknown");
   const key = text.toLowerCase();
-  const kind = /^(active|ready|exit 0)$/.test(key) ? "good" :
-    /^(build|boot|running|reboot|deleting|pending)/.test(key) ? "busy" :
+  const kind = /^(active|ready|running)$/.test(key) ? "good" :
+    /^(build|boot|reboot|deleting|pending)/.test(key) ? "busy" :
     /^(error|failed|exit [1-9])/.test(key) ? "bad" : "";
   return element("span", text, "badge" + (kind ? " " + kind : ""));
+}
+
+function eventLabel(row) {
+  const kind = row.kind;
+  const tone = kind.endsWith("-added") ? "good" : kind.endsWith("-deleted") ? "bad" :
+    kind === "job-state" ? "busy" : "info";
+  const label = element("div");
+  label.append(element("strong", kind.replaceAll("-", " "), "event-tone " + tone));
+  if (!row.details) return label;
+  const detail = element("span", null, "secondary event-detail");
+  const addValue = (value) => {
+    const key = value.toLowerCase();
+    const color = key === "exit 0" ? "" : /^(exit |error$|failed$|failure$|shutoff$|deleted$)/.test(key) ? "bad" :
+      /^(running|active|ready|succeeded|success|completed)$/.test(key) ? "good" : "busy";
+    detail.append(element("span", value, "event-tone " + color));
+  };
+  if (row.details.includes(" -> ")) {
+    const [before, after] = row.details.split(" -> ", 2);
+    addValue(before);
+    detail.append(" → ");
+    addValue(after);
+  } else {
+    const field = /^([a-z_-]+=)(.*)$/.exec(row.details);
+    if (field) {
+      detail.append(field[1]);
+      addValue(field[2]);
+    } else {
+      addValue(row.details);
+    }
+  }
+  label.append(detail);
+  return label;
 }
 
 function ago(value) {
@@ -245,7 +281,7 @@ function render() {
       rows = visible.map((row) => ({
         selected: state.selected?.name === row.name,
         cells: [named(row.name, row.topic || row.profile, () => selected(row)), badge(row.retired ? "Retired" : row.status),
-          agentLabel(row.agent), ago(row.created_at)],
+          agentLabel(row.agent), element("span", ago(row.created_at), "worker-age")],
       }));
       break;
     case "jobs":
@@ -258,7 +294,7 @@ function render() {
     case "events":
       columns = [["Event"], ["Target"], ["Time", true]];
       rows = visible.map((row) => ({
-        cells: [named(row.kind.replaceAll("-", " "), row.details, null), row.target, clock(row.timestamp)],
+        cells: [eventLabel(row), element("span", row.target, "event-tone info"), clock(row.timestamp)],
       }));
       break;
     default:
@@ -314,6 +350,7 @@ function detailPanel() {
   $("detail").hidden = !row;
   $("workspace").classList.toggle("has-detail", Boolean(row));
   if (!row) {
+    closeLogStream();
     detailRequest++;
     detailLoading = false;
     $("detail-output").replaceChildren();
@@ -373,6 +410,43 @@ function checkbox(label, checked, change) {
   return node;
 }
 
+function stripAnsi(value) {
+  return value.replace(/\u001b\[[0-?]*[ -/]*[@-~]/g, "");
+}
+
+function closeLogStream() {
+  const socket = logSocket;
+  logSocket = undefined;
+  logRetryAt = 0;
+  socket?.close();
+}
+
+function followLogs(path, content, indicator) {
+  if (logSocket || Date.now() < logRetryAt) return;
+  const url = new URL("/v1/ui/follow/" + path, location.href);
+  url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
+  const socket = new WebSocket(url);
+  logSocket = socket;
+  socket.binaryType = "arraybuffer";
+  const decoder = new TextDecoder();
+  let buffer = "";
+  socket.onopen = () => { if (state.token) socket.send(state.token); };
+  socket.onmessage = ({data}) => {
+    if (logSocket !== socket) return;
+    const atEnd = !buffer || content.scrollHeight - content.clientHeight - content.scrollTop < 8;
+    buffer = (buffer + decoder.decode(data, {stream: true})).slice(-262144);
+    content.textContent = stripAnsi(buffer);
+    indicator.textContent = "Live";
+    if (atEnd) content.scrollTop = content.scrollHeight;
+  };
+  socket.onclose = () => {
+    if (logSocket !== socket) return;
+    logSocket = undefined;
+    logRetryAt = Date.now() + 15000;
+    indicator.textContent = "Snapshot";
+  };
+}
+
 async function updateDetail(reset = false) {
   const row = state.selected;
   if (!row || !state.authenticated || (detailLoading && !reset)) return;
@@ -382,12 +456,19 @@ async function updateDetail(reset = false) {
   const job = state.job;
   const id = ++detailRequest;
   const destination = $("detail-output");
-  if (reset) destination.replaceChildren(element("p", "Loading…", "empty"));
+  if (reset) {
+    closeLogStream();
+    destination.replaceChildren(element("p", "Loading…", "empty"));
+  }
   try {
     let data;
     if (tab === "logs") {
-      const endpoint = row.retired ? (state.redact ? "archived-logs" : "raw-archive") : (state.redact ? "logs" : "raw-logs");
-      data = await request(endpoint + "/" + target + (job ? "/" + encodeURIComponent(job) : ""));
+      const useArchive = row.retired || state.follow;
+      const endpoint = useArchive ? (state.redact ? "archived-logs" : "raw-archive") : (state.redact ? "logs" : "raw-logs");
+      data = await request(endpoint + "/" + target + (job ? "/" + encodeURIComponent(job) : "")).catch((error) => {
+        if (row.retired || !state.follow || !state.authenticated) throw error;
+        return "";
+      });
     } else if (row.retired && tab === "inspect") {
       data = row;
     } else {
@@ -404,9 +485,16 @@ async function updateDetail(reset = false) {
     const stayAtEnd = !old || old.scrollHeight - old.clientHeight - old.scrollTop < 8;
     const previousScroll = old?.scrollTop || 0;
     const options = element("div", null, "detail-options");
+    const indicator = element("small", "Snapshot", "secondary");
     if (tab === "logs") {
       options.append(checkbox("Redact secrets", state.redact, (enabled) => { state.redact = enabled; updateDetail(true); }));
-      if (!row.retired) options.append(checkbox("Follow", state.follow, (enabled) => { state.follow = enabled; if (enabled) updateDetail(); }));
+      if (!row.retired) {
+        options.append(checkbox("Follow", state.follow, (enabled) => {
+          state.follow = enabled;
+          if (enabled) updateDetail(true);
+          else { closeLogStream(); indicator.textContent = "Snapshot"; }
+        }), indicator);
+      }
       if (job) options.append(button("All jobs", () => { state.job = null; updateDetail(true); }));
     } else if (tab === "inspect" && !row.retired) {
       options.append(button("Load boot metadata", async () => {
@@ -416,11 +504,14 @@ async function updateDetail(reset = false) {
         } catch (error) { notice(error.message, true); }
       }));
     }
-    const stripAnsi = (value) => value.replace(/\u001b\[[0-?]*[ -/]*[@-~]/g, "");
     const content = element("pre", typeof data === "string" ? (stripAnsi(data) || "No output yet.") : JSON.stringify(data, null, 2));
     destination.replaceChildren(options, content);
     if (state.follow && stayAtEnd && tab === "logs") content.scrollTop = content.scrollHeight;
     else content.scrollTop = previousScroll;
+    if (tab === "logs" && !row.retired && state.follow) {
+      const view = state.redact ? "logs" : "raw-logs";
+      followLogs(view + "/" + target + (job ? "/" + encodeURIComponent(job) : ""), content, indicator);
+    }
   } catch (error) {
     if (id === detailRequest) destination.replaceChildren(element("p", error.message, "empty"));
   } finally {
@@ -499,7 +590,7 @@ async function form(action, worker, profile) {
 async function openConsole(token = "", automatic = false) {
   state.token = token;
   try {
-    await request("session");
+    const session = await request("session");
     state.authenticated = true;
     if (token) {
       try { sessionStorage.setItem("rworker.operator", token); } catch { /* Storage disabled. */ }
@@ -507,6 +598,10 @@ async function openConsole(token = "", automatic = false) {
     $("login").hidden = true;
     $("console").hidden = false;
     $("lock").hidden = !token;
+    if (!token && session?.signOutUrl?.startsWith("https://")) {
+      $("sign-out").href = session.signOutUrl;
+      $("sign-out").hidden = false;
+    }
     notice("");
     navigate();
     stream?.close();
@@ -561,7 +656,7 @@ $("action-form").addEventListener("submit", async (event) => {
 });
 window.addEventListener("hashchange", navigate);
 setInterval(() => { if (state.authenticated && !document.hidden) refresh(); }, 5000);
-setInterval(() => { if (state.authenticated && !document.hidden && state.selected && state.tab === "logs" && state.follow) updateDetail(); }, 2500);
+setInterval(() => { if (state.authenticated && !document.hidden && state.selected && state.tab === "logs" && state.follow && !logSocket) updateDetail(); }, 2500);
 navigate();
 let savedToken = "";
 try { savedToken = sessionStorage.getItem("rworker.operator") || ""; } catch { /* Storage disabled. */ }
