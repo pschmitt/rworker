@@ -22,6 +22,9 @@ Actions, flags, output, JSON and exit statuses are the same; see
 ### New
 
 - Offer an opt-in NixOS SSH gateway and machines entry for on-demand Nix builds.
+  Record the initiating machine, preserve retired builders in history and archive
+  their Nix derivation logs.
+- Include retired workers in the machine list with `--all`, `-A` or `--history`.
 
 - Store and display the OpenStack image name and ID in worker inspection.
 

@@ -56,6 +56,7 @@ pub fn cmd_ls(ctx: &Ctx, args: &[String]) -> R {
     let mut json = false;
     let mut watch = false;
     let mut fresh = false;
+    let mut history = false;
     let mut interval = "5".to_string();
     let (mut topic, mut agent) = (String::new(), String::new());
     let mut i = 0;
@@ -78,6 +79,7 @@ pub fn cmd_ls(ctx: &Ctx, args: &[String]) -> R {
             "--wide" | "-owide" => ctx.wide.set(true),
             "-w" | "--watch" => watch = true,
             "--fresh" => fresh = true,
+            "-A" | "--all" | "--history" => history = true,
             "--topic" | "--agent" | "--agent-id" => {
                 let v = args.get(i + 1).cloned().unwrap_or_default();
                 if v.is_empty() {
@@ -118,12 +120,17 @@ pub fn cmd_ls(ctx: &Ctx, args: &[String]) -> R {
             ctx.err("--fresh cannot be used with --watch");
             return Err(Fail(2));
         }
-        return watch_ls(ctx, &interval, &topic, &agent);
+        return watch_ls(ctx, &interval, &topic, &agent, history);
     }
     let out = if fresh {
         state::remote(ctx, &["ls", "--fresh"])?
     } else {
         state::remote_ls(ctx)?
+    };
+    let out = if history {
+        super::history::with_retired(ctx, &out)?
+    } else {
+        out
     };
     let out = filter_workers(ctx, &out, &topic, &agent)?;
     if json || ctx.json.get() {
@@ -137,7 +144,7 @@ pub fn cmd_ls(ctx: &Ctx, args: &[String]) -> R {
 /// `ls --watch`: redraw in place, like `kw` (kubectl-watch), and mark what
 /// changed since the previous refresh: + new, ~ changed, - gone (shown
 /// once more).
-fn watch_ls(ctx: &Ctx, interval: &str, topic: &str, agent: &str) -> R {
+fn watch_ls(ctx: &Ctx, interval: &str, topic: &str, agent: &str, history: bool) -> R {
     let secs: f64 = interval.parse().unwrap_or(5.0);
     let (green, yellow, red, dim, reset) = if ctx.color {
         ("\x1b[32m", "\x1b[33m", "\x1b[31m", "\x1b[2m", "\x1b[0m")
@@ -155,7 +162,7 @@ fn watch_ls(ctx: &Ctx, interval: &str, topic: &str, agent: &str) -> R {
         if crate::signals::pending().is_some() {
             return screen.leave();
         }
-        match refresh(ctx, topic, agent) {
+        match refresh(ctx, topic, agent, history) {
             Ok(out) => {
                 json = out;
                 error.clear();
@@ -227,7 +234,7 @@ fn watch_ls(ctx: &Ctx, interval: &str, topic: &str, agent: &str) -> R {
 
 /// One refresh for --watch: the filtered list, or the last line of what
 /// went wrong.
-fn refresh(ctx: &Ctx, topic: &str, agent: &str) -> Result<String, String> {
+fn refresh(ctx: &Ctx, topic: &str, agent: &str, history: bool) -> Result<String, String> {
     let mut cmd = state::control_cmd(ctx, &["ls"]);
     let output = cmd
         .stdin(if std::io::stdin().is_terminal() {
@@ -253,6 +260,13 @@ fn refresh(ctx: &Ctx, topic: &str, agent: &str) -> Result<String, String> {
             let _ = std::fs::rename(&tmp, ctx.ls_cache());
         }
     }
-    ctx.muted(|| filter_workers(ctx, &stdout, topic, agent))
-        .map_err(|_| "jq: error: invalid JSON from the control host".to_string())
+    ctx.muted(|| {
+        let inventory = if history {
+            super::history::with_retired(ctx, &stdout)?
+        } else {
+            stdout
+        };
+        filter_workers(ctx, &inventory, topic, agent)
+    })
+    .map_err(|_| "jq: error: invalid JSON from the control host".to_string())
 }

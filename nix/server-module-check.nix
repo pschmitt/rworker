@@ -63,7 +63,7 @@ assert sockets.rworker-builder.socketConfig.SocketGroup == "rworker-builder";
 assert sockets.rworker-builder.socketConfig.MaxConnections == 8;
 assert services."rworker-builder@".serviceConfig.StandardOutput == "socket";
 assert services."rworker-builder@".serviceConfig.StandardError == "journal";
-assert pkgs.lib.hasSuffix ''"7200" "300"'' services."rworker-builder@".serviceConfig.ExecStart;
+assert pkgs.lib.hasSuffix ''"7200" "300" "-"'' services."rworker-builder@".serviceConfig.ExecStart;
 assert timers.rworker-builder-reap.timerConfig.OnUnitInactiveSec == "1m";
 assert config.nix.distributedBuilds;
 assert (builtins.head config.nix.buildMachines).protocol == "ssh-ng";

@@ -1,5 +1,5 @@
 Usage: __ME__ machines [-o json|wide | --wide] [--fresh | -w|--watch [-n SECONDS]]
-          [--topic REGEX] [--agent REGEX] [--agent-id REGEX]
+          [-A|--all|--history] [--topic REGEX] [--agent REGEX] [--agent-id REGEX]
 
 Aliases: ls, nodes, instances.
 
@@ -15,6 +15,8 @@ busy, idle 12m (drained after 20m idle with nothing pending) or draining.
   --topic REGEX, --agent REGEX, --agent-id REGEX
                  only workers whose topic, creating agent or agent id
                  matches (a leading ! inverts the match)
+  -A, --all, --history
+                 also include retired workers from history
   --fresh        wait for a fresh inventory snapshot
   -w, --watch    redraw the table in place every -n seconds (default 5),
                  marking rows: + new, ~ changed (status, IP, owner, expiry,

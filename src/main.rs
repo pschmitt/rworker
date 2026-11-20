@@ -424,11 +424,11 @@ fn main() {
     let remote_command = std::env::var_os("RWORKER_CONTROL_SSH_COMPAT").is_some()
         && std::env::var_os("SSH_CONNECTION").is_some()
         && std::env::var_os("SSH_TTY").is_none()
-        && argv.first().is_some_and(|action| {
-            matches!(
+        && match argv.as_slice() {
+            [action, rest @ ..] if action == "ls" => rest.is_empty() || rest == ["--fresh"],
+            [action, ..] => matches!(
                 action.as_str(),
                 "profiles"
-                    | "ls"
                     | "up"
                     | "down"
                     | "extend"
@@ -436,8 +436,9 @@ fn main() {
                     | "claim"
                     | "niks3-token"
                     | "inventory-events"
-            )
-        });
+            ),
+            [] => false,
+        };
     let result = if remote_command {
         match std::env::var("RWORKER_CONTROL_SOCKET") {
             Ok(path) => server::socket::request(&path, &argv),

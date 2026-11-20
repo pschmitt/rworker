@@ -21,6 +21,8 @@ gateway beside an existing `services.rworker` configuration.
       enable = true;
       authorizedKeysFile = "/run/secrets/rworker-builder-authorized-keys";
       profile = "standard";
+      # Optional. A JSON object mapping SSH source addresses to machine names.
+      clientNamesFile = "/run/secrets/rworker-builder-client-names.json";
       idleSeconds = 300;
       leaseSeconds = 7200;
       maxConnections = 8;
@@ -104,3 +106,21 @@ Wait for the idle timer before shutting down the gateway if you want immediate
 cleanup on disable. The normal controller reaper can also remove an expired
 lease. Gateway activity is logged by the `rworker-builder@…` and
 `rworker-builder-reap.service` units.
+
+
+## Ownership, history and logs
+
+The first authenticated SSH connection that triggers a lease determines its
+owner. The gateway uses that connection's source IP, or the corresponding
+name in `clientNamesFile` if one is configured. For example, a file containing
+`{"192.0.2.10":"workstation"}` labels that client as `workstation`.
+A warm build from another machine leaves the original owner's name in place.
+The agent is displayed as `nix build`.
+
+Use `rworker ls --all` (also `-A` or `--history`) or press `h` in the TUI
+to include retired workers. Use `rworker logs WORKER --cached` to read saved
+build output. Pass a derivation log name printed in that output to read just
+that log. The gateway collects completed logs while the worker is idle and
+before deleting the lease. Each snapshot reads up to 32 recent derivation logs,
+keeping at most the last MiB of each, further bounded by the controller's
+`services.rworker.logCache` age and size settings.

@@ -72,6 +72,9 @@ flag up --profile=profile worker profile (standard, browser-daemon or large-buil
 flag exec --topic=topic what the worker is for (none unless given)
 flag exec --profile=profile worker profile (standard, browser-daemon or large-builder)
 flag machines -o=format output format (json or wide)
+flag machines --all include retired workers from history
+flag machines -A short for --all
+flag machines --history alias for --all
 flag machines --wide add owner, profile and IP addresses
 flag inspect --boot also show the worker's own boot metadata (over SSH)
 flag exec --ttl=duration lifetime of the worker

@@ -34,9 +34,14 @@ fn exchange(path: &str, args: &[String]) -> io::Result<i32> {
             ));
         }
         match frame[0] {
-            b'o' => {
+            b'o' | b'b' => {
                 let mut out = io::stdout().lock();
-                out.write_all(&frame[1..])?;
+                let bytes = &frame[1..];
+                out.write_all(if frame[0] == b'b' {
+                    bytes.strip_suffix(b"\n").unwrap_or(bytes)
+                } else {
+                    bytes
+                })?;
                 out.flush()?;
             }
             b'e' => io::stderr().lock().write_all(&frame[1..])?,
@@ -117,6 +122,9 @@ fn serve_connection(config: &str) -> io::Result<()> {
         }
         return out.flush();
     }
+    let binary_output = args
+        .first()
+        .is_some_and(|action| matches!(action.as_str(), "__builder-logs" | "__builder-preview"));
     let mut child = Command::new(std::env::current_exe()?)
         .args(["server", config])
         .args(args)
@@ -142,6 +150,9 @@ fn serve_connection(config: &str) -> io::Result<()> {
                         Ok(0) => break,
                         Ok(_) => {
                             if !frame.ends_with(b"\n") {
+                                if binary_output && tag == b'o' {
+                                    frame[0] = b'b';
+                                }
                                 frame.push(b'\n');
                             }
                             if send.send(Ok(frame)).is_err() {

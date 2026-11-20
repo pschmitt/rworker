@@ -42,6 +42,25 @@ pub fn run(ctx: &crate::ctx::Ctx, args: &[String]) -> R {
         eprintln!("error: {message}");
         return Err(Fail(2));
     }
+    if let Some(archive) = std::env::var_os("RWORKER_BUILDER_ARCHIVE_DIRECTORY") {
+        let archive = std::path::Path::new(&archive);
+        if action == "__builder-history" && rest.is_empty() {
+            crate::ctx::outln(
+                &serde_json::to_string(&crate::cmd::history::rows(
+                    &archive.join("worker-history"),
+                )?)
+                .map_err(|_| Fail(1))?,
+            );
+            return Ok(());
+        }
+        if matches!(action.as_str(), "__builder-logs" | "__builder-preview") {
+            return crate::cmd::log_cache::read_at(
+                &archive.join("job-logs"),
+                rest,
+                action == "__builder-preview",
+            );
+        }
+    }
     let cache = inventory_cache::directory();
     if action == "refresh-inventory" && rest.is_empty() {
         return match cache {

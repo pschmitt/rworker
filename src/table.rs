@@ -12,7 +12,7 @@ pub(crate) fn glyph(agent: &str) -> &'static str {
         "claude" => "\u{ec82}",
         "codex" => "\u{ec81}",
         "shell" => "\u{ea85}",
-        "nixbot" => "\u{f313}",
+        "nixbot" | "nix build" => "\u{f313}",
         "copilot" => "\u{ec1e}",
         "gemini" | "agy" | "antigravity" => "\u{ec10}",
         "browser-daemon" => "\u{f02a0}",
@@ -125,7 +125,9 @@ pub fn plain(ctx: &Ctx, list: &Value) -> R<String> {
         return Err(Fail(5));
     };
     workers.sort_by(|a, b| {
-        jq::cmp(get(a, "kind"), get(b, "kind"))
+        jq::truthy(get(a, "retired"))
+            .cmp(&jq::truthy(get(b, "retired")))
+            .then_with(|| jq::cmp(get(a, "kind"), get(b, "kind")))
             .then_with(|| jq::cmp(get(a, "name"), get(b, "name")))
     });
     for w in workers {

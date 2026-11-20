@@ -24,11 +24,17 @@ let
   builderState = "/var/lib/rworker-builder-gateway";
   builderGate = pkgs.writeShellApplication {
     name = "rworker-builder-gate";
-    runtimeInputs = [ pkgs.socat ];
+    runtimeInputs = [
+      pkgs.coreutils
+      pkgs.socat
+    ];
     text = ''
       case "''${SSH_ORIGINAL_COMMAND:-}" in
         "nix-daemon --stdio" | "nix daemon --stdio")
-          exec socat -t60 STDIO UNIX-CONNECT:${builderSocket}
+          {
+            printf '%s\n' "''${SSH_CONNECTION%% *}"
+            cat
+          } | socat -t60 STDIO UNIX-CONNECT:${builderSocket}
           ;;
         *)
           echo "This account serves the Nix daemon protocol." >&2
@@ -47,7 +53,9 @@ let
       cfg.builderGateway.profile
       (toString cfg.builderGateway.leaseSeconds)
       (toString cfg.builderGateway.idleSeconds)
+      (if cfg.builderGateway.clientNamesFile == null then "-" else cfg.builderGateway.clientNamesFile)
     ];
+  builderLogLimits = "${toString cfg.logCache.retentionDays}:${toString cfg.logCache.maxMiB}:${toString cfg.logCache.maxJobMiB}";
   builderService = {
     User = cfg.user;
     Group = cfg.group;
@@ -63,6 +71,7 @@ let
       wrapProgram "$out/bin/rworker" \
         --set RWORKER_CONTROL_SOCKET ${socket} \
         --set RWORKER_CONTROL_SSH_COMPAT 1 \
+        ${lib.optionalString cfg.builderGateway.enable "--set RWORKER_BUILDER_ARCHIVE 1"} \
         ${lib.optionalString (cfg.logCache.operator != null) (
           "--set RWORKER_LOG_ARCHIVE_LIMITS "
           + lib.escapeShellArg "${toString cfg.logCache.retentionDays}:${toString cfg.logCache.maxMiB}:${toString cfg.logCache.maxJobMiB}"
@@ -99,6 +108,12 @@ in
         type = lib.types.str;
         default = "standard";
         description = "Worker profile to provision for remote Nix builds.";
+      };
+      clientNamesFile = lib.mkOption {
+        type = lib.types.nullOr lib.types.str;
+        default = null;
+        example = "/run/secrets/rworker-builder-client-names.json";
+        description = "Runtime JSON mapping SSH peer IP addresses to client machine names. Unmapped clients are identified by their IP.";
       };
       leaseSeconds = lib.mkOption {
         type = lib.types.ints.positive;
@@ -293,7 +308,12 @@ in
             description = "rworker control request";
             wants = [ "rworker-inventory.service" ];
             after = [ "rworker-inventory.service" ];
-            environment.RWORKER_INVENTORY_DIRECTORY = inventoryDirectory;
+            environment = {
+              RWORKER_INVENTORY_DIRECTORY = inventoryDirectory;
+            }
+            // lib.optionalAttrs cfg.builderGateway.enable {
+              RWORKER_BUILDER_ARCHIVE_DIRECTORY = builderState;
+            };
             path = runtimeTools;
             serviceConfig = {
               User = cfg.user;
@@ -356,6 +376,7 @@ in
         };
         services = {
           "rworker-builder@" = {
+            environment.RWORKER_BUILDER_LOG_LIMITS = builderLogLimits;
             description = "On-demand rworker Nix daemon connection";
             environment.RWORKER_INVENTORY_DIRECTORY = inventoryDirectory;
             path = runtimeTools;
@@ -367,6 +388,7 @@ in
             };
           };
           rworker-builder-reap = {
+            environment.RWORKER_BUILDER_LOG_LIMITS = builderLogLimits;
             description = "Delete the idle rworker builder lease";
             environment.RWORKER_INVENTORY_DIRECTORY = inventoryDirectory;
             path = runtimeTools;

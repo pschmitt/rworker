@@ -782,5 +782,9 @@ mod tests {
         assert_eq!(label.spans[0].style.fg, Some(Color::Rgb(217, 119, 87)));
         assert_eq!(label.spans.last().unwrap().content, "claude");
         assert_eq!(agent_cell("claude", false).spans[0].content, "claude");
+        let nix_build = agent_cell("nix build", true);
+        assert_eq!(nix_build.spans[0].content, glyph("nixbot"));
+        assert_eq!(nix_build.spans[0].style.fg, Some(Color::Rgb(126, 186, 228)));
+        assert_eq!(nix_build.spans.last().unwrap().content, "nix build");
     }
 }

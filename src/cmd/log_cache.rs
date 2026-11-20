@@ -527,7 +527,70 @@ pub(super) fn redact(ctx: &Ctx, args: &[String], index: usize) -> R {
     crate::ctx::status(status.code().unwrap_or(1))
 }
 
+pub(crate) fn archive_builder(
+    root: &Path,
+    worker: &str,
+    mut snapshot: &[u8],
+    retention: &str,
+) -> io::Result<()> {
+    if !component(worker) {
+        return Err(io::ErrorKind::InvalidInput.into());
+    }
+    let settings: Vec<_> = retention.split(':').collect();
+    let [age, budget, limit] = settings.as_slice() else {
+        return Err(io::Error::other("invalid builder log retention limits"));
+    };
+    let (age, budget, limit) = limits(age, budget, limit)
+        .map_err(|_| io::Error::other("invalid builder log retention limits"))?;
+    let _lock = lock(root)?;
+    prune(root, age, budget, None)?;
+    while !snapshot.is_empty() {
+        let invalid = || io::Error::other("invalid Nix build log snapshot");
+        let end = snapshot
+            .iter()
+            .position(|byte| *byte == b'\n')
+            .ok_or_else(invalid)?;
+        let (job, size) = std::str::from_utf8(&snapshot[..end])
+            .ok()
+            .and_then(|line| line.split_once(' '))
+            .and_then(|(job, size)| Some((job, size.parse::<usize>().ok()?)))
+            .ok_or_else(invalid)?;
+        if !component(job) {
+            return Err(invalid());
+        }
+        let (data, rest) = snapshot[end + 1..]
+            .split_at_checked(size)
+            .ok_or_else(invalid)?;
+        snapshot = rest;
+        let data = &data[data.len().saturating_sub(limit as usize)..];
+        let entry = Entry {
+            path: root.join(worker).join(job),
+            size: data.len() as u64,
+            modified: SystemTime::now(),
+        };
+        if prune(root, age, budget, Some(&entry))? {
+            put(root, &entry.path, data, entry.modified)?;
+        }
+    }
+    Ok(())
+}
+
 pub fn read(ctx: &Ctx, args: &[String], preview: bool) -> R {
+    let result = read_at(&root(ctx), args, preview);
+    if matches!(result, Err(Fail(1))) && std::env::var_os("RWORKER_BUILDER_ARCHIVE").is_some() {
+        let action = if preview {
+            "__builder-preview"
+        } else {
+            "__builder-logs"
+        };
+        let mut cmd = crate::state::control_cmd(ctx, &[action, &args[0], &args[1], &args[2]]);
+        let status = cmd.stdin(Stdio::null()).status().map_err(|_| Fail(1))?;
+        return crate::ctx::status(crate::proc::code_of(status));
+    }
+    result
+}
+
+pub(crate) fn read_at(root: &Path, args: &[String], preview: bool) -> R {
     let [worker, job, lines] = args else {
         return Err(Fail(2));
     };
@@ -535,7 +598,7 @@ pub fn read(ctx: &Ctx, args: &[String], preview: bool) -> R {
         return Err(Fail(2));
     }
     let lines = lines.parse::<usize>().map_err(|_| Fail(2))?;
-    let dir = root(ctx).join(worker);
+    let dir = root.join(worker);
     let mut paths = Vec::new();
     if job.is_empty() {
         for entry in fs::read_dir(&dir).map_err(|_| Fail(1))? {
