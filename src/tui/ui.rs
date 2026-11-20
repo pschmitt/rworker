@@ -3,6 +3,7 @@
 
 use super::ansi;
 use super::app::{App, Jobs, Sub, TextView, Urgency};
+use crate::{paint, table::glyph};
 use ratatui::Frame;
 use ratatui::layout::{Alignment, Constraint, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
@@ -33,17 +34,20 @@ fn key_hints(pairs: &[(&str, &str)]) -> Line<'static> {
     Line::from(spans)
 }
 
-fn glyph(agent: &str) -> &'static str {
-    match agent {
-        "claude" => "\u{ec82} ",
-        "codex" => "\u{ec81} ",
-        "shell" => "\u{ea85} ",
-        "nixbot" => "\u{f313} ",
-        "copilot" => "\u{ec1e} ",
-        "gemini" | "agy" | "antigravity" => "\u{ec10} ",
-        "browser-daemon" => "\u{f02a0} ",
-        _ => "",
+fn agent_cell(agent: &str, icons: bool) -> Line<'static> {
+    if agent.is_empty() {
+        return Line::styled("-", dim());
     }
+    let icon = glyph(agent);
+    let mut label = if icons && !icon.is_empty() {
+        let mut icon = ansi::line(&paint::agents(icon));
+        icon.push_span(" ");
+        icon
+    } else {
+        Line::default()
+    };
+    label.push_span(agent.to_owned());
+    label
 }
 
 fn status_style(status: &str) -> Style {
@@ -325,13 +329,7 @@ impl App {
                 } else {
                     Span::raw(" ")
                 };
-                let agent = if w.agent.is_empty() {
-                    Span::styled("-", dim())
-                } else if self.icons {
-                    Span::raw(format!("{}{}", glyph(&w.agent), w.agent))
-                } else {
-                    Span::raw(w.agent.clone())
-                };
+                let agent = agent_cell(&w.agent, self.icons);
                 let kind_style = if w.kind == "pool" {
                     dim()
                 } else {
@@ -701,4 +699,18 @@ fn draw_text(f: &mut Frame, area: Rect, v: &mut TextView, tick: u64) {
         p = p.wrap(Wrap { trim: false });
     }
     f.render_widget(p, inner);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn agent_cell_uses_cli_icon_palette() {
+        let label = agent_cell("claude", true);
+        assert_eq!(label.spans[0].content, glyph("claude"));
+        assert_eq!(label.spans[0].style.fg, Some(Color::Rgb(217, 119, 87)));
+        assert_eq!(label.spans.last().unwrap().content, "claude");
+        assert_eq!(agent_cell("claude", false).spans[0].content, "claude");
+    }
 }

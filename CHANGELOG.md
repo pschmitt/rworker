@@ -21,6 +21,8 @@ Actions, flags, output, JSON and exit statuses are the same; see
 
 ### New
 
+- The TUI uses the same agent icon colors as `rworker ls`.
+
 - `rworker tui`: an interactive terminal UI (k9s style). The worker list,
   refreshed in the background; the jobs of a worker; job logs, all logs
   and lifecycle events, followed live with scrolling and a line filter;

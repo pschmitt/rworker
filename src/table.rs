@@ -7,7 +7,7 @@ use regex::Regex;
 use serde_json::Value;
 use std::sync::LazyLock;
 
-fn glyph(agent: &str) -> &'static str {
+pub(crate) fn glyph(agent: &str) -> &'static str {
     match agent {
         "claude" => "\u{ec82}",
         "codex" => "\u{ec81}",
