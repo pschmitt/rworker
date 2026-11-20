@@ -83,7 +83,7 @@ pub fn remote_ls(ctx: &Ctx) -> R<String> {
     Ok(out)
 }
 
-fn cache_inventory(ctx: &Ctx, path: &std::path::Path, inventory: &str) {
+pub(crate) fn cache_inventory(ctx: &Ctx, path: &std::path::Path, inventory: &str) {
     use std::sync::atomic::{AtomicU64, Ordering};
     static SERIAL: AtomicU64 = AtomicU64::new(0);
     if fs::create_dir_all(&ctx.state_dir).is_ok() {

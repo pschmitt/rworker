@@ -21,6 +21,9 @@ Actions, flags, output, JSON and exit statuses are the same; see
 
 ### New
 
+- Push worker inventory to the TUI and show workers as they are building.
+  The TUI can also show or hide retired workers inline with `h`.
+
 - Open the TUI when running `rworker` without arguments in a terminal.
   Use `Alt+Shift+Q` to quit from any view.
 

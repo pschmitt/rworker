@@ -5,15 +5,18 @@ use std::path::PathBuf;
 
 use axum::extract::{Path, State};
 use axum::http::{HeaderMap, StatusCode, header};
-use axum::response::{IntoResponse, Response};
+use axum::response::sse::{Event, KeepAlive};
+use axum::response::{IntoResponse, Response, Sse};
 use axum::{Router, routing::get};
 use serde_json::{Value, json};
+use std::time::Duration;
 
 use super::inventory_cache;
 
 pub(super) fn serve(dir: PathBuf, socket: &str) -> io::Result<()> {
     tokio::runtime::Builder::new_current_thread()
         .enable_io()
+        .enable_time()
         .build()?
         .block_on(async move {
             match std::fs::remove_file(socket) {
@@ -25,10 +28,49 @@ pub(super) fn serve(dir: PathBuf, socket: &str) -> io::Result<()> {
             std::fs::set_permissions(socket, std::fs::Permissions::from_mode(0o660))?;
             let app = Router::new()
                 .route("/v1/workers", get(workers))
+                .route("/v1/workers/events/stream", get(events))
                 .route("/v1/workers/{name}", get(worker))
                 .with_state(dir);
             axum::serve(listener, app).await
         })
+}
+
+async fn events(State(dir): State<PathBuf>) -> Response {
+    let stream =
+        futures_util::stream::unfold(inventory_cache::Events::new(dir), |mut source| async move {
+            loop {
+                let result = tokio::task::spawn_blocking(move || {
+                    let snapshot = source
+                        .next_snapshot()
+                        .map(|snapshot| snapshot.map(str::to_owned));
+                    (source, snapshot)
+                })
+                .await
+                .ok()?;
+                source = result.0;
+                match result.1 {
+                    Ok(Some(snapshot)) => {
+                        return Some((
+                            Ok::<_, std::convert::Infallible>(Event::default().data(snapshot)),
+                            source,
+                        ));
+                    }
+                    Ok(None) => tokio::time::sleep(Duration::from_millis(250)).await,
+                    Err(_) => return None,
+                }
+            }
+        });
+    let mut response = Sse::new(stream)
+        .keep_alive(KeepAlive::new().interval(Duration::from_secs(5)))
+        .into_response();
+    response
+        .headers_mut()
+        .insert("x-accel-buffering", header::HeaderValue::from_static("no"));
+    response.headers_mut().insert(
+        header::CACHE_CONTROL,
+        header::HeaderValue::from_static("no-store"),
+    );
+    response
 }
 
 async fn workers(State(dir): State<PathBuf>, headers: HeaderMap) -> Response {

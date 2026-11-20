@@ -184,6 +184,7 @@ pub(super) fn up(cfg: &Value, args: Args<'_>) -> Result<Value, String> {
             user_data,
         },
     )?;
+    super::inventory_cache::invalidate_current();
     let result = (|| -> Result<Option<Value>, String> {
         let timeout = cfg["bootTimeout"]
             .as_u64()

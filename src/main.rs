@@ -426,7 +426,15 @@ fn main() {
         && argv.first().is_some_and(|action| {
             matches!(
                 action.as_str(),
-                "profiles" | "ls" | "up" | "down" | "extend" | "topic" | "claim" | "niks3-token"
+                "profiles"
+                    | "ls"
+                    | "up"
+                    | "down"
+                    | "extend"
+                    | "topic"
+                    | "claim"
+                    | "niks3-token"
+                    | "inventory-events"
             )
         });
     let result = if remote_command {

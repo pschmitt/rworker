@@ -42,6 +42,7 @@ pub struct Worker {
     pub ips: String,
     pub created: Option<i64>,
     pub mine: bool,
+    pub retired: bool,
     raw: Value,
 }
 
@@ -76,6 +77,7 @@ impl Worker {
             created: get(v, "created_at")
                 .as_str()
                 .and_then(crate::time::created_epoch),
+            retired: false,
             raw: v.clone(),
         }
     }
@@ -142,13 +144,6 @@ pub struct Jobs {
     pub error: Option<String>,
 }
 
-pub struct History {
-    pub rows: Vec<Value>,
-    pub state: TableState,
-    pub loading: Option<u64>,
-    pub error: bool,
-}
-
 pub struct TextView {
     pub title: String,
     pub id: u64,
@@ -181,7 +176,6 @@ impl TextView {
 
 pub enum Sub {
     Jobs(Jobs),
-    History(History),
     Text(TextView),
 }
 
@@ -231,6 +225,9 @@ pub struct App {
     pub owner: String,
     pub icons: bool,
     pub workers: Vec<Worker>,
+    pub show_history: bool,
+    history: Vec<Worker>,
+    history_loading: bool,
     pub table: TableState,
     pub mouse_table: Option<Rect>,
     pub mouse_text: Option<Rect>,
@@ -238,6 +235,7 @@ pub struct App {
     pub filter: String,
     pub mine_only: bool,
     pub refreshing: bool,
+    pub inventory_live: bool,
     pub refreshed: Option<(Instant, Duration)>,
     pub stale: bool,
     pub refresh_error: Option<String>,
@@ -259,8 +257,18 @@ impl App {
     /// The workers shown, after the filter, sorted like `ls`.
     pub fn visible(&self) -> Vec<&Worker> {
         let needle = self.filter.to_lowercase();
+        let live = self.show_history.then(|| {
+            self.workers
+                .iter()
+                .map(|w| &w.name)
+                .collect::<std::collections::HashSet<_>>()
+        });
         self.workers
             .iter()
+            .chain(self.history.iter().filter(|worker| {
+                live.as_ref()
+                    .is_some_and(|live| !live.contains(&worker.name))
+            }))
             .filter(|w| (!self.mine_only || w.mine) && w.matches(&needle))
             .collect()
     }
@@ -370,43 +378,23 @@ impl App {
         self.reload_jobs();
     }
 
-    fn open_history(&mut self) {
-        let id = self.id();
-        self.stack.push(Sub::History(History {
-            rows: Vec::new(),
-            state: TableState::default(),
-            loading: Some(id),
-            error: false,
-        }));
-        self.pending.insert(id, Pending::History);
-        proc::action(id, s(&["__worker-history"]), self.tx.clone());
+    fn toggle_history(&mut self) {
+        let keep = self.selected().map(|w| w.name.clone());
+        self.show_history = !self.show_history;
+        self.reselect(keep);
+        if self.show_history {
+            self.load_history();
+        }
     }
 
-    fn history_key(&mut self, k: KeyEvent) {
-        let Some(Sub::History(view)) = self.stack.last_mut() else {
+    fn load_history(&mut self) {
+        if self.history_loading {
             return;
-        };
-        let count = view.rows.len();
-        let index = view.state.selected().unwrap_or(0);
-        match k.code {
-            KeyCode::Esc | KeyCode::Backspace | KeyCode::Char('h' | 'q') => {
-                self.stack.pop();
-            }
-            KeyCode::Down | KeyCode::Char('j') if count > 0 => {
-                view.state.select(Some((index + 1).min(count - 1)));
-            }
-            KeyCode::Up | KeyCode::Char('k') if count > 0 => {
-                view.state.select(Some(index.saturating_sub(1)));
-            }
-            KeyCode::Enter | KeyCode::Char('l') => {
-                if let Some(name) = view.rows.get(index).and_then(|row| row["name"].as_str()) {
-                    let title = format!("cached logs · {name}");
-                    let args = s(&["logs", name, "--cached", "--lines", "1000"]);
-                    self.open_text(title, args);
-                }
-            }
-            _ => {}
         }
+        self.history_loading = true;
+        let id = self.id();
+        self.pending.insert(id, Pending::History);
+        proc::action(id, s(&["__worker-history"]), self.tx.clone());
     }
 
     fn reload_jobs(&mut self) {
@@ -435,23 +423,31 @@ impl App {
 
     fn sync_preview(&mut self) {
         let selected = if self.stack.is_empty() && self.mouse_text.is_some() {
-            self.selected().map(|worker| worker.name.as_str())
+            self.selected()
+                .map(|worker| (worker.name.as_str(), worker.retired))
         } else {
             None
         };
-        if self.preview.as_ref().map(|(worker, _)| worker.as_str()) == selected {
+        if self
+            .preview
+            .as_ref()
+            .map(|(worker, view)| (worker.as_str(), view.title.starts_with("cached logs")))
+            == selected
+        {
             return;
         }
-        let selected = selected.map(str::to_owned);
+        let selected = selected.map(|(name, retired)| (name.to_owned(), retired));
         self.preview = None;
-        if let Some(worker) = selected {
-            let args = ["logs", &worker, "--follow", "--quiet", "--lines", "100"]
-                .into_iter()
-                .map(str::to_owned)
-                .collect();
-            let mut view = self.text_stream(format!("logs · {worker}"), args);
+        if let Some((worker, retired)) = selected {
+            let args = if retired {
+                s(&["logs", &worker, "--cached", "--lines", "100"])
+            } else {
+                s(&["logs", &worker, "--follow", "--quiet", "--lines", "100"])
+            };
+            let label = if retired { "cached logs" } else { "logs" };
+            let mut view = self.text_stream(format!("{label} · {worker}"), args);
             view.wrap = true;
-            if std::env::var_os("RWORKER_LOG_CACHE_READ").is_some() {
+            if !retired && std::env::var_os("RWORKER_LOG_CACHE_READ").is_some() {
                 let id = self.id();
                 self.pending.insert(id, Pending::LogPreview(view.id));
                 proc::action(
@@ -469,7 +465,7 @@ impl App {
             .iter_mut()
             .filter_map(|sub| match sub {
                 Sub::Text(view) => Some(view),
-                Sub::Jobs(_) | Sub::History(_) => None,
+                Sub::Jobs(_) => None,
             })
             .chain(self.preview.as_mut().map(|(_, view)| view))
             .find(|view| view.id == id)
@@ -490,7 +486,7 @@ impl App {
             let view = match self.stack.last_mut() {
                 Some(Sub::Text(view)) => Some(view),
                 None => self.preview.as_mut().map(|(_, view)| view),
-                Some(Sub::Jobs(_) | Sub::History(_)) => None,
+                Some(Sub::Jobs(_)) => None,
             };
             if delta != 0
                 && let Some(view) = view
@@ -502,7 +498,6 @@ impl App {
             let worker_count = self.visible().len();
             let (state, count) = match self.stack.last_mut() {
                 Some(Sub::Jobs(jobs)) => (&mut jobs.state, jobs.rows.len()),
-                Some(Sub::History(history)) => (&mut history.state, history.rows.len()),
                 None => (&mut self.table, worker_count),
                 Some(Sub::Text(_)) => return,
             };
@@ -530,11 +525,21 @@ impl App {
             Msg::Input(Event::Mouse(event)) => self.mouse(event),
             Msg::Input(_) => {}
             Msg::Refreshing => self.refreshing = true,
+            Msg::InventoryLive(live) => self.inventory_live = live,
             Msg::Workers { result, took } => {
                 self.refreshing = false;
                 match result {
                     Ok(list) => {
+                        let removed = self.show_history
+                            && self.workers.iter().any(|worker| {
+                                !list
+                                    .iter()
+                                    .any(|row| row["name"].as_str() == Some(&worker.name))
+                            });
                         self.set_workers(&list);
+                        if removed {
+                            self.load_history();
+                        }
                         self.refreshed = Some((Instant::now(), took));
                         self.stale = false;
                         self.refresh_error = None;
@@ -609,25 +614,27 @@ impl App {
                     }
                 }
                 Some(Pending::History) => {
-                    let live = &self.workers;
-                    if let Some(Sub::History(view)) = self.stack.last_mut()
-                        && view.loading == Some(id)
-                    {
-                        view.loading = None;
-                        match serde_json::from_str::<Vec<Value>>(&out) {
-                            Ok(rows) if ok => {
-                                view.rows = rows
-                                    .into_iter()
-                                    .filter(|row| {
-                                        row["name"].as_str().is_some_and(|name| {
-                                            !live.iter().any(|w| w.name == name)
-                                        })
-                                    })
-                                    .collect();
-                                view.state.select((!view.rows.is_empty()).then_some(0));
-                            }
-                            _ => view.error = true,
+                    self.history_loading = false;
+                    let keep = self.selected().map(|w| w.name.clone());
+                    match serde_json::from_str::<Vec<Value>>(&out) {
+                        Ok(rows) if ok => {
+                            self.history = rows
+                                .iter()
+                                .map(|row| {
+                                    let mut worker = Worker::from(row, &self.owner);
+                                    worker.retired = true;
+                                    worker.mine = true;
+                                    worker.status = row["exit_code"].as_i64().map_or_else(
+                                        || "RETIRED".into(),
+                                        |code| format!("EXIT {code}"),
+                                    );
+                                    worker
+                                })
+                                .collect();
+                            self.reselect(keep);
                         }
+                        _ if self.show_history => self.say("Could not load worker history", true),
+                        _ => {}
                     }
                 }
                 Some(Pending::JobList) => {
@@ -736,7 +743,6 @@ impl App {
         match self.stack.last() {
             None => self.workers_key(k),
             Some(Sub::Jobs(_)) => self.jobs_key(k),
-            Some(Sub::History(_)) => self.history_key(k),
             Some(Sub::Text(_)) => self.text_key(k),
         }
     }
@@ -745,7 +751,31 @@ impl App {
         let n = self.visible().len();
         let sel = self.table.selected().unwrap_or(0);
         let ctrl = k.modifiers.contains(KeyModifiers::CONTROL);
-        let name = self.selected().map(|w| w.name.clone());
+        let selected = self.selected();
+        let retired = selected.is_some_and(|worker| worker.retired);
+        let name = selected.map(|worker| worker.name.clone());
+        if retired && matches!(k.code, KeyCode::Enter | KeyCode::Char('l' | 'o')) {
+            if let Some(name) = &name {
+                self.open_text(
+                    format!("cached logs · {name}"),
+                    s(&["logs", name, "--cached", "--lines", "1000"]),
+                );
+            }
+            return;
+        }
+        if retired
+            && matches!(
+                k.code,
+                KeyCode::Delete
+                    | KeyCode::Char(
+                        's' | 'i' | 'I' | 'p' | 'b' | 'y' | 'e' | 't' | 'c' | 'K' | 'N'
+                    )
+            )
+            || retired && k.code == KeyCode::Char('d') && !ctrl
+        {
+            self.say("Worker is retired. Press Enter for cached logs.", false);
+            return;
+        }
         let need = |app: &mut App| -> Option<String> {
             if name.is_none() {
                 app.say("no worker selected", true);
@@ -762,7 +792,7 @@ impl App {
                 }
             }
             KeyCode::Char('J') => self.open_jobs(None),
-            KeyCode::Char('h') => self.open_history(),
+            KeyCode::Char('h') => self.toggle_history(),
             KeyCode::Down | KeyCode::Char('j') if n > 0 => {
                 self.table.select(Some((sel + 1).min(n - 1)))
             }
@@ -789,6 +819,9 @@ impl App {
                 self.reselect(name.clone());
             }
             KeyCode::Char('r') => {
+                if self.show_history {
+                    self.load_history();
+                }
                 let _ = self.refresh.send(());
             }
             KeyCode::Char('L') => self.open_text("logs · all workers", s(&["logs", "--follow"])),
@@ -1358,6 +1391,9 @@ pub fn run(ctx: &Ctx, interval: Duration) -> std::io::Result<()> {
         owner: ctx.owner(),
         icons: ctx.icons,
         workers: Vec::new(),
+        show_history: false,
+        history: Vec::new(),
+        history_loading: false,
         table: TableState::default(),
         mouse_table: None,
         mouse_text: None,
@@ -1365,6 +1401,7 @@ pub fn run(ctx: &Ctx, interval: Duration) -> std::io::Result<()> {
         filter: String::new(),
         mine_only: false,
         refreshing: false,
+        inventory_live: false,
         refreshed: None,
         stale: false,
         refresh_error: None,
@@ -1401,7 +1438,14 @@ pub fn run(ctx: &Ctx, interval: Duration) -> std::io::Result<()> {
     let mouse = MouseCapture;
     let result = (|| -> std::io::Result<()> {
         execute!(std::io::stdout(), EnableMouseCapture)?;
+        let mut last_jobs_refresh = Instant::now();
         loop {
+            if last_jobs_refresh.elapsed() >= interval {
+                if matches!(app.stack.last(), Some(Sub::Jobs(_))) {
+                    app.reload_jobs();
+                }
+                last_jobs_refresh = Instant::now();
+            }
             term.draw(|f| app.draw(f))?;
             app.sync_preview();
             match rx.recv_timeout(Duration::from_millis(250)) {

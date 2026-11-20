@@ -17,6 +17,7 @@ use std::time::{Duration, Instant};
 pub enum Msg {
     Input(Event),
     Refreshing,
+    InventoryLive(bool),
     Workers {
         result: Result<Vec<Value>, String>,
         took: Duration,
@@ -180,32 +181,173 @@ pub fn last_line(text: &str) -> String {
 }
 
 /// `rworker ls --json` every INTERVAL, or right away when triggered.
-pub fn refresher(tx: Sender<Msg>, interval: Duration, trigger: Receiver<()>) {
+fn poll_inventory(tx: &Sender<Msg>) -> bool {
+    if tx.send(Msg::Refreshing).is_err() {
+        return false;
+    }
+    let t0 = Instant::now();
+    let result = match command(&["ls", "--json"], false).output() {
+        Ok(o) if o.status.success() => parse_inventory(&o.stdout),
+        Ok(o) => {
+            let msg = last_line(&String::from_utf8_lossy(&o.stderr));
+            Err(if msg.is_empty() {
+                format!("ls failed ({})", o.status)
+            } else {
+                msg
+            })
+        }
+        Err(e) => Err(e.to_string()),
+    };
+    tx.send(Msg::Workers {
+        result,
+        took: t0.elapsed(),
+    })
+    .is_ok()
+}
+
+fn parse_inventory(bytes: &[u8]) -> Result<Vec<Value>, String> {
+    match serde_json::from_slice(bytes).map_err(|e| format!("invalid JSON: {e}"))? {
+        Value::Array(workers) => Ok(workers),
+        _ => Err("unexpected answer from the control host".into()),
+    }
+}
+
+struct InventoryFeed(Child);
+
+impl Drop for InventoryFeed {
+    fn drop(&mut self) {
+        let _ = self.0.kill();
+        let _ = self.0.wait();
+    }
+}
+
+fn stream_inventory(
+    ctx: &crate::ctx::Ctx,
+    tx: &Sender<Msg>,
+    trigger: &Receiver<()>,
+    https: Option<&str>,
+) -> bool {
+    let mut command = if let Some(url) = https {
+        let mut cmd = Command::new("curl");
+        cmd.args([
+            "--disable",
+            "--silent",
+            "--fail",
+            "--no-buffer",
+            "--connect-timeout",
+            "3",
+            "--proto",
+            "=https",
+        ]);
+        if let Some(config) = std::env::var_os("RWORKER_API_CURL_CONFIG") {
+            cmd.arg("--config").arg(config);
+        }
+        cmd.arg("--url").arg(format!(
+            "{}/v1/workers/events/stream",
+            url.trim_end_matches('/')
+        ));
+        cmd
+    } else {
+        crate::state::control_cmd(ctx, &["inventory-events"])
+    };
+    command
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null());
+    // SAFETY: prctl is async-signal-safe and ties the client process to this TUI.
+    unsafe {
+        command.pre_exec(|| {
+            libc::prctl(libc::PR_SET_PDEATHSIG, libc::SIGTERM);
+            Ok(())
+        });
+    }
+    let Ok(child) = command.spawn() else {
+        return true;
+    };
+    let mut feed = InventoryFeed(child);
+    let Some(output) = feed.0.stdout.take() else {
+        return true;
+    };
+    let (send, receive) = std::sync::mpsc::sync_channel(4);
     thread::spawn(move || {
+        let mut output = BufReader::new(output);
+        let mut line = Vec::new();
         loop {
-            if tx.send(Msg::Refreshing).is_err() {
+            line.clear();
+            let read = (&mut output)
+                .take(16 * 1024 * 1024)
+                .read_until(b'\n', &mut line);
+            if !matches!(read, Ok(n) if n > 0 && line.ends_with(b"\n")) {
                 return;
             }
-            let t0 = Instant::now();
-            let result = match command(&["ls", "--json"], false).output() {
-                Ok(o) if o.status.success() => serde_json::from_slice::<Value>(&o.stdout)
-                    .map_err(|e| format!("invalid JSON: {e}"))
-                    .and_then(|v| match v {
-                        Value::Array(a) => Ok(a),
-                        _ => Err("unexpected answer from the control host".into()),
-                    }),
-                Ok(o) => {
-                    let msg = last_line(&String::from_utf8_lossy(&o.stderr));
-                    Err(if msg.is_empty() {
-                        format!("ls failed ({})", o.status)
-                    } else {
-                        msg
-                    })
+            if (line.starts_with(b"data:") || line.starts_with(b":"))
+                && send.send(std::mem::take(&mut line)).is_err()
+            {
+                return;
+            }
+        }
+    });
+    let mut last = Instant::now();
+    let mut live = false;
+    loop {
+        match trigger.try_recv() {
+            Ok(()) => {
+                while trigger.try_recv().is_ok() {}
+                if !poll_inventory(tx) {
+                    return false;
                 }
-                Err(e) => Err(e.to_string()),
-            };
-            let took = t0.elapsed();
-            if tx.send(Msg::Workers { result, took }).is_err() {
+            }
+            Err(std::sync::mpsc::TryRecvError::Disconnected) => return false,
+            Err(std::sync::mpsc::TryRecvError::Empty) => {}
+        }
+        match receive.recv_timeout(Duration::from_millis(200)) {
+            Ok(line) => {
+                last = Instant::now();
+                if let Some(bytes) = line.strip_prefix(b"data:")
+                    && let Ok(workers) = parse_inventory(bytes)
+                {
+                    if let Ok(raw) = std::str::from_utf8(bytes) {
+                        crate::state::cache_inventory(ctx, &ctx.ls_cache(), raw.trim());
+                    }
+                    if !live {
+                        if tx.send(Msg::InventoryLive(true)).is_err() {
+                            return false;
+                        }
+                        live = true;
+                    }
+                    if tx
+                        .send(Msg::Workers {
+                            result: Ok(workers),
+                            took: Duration::ZERO,
+                        })
+                        .is_err()
+                    {
+                        return false;
+                    }
+                }
+            }
+            Err(RecvTimeoutError::Timeout) if last.elapsed() < Duration::from_secs(8) => {}
+            Err(_) => return !live || tx.send(Msg::InventoryLive(false)).is_ok(),
+        }
+    }
+}
+
+pub fn refresher(tx: Sender<Msg>, interval: Duration, trigger: Receiver<()>) {
+    thread::spawn(move || {
+        let ctx = crate::ctx::Ctx::from_env();
+        let api = std::env::var("RWORKER_API_URL")
+            .ok()
+            .filter(|url| url.starts_with("https://"));
+        loop {
+            if let Some(url) = &api
+                && !stream_inventory(&ctx, &tx, &trigger, Some(url))
+            {
+                return;
+            }
+            if !stream_inventory(&ctx, &tx, &trigger, None) {
+                return;
+            }
+            if !poll_inventory(&tx) {
                 return;
             }
             match trigger.recv_timeout(interval) {

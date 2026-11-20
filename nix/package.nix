@@ -1,5 +1,6 @@
 {
   lib,
+  curl,
   stdenv,
   runCommand,
   # crane's library for this nixpkgs (`crane.mkLib pkgs`).
@@ -67,6 +68,7 @@ let
   runtimePath = lib.makeBinPath (
     extraRuntimeInputs
     ++ [
+      curl
       openssh
       rsync
     ]

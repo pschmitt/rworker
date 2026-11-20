@@ -63,6 +63,59 @@ pub(super) fn read(dir: &Path, fresh: bool) -> Option<(Value, Duration)> {
     .then(|| (snapshot["workers"].take(), age))
 }
 
+/// Read changed snapshots only. The cache file is replaced atomically, so
+/// its filesystem identity can be checked without decoding it on every tick.
+pub(super) struct Events {
+    dir: PathBuf,
+    stamp: Option<(u64, SystemTime)>,
+    body: Option<String>,
+    last_valid: Instant,
+}
+
+impl Events {
+    pub(super) fn new(dir: PathBuf) -> Self {
+        Self {
+            dir,
+            stamp: None,
+            body: None,
+            last_valid: Instant::now(),
+        }
+    }
+
+    pub(super) fn next_snapshot(&mut self) -> io::Result<Option<&str>> {
+        use std::os::unix::fs::MetadataExt;
+        let observed = fs::metadata(self.dir.join("inventory.json"))
+            .ok()
+            .and_then(|metadata| Some((metadata.ino(), metadata.modified().ok()?)));
+        if observed != self.stamp
+            && let Some((workers, _)) = read(&self.dir, false)
+        {
+            self.stamp = observed;
+            self.last_valid = Instant::now();
+            let body = workers.to_string();
+            if self.body.as_deref() != Some(body.as_str()) {
+                return Ok(Some(self.body.insert(body)));
+            }
+        }
+        if self.last_valid.elapsed() >= MAX_AGE {
+            return Err(io::Error::new(
+                io::ErrorKind::TimedOut,
+                "inventory stream is stale",
+            ));
+        }
+        Ok(None)
+    }
+}
+
+/// Invalidate immediately after provider creation so a TUI can show BUILD.
+pub(super) fn invalidate_current() {
+    if let Some(dir) = directory()
+        && let Err(error) = invalidate(&dir)
+    {
+        eprintln!("Invalidate worker inventory: {error}");
+    }
+}
+
 pub(super) fn list(dir: &Path, fresh: bool) -> Result<Value, String> {
     if fresh && read(dir, true).is_some() {
         mark(dir, "refresh").map_err(|error| format!("Request inventory refresh: {error}"))?;
@@ -114,5 +167,50 @@ pub(super) fn refresh_forever(config: &str, dir: &Path) -> Result<(), Box<dyn st
         {
             thread::sleep(Duration::from_millis(250));
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn stream_only_emits_current_changed_inventory() -> io::Result<()> {
+        let dir =
+            std::env::temp_dir().join(format!("rworker-inventory-events-{}", std::process::id()));
+        fs::create_dir(&dir)?;
+        let result = (|| {
+            let write = |mutation: &str, workers: Value| {
+                replace(&dir, "inventory.json", |file| {
+                    serde_json::to_writer(
+                        file,
+                        &json!({
+                            "mutation": mutation, "workers": workers,
+                        }),
+                    )
+                    .map_err(io::Error::other)
+                })
+            };
+            write("", json!([]))?;
+            let mut events = Events::new(dir.clone());
+            assert_eq!(events.next_snapshot()?, Some("[]"));
+            write("", json!([]))?;
+            assert_eq!(events.next_snapshot()?, None);
+            invalidate(&dir)?;
+            write("", json!([{"name":"synthetic","status":"BUILD"}]))?;
+            assert_eq!(events.next_snapshot()?, None);
+            write(
+                &generation(&dir, "mutation")?,
+                json!([{"name":"synthetic","status":"BUILD"}]),
+            )?;
+            assert!(
+                events
+                    .next_snapshot()?
+                    .is_some_and(|snapshot| snapshot.contains("BUILD"))
+            );
+            Ok(())
+        })();
+        fs::remove_dir_all(dir)?;
+        result
     }
 }

@@ -78,6 +78,13 @@ stderr to the control host before deleting the worker. Read the retained
 
 ## Terminal UI
 
+The TUI subscribes to inventory changes from the control host over the
+authenticated control connection and falls back to polling if the stream
+is unavailable. It can use the HTTPS event endpoint instead when
+`RWORKER_API_URL` is set to the control host's HTTPS origin. Supply client
+certificate options through a runtime curl config at
+`RWORKER_API_CURL_CONFIG` when required.
+
 Run `rworker` in a terminal, or type `rworker tui` explicitly. The TUI is an interactive front end over the same actions, in the
 spirit of k9s. The worker list refreshes in the background (`-n SECONDS`,
 default 5) and shows your own workers with a dot and new ones with a `+`;
@@ -87,8 +94,8 @@ working directory.
 - `Alt+Shift+Q` quits from any view.
 - `J` toggles Jobs and Workers. Jobs shows running and registered jobs by
   default. Press `d` in Jobs to include completed and inactive jobs.
-- `h` opens the retired-worker history. Press Enter on a worker to view its
-  retained logs.
+- `h` shows or hides retired workers inline. Press Enter on a retired worker
+  to view its retained logs.
 - `⏎` opens the worker's jobs, `⏎` on a job follows its log; `l` follows
   all jobs of the worker, `L` all workers, `E` the lifecycle events.
 - `s` logs in over ssh (the TUI comes back when the session ends), `i`

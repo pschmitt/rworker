@@ -97,6 +97,11 @@ fn serve_connection(config: &str) -> io::Result<()> {
             .write_all(b"eInvalid control command\nx2\n")?;
         return Ok(());
     }
+    if args == ["inventory-events"]
+        && let Some(dir) = super::inventory_cache::directory()
+    {
+        return serve_events(dir);
+    }
     if matches!(args.as_slice(), [action, rest @ ..] if action == "ls" && (rest.is_empty() || rest == ["--fresh"]))
         && let Some(dir) = super::inventory_cache::directory()
     {
@@ -175,4 +180,43 @@ fn serve_connection(config: &str) -> io::Result<()> {
     let mut out = io::stdout().lock();
     writeln!(out, "x{code}")?;
     out.flush()
+}
+
+fn serve_events(dir: std::path::PathBuf) -> io::Result<()> {
+    use std::time::{Duration, Instant};
+    let mut source = super::inventory_cache::Events::new(dir);
+    let mut heartbeat = Instant::now();
+    let mut out = io::stdout().lock();
+    let result = (|| -> io::Result<()> {
+        loop {
+            match source.next_snapshot() {
+                Ok(Some(snapshot)) => {
+                    writeln!(out, "odata: {snapshot}")?;
+                    out.flush()?;
+                }
+                Ok(None) if heartbeat.elapsed() >= Duration::from_secs(5) => {
+                    out.write_all(b"o: keepalive\n")?;
+                    out.flush()?;
+                    heartbeat = Instant::now();
+                }
+                Ok(None) => {}
+                Err(_) => {
+                    out.write_all(b"x1\n")?;
+                    return out.flush();
+                }
+            }
+            std::thread::sleep(Duration::from_millis(250));
+        }
+    })();
+    match result {
+        Err(error)
+            if matches!(
+                error.kind(),
+                io::ErrorKind::BrokenPipe | io::ErrorKind::ConnectionReset
+            ) =>
+        {
+            Ok(())
+        }
+        result => result,
+    }
 }

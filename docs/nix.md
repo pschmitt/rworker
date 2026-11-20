@@ -74,6 +74,10 @@ Responses include an `ETag` for conditional reads and
 `X-Rworker-Inventory-Age-Ms` for freshness. A missing worker returns 404.
 A missing or invalidated snapshot returns 503 until the next successful refresh.
 
+`GET /v1/workers/events/stream` sends the current worker array as a Server-Sent
+Event followed by changed arrays. It uses the same authentication and snapshot
+as the read API and keeps the connection alive between changes.
+
 ```sh
 curl --unix-socket /run/rworker-inventory-api/http.sock http://localhost/v1/workers
 ```
@@ -83,4 +87,4 @@ To expose the API on a private network, set `services.rworker.api.https` with
 `clientCAFile`. The certificate paths refer to runtime files on the server.
 Use a dedicated client CA whose certificates are issued only to API clients.
 nginx verifies the client certificate and has access to the read API socket.
-The CLI continues to use its existing SSH authentication.
+The TUI can use this HTTPS endpoint or its existing authenticated control connection.
