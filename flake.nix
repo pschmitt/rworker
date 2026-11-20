@@ -28,6 +28,10 @@
           packages = {
             default = rworker;
             inherit rworker;
+            server-module = import ./nix/server-module-check.nix {
+              inherit nixpkgs system;
+              serverModule = self.nixosModules.default;
+            };
             rworker-mcp = rworker.mcp;
           };
 
@@ -39,6 +43,10 @@
           # The package build runs the unit tests.
           checks = {
             inherit rworker;
+            server-module = import ./nix/server-module-check.nix {
+              inherit nixpkgs system;
+              serverModule = self.nixosModules.default;
+            };
             parity = pkgs.callPackage ./nix/parity.nix { inherit rworker; };
             # The Home Manager module, evaluated against stand-ins for the two
             # Home Manager options it sets, and its configured wrapper built
@@ -138,6 +146,13 @@
       overlays.default = _final: prev: {
         rworker = packageFor prev;
       };
+
+      nixosModules.default =
+        { lib, pkgs, ... }:
+        {
+          imports = [ ./nix/server-module.nix ];
+          services.rworker.package = lib.mkDefault self.packages.${pkgs.stdenv.hostPlatform.system}.default;
+        };
 
       # programs.rworker; this flake's package is the default.
       homeModules.default =

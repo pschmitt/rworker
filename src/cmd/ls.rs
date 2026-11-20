@@ -1,6 +1,6 @@
 //! `ls`, `ls --watch` and the worker filters shared with logs and events.
 
-use crate::ctx::{Ctx, Fail, R, out, outln};
+use crate::ctx::{Ctx, Fail, R, out};
 use crate::jq::{self, get};
 use crate::state;
 use crate::table;
@@ -115,7 +115,7 @@ pub fn cmd_ls(ctx: &Ctx, args: &[String]) -> R {
     let out = state::remote_ls(ctx)?;
     let out = filter_workers(ctx, &out, &topic, &agent)?;
     if json || ctx.json.get() {
-        outln(&out);
+        crate::ctx::json_out(ctx, &out);
         return Ok(());
     }
     let list = state::parse(ctx, &out)?;

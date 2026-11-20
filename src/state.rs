@@ -15,6 +15,14 @@ use std::time::Duration;
 /// `ssh CONTROL rworker ARGS...` over one shared connection (kept 10 min):
 /// repeated calls (ls --watch, the completions' refresh) skip the handshake.
 pub fn control_cmd<S: AsRef<str>>(ctx: &Ctx, args: &[S]) -> Command {
+    if let Some(path) = std::env::var_os("RWORKER_CONTROL_SOCKET").filter(|p| !p.is_empty()) {
+        let exe = std::env::current_exe().unwrap_or_else(|_| "rworker".into());
+        let mut cmd = Command::new(exe);
+        cmd.arg("__control-socket")
+            .arg(path)
+            .args(args.iter().map(AsRef::as_ref));
+        return cmd;
+    }
     let _ = fs::create_dir_all(&ctx.state_dir);
     let mut cmd = Command::new("ssh");
     cmd.args(["-q", "-o", "BatchMode=yes"]);
@@ -45,13 +53,54 @@ pub fn remote_quiet<S: AsRef<str>>(ctx: &Ctx, args: &[S]) -> R<i32> {
 /// `remote ls`, keeping the answer in the cache for the completions.
 pub fn remote_ls(ctx: &Ctx) -> R<String> {
     let out = remote(ctx, &["ls"])?;
-    if fs::create_dir_all(&ctx.state_dir).is_ok() {
-        let tmp = ctx.state_dir.join(".ls.json.tmp");
-        if fs::write(&tmp, format!("{out}\n")).is_ok() {
-            let _ = fs::rename(&tmp, ctx.ls_cache());
-        }
-    }
+    cache_inventory(ctx, &ctx.ls_cache(), &out);
     Ok(out)
+}
+
+fn cache_inventory(ctx: &Ctx, path: &std::path::Path, inventory: &str) {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static SERIAL: AtomicU64 = AtomicU64::new(0);
+    if fs::create_dir_all(&ctx.state_dir).is_ok() {
+        let tmp = path.with_extension(format!(
+            "{}.{}.tmp",
+            std::process::id(),
+            SERIAL.fetch_add(1, Ordering::Relaxed)
+        ));
+        if fs::write(&tmp, format!("{inventory}\n")).is_ok() && fs::rename(&tmp, path).is_ok() {
+            return;
+        }
+        let _ = fs::remove_file(tmp);
+    }
+}
+
+/// Discovery loops can share the latest successful inventory with each other.
+pub fn poll_ls(ctx: &Ctx) -> R<String> {
+    use std::hash::{DefaultHasher, Hash, Hasher};
+    let mut key = DefaultHasher::new();
+    ctx.control_host.hash(&mut key);
+    std::env::var_os("RWORKER_CONTROL_SOCKET").hash(&mut key);
+    let path = ctx
+        .state_dir
+        .join(format!(".discovery-{:016x}.json", key.finish()));
+    let cached = (|| {
+        let mut file = fs::File::open(&path).ok()?;
+        let age = file.metadata().ok()?.modified().ok()?.elapsed().ok()?;
+        if age >= Duration::from_secs(2) {
+            return None;
+        }
+        let mut out = String::new();
+        std::io::Read::read_to_string(&mut file, &mut out).ok()?;
+        serde_json::from_str::<Value>(&out)
+            .ok()?
+            .is_array()
+            .then_some(out)
+    })();
+    if let Some(cached) = cached {
+        return Ok(cached);
+    }
+    let fresh = remote_ls(ctx)?;
+    cache_inventory(ctx, &path, &fresh);
+    Ok(fresh)
 }
 
 /// Parse JSON the client got from somewhere; a parse error fails like jq.
@@ -115,7 +164,8 @@ pub fn remember_created(ctx: &Ctx, name: &str, info: &Value) -> R {
 /// Fetch a worker this host did not create (another host's, or nixbot's
 /// pool) from the control host, pin its host key and remember it.
 pub fn adopt(ctx: &Ctx, name: &str) -> R {
-    let out = remote_ls(ctx)?;
+    let snapshot = ctx.resolution_snapshot.borrow_mut().take();
+    let out = snapshot.map_or_else(|| remote_ls(ctx), Ok)?;
     let list = parse(ctx, &out)?;
     let Some(info) = find(ctx, &list, name)? else {
         ctx.err(&format!("No worker named {}", paint::vm(ctx, name)));
@@ -319,7 +369,9 @@ pub fn forget(ctx: &Ctx, name: &str) {
             .into_iter()
             .filter(|w| jq::get(w, "name").as_str() != Some(name))
             .collect();
-        let tmp = ctx.state_dir.join(".ls.json.tmp");
+        let tmp = ctx
+            .state_dir
+            .join(format!(".ls.json.{}.tmp", std::process::id()));
         if fs::write(&tmp, format!("{}\n", jq::compact(&Value::Array(kept)))).is_ok() {
             let _ = fs::rename(&tmp, &cache);
         }

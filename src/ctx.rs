@@ -28,6 +28,7 @@ pub struct Ctx {
     pub json: Cell<bool>,
     pub wide: Cell<bool>,
     pub quiet: Cell<bool>,
+    pub resolution_snapshot: RefCell<Option<String>>,
     pub filter_agent_id: RefCell<String>,
     mute: Cell<u32>,
 }
@@ -89,6 +90,7 @@ impl Ctx {
             json: Cell::new(false),
             wide: Cell::new(false),
             quiet: Cell::new(env("__RWORKER_QUIET") == "1"),
+            resolution_snapshot: RefCell::new(None),
             filter_agent_id: RefCell::new(String::new()),
             mute: Cell::new(0),
         }
@@ -175,4 +177,39 @@ pub fn out(text: &str) {
 
 pub fn outln(text: &str) {
     out(&format!("{text}\n"));
+}
+
+/// Preserve each command's existing machine-readable output when redirected.
+pub fn json_out(ctx: &Ctx, text: &str) {
+    if !std::io::stdout().is_terminal() {
+        outln(text);
+        return;
+    }
+    let Ok(value) = serde_json::from_str::<serde_json::Value>(text) else {
+        outln(text);
+        return;
+    };
+    let pretty = crate::jq::pretty(&value);
+    if !ctx.color {
+        outln(&pretty);
+        return;
+    }
+    static TOKEN: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new(|| {
+        regex::Regex::new(r#""(?:[^"\\]|\\.)*"|-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?|true|false|null"#)
+            .expect("valid JSON token pattern")
+    });
+    let colored = TOKEN.replace_all(&pretty, |token: &regex::Captures<'_>| {
+        let value = token.get(0).expect("JSON token match");
+        let color = if value.as_str().starts_with('"') {
+            if pretty[value.end()..].trim_start().starts_with(':') {
+                36
+            } else {
+                32
+            }
+        } else {
+            35
+        };
+        format!("\x1b[{color}m{value}\x1b[0m", value = value.as_str())
+    });
+    outln(&colored);
 }

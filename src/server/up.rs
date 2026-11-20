@@ -1,0 +1,295 @@
+use std::time::{Duration, Instant};
+
+use serde_json::{Map, Value, json};
+
+use super::{
+    duration_seconds, epoch, metadata,
+    mutations::{self, Compute},
+    netbird::NetBird,
+    openstack::{OpenStack, setting},
+    provision, worker_ssh,
+};
+
+#[derive(Default)]
+pub(super) struct Args<'a> {
+    ttl: Option<u64>,
+    profile: Option<&'a str>,
+    flavor: Option<&'a str>,
+    disk: Option<i64>,
+    owner: Option<&'a str>,
+    pairs: Vec<String>,
+    keys: Vec<&'a str>,
+    scratch: bool,
+    no_token: bool,
+}
+
+impl<'a> Args<'a> {
+    pub fn parse(args: &'a [String]) -> Result<Self, String> {
+        let mut parsed = Self::default();
+        let mut args = args.iter().map(String::as_str);
+        while let Some(arg) = args.next() {
+            let (flag, inline) = arg
+                .split_once('=')
+                .map_or((arg, None), |(k, v)| (k, Some(v)));
+            match flag {
+                "--scratch" if inline.is_none() => {
+                    parsed.scratch = true;
+                    continue;
+                }
+                "--no-niks3-token" if inline.is_none() => {
+                    parsed.no_token = true;
+                    continue;
+                }
+                "--ttl" | "--profile" | "--flavor" | "--disk" | "--owner" | "--meta"
+                | "--ssh-key" => {}
+                _ => return Err(format!("unrecognized arguments: {arg}")),
+            }
+            let value = inline
+                .or_else(|| args.next().filter(|arg| !arg.starts_with("--")))
+                .ok_or_else(|| format!("argument {flag}: expected one argument"))?;
+            match flag {
+                "--ttl" => {
+                    parsed.ttl = Some(
+                        duration_seconds(value)
+                            .ok_or_else(|| format!("invalid duration: {value}"))?,
+                    )
+                }
+                "--profile" => parsed.profile = Some(value),
+                "--flavor" => parsed.flavor = Some(value),
+                "--disk" => {
+                    parsed.disk = Some(
+                        value
+                            .parse()
+                            .map_err(|_| format!("invalid int value: '{value}'"))?,
+                    )
+                }
+                "--owner" => parsed.owner = Some(value),
+                "--meta" => parsed.pairs.push(value.into()),
+                "--ssh-key" if !value.trim().is_empty() => parsed.keys.push(value.trim()),
+                _ => {}
+            }
+        }
+        Ok(parsed)
+    }
+}
+
+pub(super) fn up(cfg: &Value, args: Args<'_>) -> Result<Value, String> {
+    let compute = OpenStack::from_settings(cfg)?;
+    let netbird = NetBird::from_settings(cfg)?;
+    let profile = args
+        .profile
+        .filter(|value| !value.is_empty())
+        .or_else(|| cfg["defaultProfile"].as_str())
+        .unwrap_or("standard");
+    let options = &cfg["profiles"][profile];
+    if !options
+        .as_object()
+        .is_some_and(|profile| !profile.is_empty())
+    {
+        return Err(format!("unknown worker profile: {profile}"));
+    }
+    let flavor = args
+        .flavor
+        .filter(|value| !value.is_empty())
+        .or_else(|| options["flavor"].as_str().filter(|value| !value.is_empty()))
+        .unwrap_or(setting(cfg, "adhocFlavor")?);
+    let disk = args
+        .disk
+        .filter(|&value| value != 0)
+        .or_else(|| options["disk"].as_i64().filter(|&value| value != 0))
+        .or_else(|| cfg["adhocVolumeSize"].as_i64())
+        .ok_or("Missing setting: adhocVolumeSize")?;
+    let lifetime_key = if args.scratch {
+        "adhocScratchMax"
+    } else {
+        "adhocMaxTtl"
+    };
+    let lifetime = cfg[lifetime_key]
+        .as_u64()
+        .ok_or_else(|| format!("Missing setting: {lifetime_key}"))?;
+    let ttl = args
+        .ttl
+        .or_else(|| cfg["adhocDefaultTtl"].as_u64())
+        .ok_or("Missing setting: adhocDefaultTtl")?
+        .min(lifetime);
+    let prefix = setting(cfg, "adhocPrefix")?;
+    let output = compute.command(&["server", "list", "-f", "json", "-c", "Name"])?;
+    let servers: Vec<Value> =
+        serde_json::from_slice(&output).map_err(|_| "Invalid OpenStack server listing")?;
+    let count = servers
+        .iter()
+        .filter_map(|server| server["Name"].as_str())
+        .filter(|name| name.starts_with(prefix))
+        .collect::<std::collections::HashSet<_>>()
+        .len();
+    let max = cfg["adhocMax"]
+        .as_u64()
+        .ok_or("Missing setting: adhocMax")?;
+    if count as u64 >= max {
+        return Err(format!(
+            "already {count} ad-hoc workers (max {max}); free one with down"
+        ));
+    }
+    if args.keys.is_empty() {
+        return Err("--ssh-key is required (the agent user's key)".into());
+    }
+    let suffix = super::niks3::token_id().map_err(|err| err.to_string())?;
+    let name = format!("{prefix}{}", &suffix[..8]);
+    let expires = (epoch() + ttl as f64) as i64;
+    let mut metadata: Map<String, Value> = [
+        ("nixbot-worker", "adhoc".into()),
+        ("expires_at", expires.to_string()),
+        ("created_at", (epoch() as i64).to_string()),
+        ("max_lifetime", lifetime.to_string()),
+        ("owner", args.owner.unwrap_or_default().into()),
+        ("worker_profile", profile.into()),
+    ]
+    .into_iter()
+    .map(|(key, value)| (key.into(), Value::String(value)))
+    .collect();
+    metadata.extend(metadata::creator_metadata(&args.pairs)?);
+    let (id, mut metadata) = provision::create(
+        cfg,
+        &compute,
+        provision::Request {
+            name: &name,
+            group: setting(cfg, "netbirdAdhocGroup")?,
+            flavor,
+            disk,
+            profile,
+            metadata,
+            user_data: [("agent_authorized_keys".into(), json!(args.keys))]
+                .into_iter()
+                .collect(),
+        },
+    )?;
+    let result = (|| -> Result<Option<Value>, String> {
+        let timeout = cfg["bootTimeout"]
+            .as_u64()
+            .ok_or("Missing setting: bootTimeout")?;
+        let Some((host_key, ip, ips)) = ready(cfg, &compute, &id, &name, timeout)? else {
+            return Ok(None);
+        };
+        let mut compute = compute;
+        if let Some(id) = metadata.get("setup_key_id").and_then(Value::as_str) {
+            netbird.delete_key(id);
+        }
+        compute.set_metadata(
+            &id,
+            [("host_key".into(), json!(host_key))].into_iter().collect(),
+        )?;
+        metadata.insert("host_key".into(), json!(host_key));
+        if let Err(error) = compute.delete_metadata(&id, &["setup_key_id"]) {
+            eprintln!("removing setup_key_id from {name}: {error}");
+        }
+        if let Some(key) = metadata.get("ts_key_id").and_then(Value::as_str) {
+            match super::tailscale::Tailscale::from_settings(&cfg["tailscale"]) {
+                Ok(mut ts) => {
+                    ts.delete_key(key);
+                    if let Err(error) = compute.delete_metadata(&id, &["ts_key_id"]) {
+                        eprintln!("releasing the Tailscale key of {name}: {error}");
+                    }
+                }
+                Err(error) => eprintln!("releasing the Tailscale key of {name}: {error}"),
+            }
+        }
+        let mut response = json!({
+            "name": name, "ip": ip, "ips": ips, "host_key": host_key, "user": "agent",
+            "expires_at": expires, "flavor": flavor, "profile": profile,
+            "builder": format!("ssh-ng://agent@{ip}"),
+        });
+        if !args.no_token
+            && cfg["niks3"].is_object()
+            && options["niks3Token"].as_bool().unwrap_or(true)
+        {
+            response["niks3_token"] =
+                super::niks3::install(cfg, &mut compute, &id, &name, &metadata, expires)?;
+        }
+        Ok(Some(response))
+    })();
+    match result {
+        Ok(Some(response)) => Ok(response),
+        result => {
+            let compute = OpenStack::from_settings(cfg)?;
+            mutations::delete(cfg, &compute, &netbird, &id, &name, &metadata)?;
+            result?.ok_or_else(|| format!("{name} did not come up; deleted it"))
+        }
+    }
+}
+
+pub(super) type Ready = (String, std::net::IpAddr, Map<String, Value>);
+
+fn ready(
+    cfg: &Value,
+    compute: &OpenStack,
+    id: &str,
+    name: &str,
+    timeout: u64,
+) -> Result<Option<Ready>, String> {
+    let now = Instant::now();
+    let mut previous = String::new();
+    while now.elapsed() < Duration::from_secs(timeout) {
+        let (stage, result) = boot_status(cfg, compute, id, name)?;
+        if stage != previous {
+            eprintln!("rworker-progress {stage}");
+            previous = stage;
+        }
+        match result {
+            Boot::Waiting => {}
+            Boot::Failed => return Ok(None),
+            Boot::Ready(worker) => return Ok(Some(worker)),
+        }
+        std::thread::sleep(Duration::from_secs(5));
+    }
+    Ok(None)
+}
+
+pub(super) enum Boot {
+    Waiting,
+    Failed,
+    Ready(Ready),
+}
+
+pub(super) fn boot_status(
+    cfg: &Value,
+    compute: &OpenStack,
+    id: &str,
+    name: &str,
+) -> Result<(String, Boot), String> {
+    let output = compute.command(&["server", "show", "-f", "json", "-c", "status", "--", id])?;
+    let output: Value =
+        serde_json::from_slice(&output).map_err(|_| "Invalid OpenStack server status")?;
+    let status = setting(&output, "status")?;
+    let mut stage = if status == "BUILD" {
+        "BUILDING"
+    } else {
+        status
+    };
+    let mut ready = None;
+    if status == "ACTIVE" {
+        let output = compute.command(&["console", "log", "show", "--lines", "400", "--", id])?;
+        let output = String::from_utf8_lossy(&output);
+        let key = output
+            .lines()
+            .rev()
+            .find_map(|line| line.trim().strip_prefix("NIXBOT-WORKER-HOSTKEY "))
+            .map(str::trim)
+            .filter(|key| !key.is_empty());
+        stage = "ACTIVE · booting";
+        if let Some(key) = key {
+            stage = "ACTIVE · joining overlay";
+            let (ip, ips) = worker_ssh::routes(cfg, name)?;
+            if let Some(ip) = ip {
+                stage = "ACTIVE · ready";
+                ready = Some((key.to_owned(), ip, ips));
+            }
+        }
+    }
+
+    let result = match (status, ready) {
+        ("ERROR", _) => Boot::Failed,
+        (_, Some(worker)) => Boot::Ready(worker),
+        _ => Boot::Waiting,
+    };
+    Ok((stage.to_owned(), result))
+}
