@@ -158,6 +158,8 @@ pub struct TextView {
     /// says nothing in a view of one worker (or job): pattern and
     /// replacement.
     trim: Option<(regex::Regex, &'static str)>,
+    seeded: bool,
+    has_live_output: bool,
 }
 
 impl TextView {
@@ -205,6 +207,7 @@ pub struct Confirm {
 enum Pending {
     Status(String),
     JobList,
+    LogPreview(u64),
 }
 
 pub struct Flash {
@@ -331,6 +334,8 @@ impl App {
             filter: String::new(),
             height: 20,
             trim: log_prefix(&args),
+            seeded: false,
+            has_live_output: false,
         };
         match Stream::spawn(id, &args, &self.tx) {
             Ok(s) => view.stream = Some(s),
@@ -396,6 +401,15 @@ impl App {
                 .collect();
             let mut view = self.text_stream(format!("logs · {worker}"), args);
             view.wrap = true;
+            if std::env::var_os("RWORKER_LOG_CACHE_READ").is_some() {
+                let id = self.id();
+                self.pending.insert(id, Pending::LogPreview(view.id));
+                proc::action(
+                    id,
+                    vec!["__cached-preview".into(), worker.clone()],
+                    self.tx.clone(),
+                );
+            }
             self.preview = Some((worker, view));
         }
     }
@@ -482,6 +496,14 @@ impl App {
             }
             Msg::Line { id, text, err } => {
                 if let Some(v) = self.text_view(id) {
+                    if !err {
+                        if v.seeded {
+                            v.lines.clear();
+                            v.top = 0;
+                            v.seeded = false;
+                        }
+                        v.has_live_output = true;
+                    }
                     let text = match &v.trim {
                         Some((re, rep)) => re.replace(&text, *rep).into_owned(),
                         None => text,
@@ -519,6 +541,21 @@ impl App {
                         );
                     }
                     let _ = self.refresh.send(());
+                }
+                Some(Pending::LogPreview(view_id)) => {
+                    if ok
+                        && let Some(view) = self.text_view(view_id)
+                        && !view.has_live_output
+                    {
+                        view.lines.extend(
+                            out.lines()
+                                .rev()
+                                .take(MAX_LINES)
+                                .map(|text| (text.to_owned(), false)),
+                        );
+                        view.lines.make_contiguous().reverse();
+                        view.seeded = true;
+                    }
                 }
                 Some(Pending::JobList) => {
                     for sub in &mut self.stack {

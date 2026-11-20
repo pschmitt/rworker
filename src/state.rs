@@ -32,9 +32,27 @@ pub fn control_cmd<S: AsRef<str>>(ctx: &Ctx, args: &[S]) -> Command {
             .args(args.iter().map(AsRef::as_ref));
         return cmd;
     }
+    control_ssh_cmd(ctx, args)
+}
+
+pub fn control_ssh_cmd<S: AsRef<str>>(ctx: &Ctx, args: &[S]) -> Command {
     let _ = fs::create_dir_all(&ctx.state_dir);
     let mut cmd = Command::new("ssh");
     cmd.args(["-q", "-o", "BatchMode=yes"]);
+    if args
+        .first()
+        .is_some_and(|action| action.as_ref().starts_with("__cached-"))
+    {
+        cmd.args([
+            "-n",
+            "-o",
+            "ConnectTimeout=5",
+            "-o",
+            "ServerAliveInterval=5",
+            "-o",
+            "ServerAliveCountMax=1",
+        ]);
+    }
     if ctx.control_master {
         cmd.args(["-o", "ControlMaster=auto", "-o", "ControlPersist=10m"]);
         cmd.arg("-o").arg(format!(

@@ -21,6 +21,10 @@ Actions, flags, output, JSON and exit statuses are the same; see
 
 ### New
 
+- Collect registered job logs on the control host under the operator's account.
+  Read retained snapshots with `logs WORKER [JOB] --cached` and redact
+  matching text on the client with `--redact REGEX`.
+
 - List jobs across reachable workers with `rworker jobs`. In the TUI,
   press `j` for the all-worker jobs view or Enter for the selected worker.
 

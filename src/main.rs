@@ -138,8 +138,13 @@ fn resolve_args(ctx: &Ctx, action: &str, args: &[String]) -> R<Vec<String>> {
     if !WORKER_ACTIONS.contains(&action) {
         return Ok(out);
     }
+    // Retired workers have no inventory entry. Cached reads use exact names.
+    if action == "logs" && out.iter().any(|arg| arg == "--cached") {
+        return Ok(out);
+    }
     const VALUE_FLAGS: &[&str] = &[
         "--lines",
+        "--redact",
         "--topic",
         "--agent",
         "--agent-id",
@@ -303,6 +308,10 @@ fn run(ctx: &Ctx, argv: &[String]) -> R {
         // Internal: the background refresh of the completions' cache.
         "__ls-refresh" => return state::remote_ls(ctx).map(|_| ()),
         // Internal: one follower of `logs -f`.
+        "__collect-logs" => return cmd::log_cache::collect(ctx, &argv[1..]),
+        "__cached-logs" => return cmd::log_cache::read(ctx, &argv[1..], false),
+        "__cached-preview" => return cmd::log_cache::preview(ctx, &argv[1..]),
+        "__cached-preview-local" => return cmd::log_cache::read(ctx, &argv[1..], true),
         "__jobs-remote" => return cmd::jobs::jobs_remote(ctx, &argv[1..]),
         "-h" | "--help" | "help" => {
             if second.is_empty() {
@@ -449,12 +458,12 @@ mod tests {
         logs_value_flags.sort();
         assert_eq!(
             logs_value_flags,
-            ["--agent", "--agent-id", "--lines", "--topic"],
+            ["--agent", "--agent-id", "--lines", "--redact", "--topic"],
             "logs gained or lost a value flag: update the worker detection of both completion scripts"
         );
-        assert!(ZSH_COMPLETION.contains("--lines|--topic|--agent|--agent-id) skipval=1"));
+        assert!(ZSH_COMPLETION.contains("--lines|--topic|--agent|--agent-id|--redact) skipval=1"));
         assert!(BASH_COMPLETION.contains(
-            r#"[[ "$w" == --lines || "$w" == --topic || "$w" == --agent || "$w" == --agent-id ]]"#
+            r#"[[ "$w" == --lines || "$w" == --topic || "$w" == --agent || "$w" == --agent-id || "$w" == --redact ]]"#
         ));
     }
 

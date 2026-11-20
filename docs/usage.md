@@ -38,6 +38,25 @@ worker, `jobs NAME` lists them with their state, `logs NAME [JOB]` prints
 their output and `logs -f` follows every job on every worker, with
 lifecycle events and a periodic worker count on stderr.
 
+A control host can collect the operator’s registered logs every 30 seconds.
+Set `services.rworker.logCache.operator` to the Unix account that already
+has noninteractive SSH access to the workers. The service keeps the files
+in that account’s rworker state directory with private permissions. The
+default limits are seven days from modification, 2 GiB total, and 32 MiB
+per job. When space runs out it removes the oldest snapshots first.
+
+Use `rworker logs WORKER [JOB] --cached` with the exact worker name, including
+after the worker is removed. The control-host SSH connection must use the
+same Unix account as the collector. Set `RWORKER_LOG_CACHE_READ=1` to prefer
+cached results for ordinary finite log reads and seed the TUI log preview.
+Finite reads fall back to the worker on a cache miss. Following logs uses
+the live worker connection.
+
+Use `--redact 'token=[^ ]+'` to replace matches with `[REDACTED]` on each
+displayed stdout line. This uses Rust regex syntax and applies only to
+matches you specify. The collector stores log bytes verbatim within the
+retention limits.
+
 ## Terminal UI
 
 `rworker tui` is an interactive front end over the same actions, in the

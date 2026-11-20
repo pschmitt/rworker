@@ -48,6 +48,28 @@ in
         }
       );
     };
+    logCache = {
+      operator = lib.mkOption {
+        type = lib.types.nullOr lib.types.str;
+        default = null;
+        description = "Unix account that collects and reads cached job logs. It must already have pinned SSH access to its workers without an interactive agent.";
+      };
+      retentionDays = lib.mkOption {
+        type = lib.types.ints.positive;
+        default = 7;
+        description = "Maximum age from the source log's last modification.";
+      };
+      maxMiB = lib.mkOption {
+        type = lib.types.ints.positive;
+        default = 2048;
+        description = "Maximum total retained log bytes, in MiB.";
+      };
+      maxJobMiB = lib.mkOption {
+        type = lib.types.ints.between 1 256;
+        default = 32;
+        description = "Maximum retained tail per job, in MiB.";
+      };
+    };
     reaper.enable = lib.mkEnableOption "periodic reaping of expired ad-hoc workers";
     reaper.dryRun = lib.mkEnableOption "reporting reaper decisions without changing workers";
     autoscaler = {
@@ -190,6 +212,42 @@ in
           locations."/v1/workers" = {
             proxyPass = "http://unix:${apiSocket}:";
           };
+        };
+      };
+    })
+    (lib.mkIf (cfg.enable && cfg.logCache.operator != null) {
+      assertions = [
+        {
+          assertion = cfg.logCache.maxJobMiB <= cfg.logCache.maxMiB;
+          message = "services.rworker.logCache.maxJobMiB must not exceed maxMiB";
+        }
+      ];
+      systemd.services.rworker-log-cache = {
+        description = "Collect the operator's registered rworker job logs";
+        path = [
+          pkgs.coreutils
+          pkgs.openssh
+        ];
+        environment.RWORKER_CONTROL_SOCKET = socket;
+        serviceConfig = {
+          Type = "oneshot";
+          User = cfg.logCache.operator;
+          UMask = "0077";
+          TimeoutStartSec = "5min";
+          ExecStart = command [
+            "__collect-logs"
+            (toString cfg.logCache.retentionDays)
+            (toString cfg.logCache.maxMiB)
+            (toString cfg.logCache.maxJobMiB)
+          ];
+        };
+      };
+      systemd.timers.rworker-log-cache = {
+        wantedBy = [ "timers.target" ];
+        timerConfig = {
+          OnBootSec = "30s";
+          OnUnitInactiveSec = "30s";
+          AccuracySec = "5s";
         };
       };
     })

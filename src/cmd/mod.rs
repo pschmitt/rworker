@@ -3,6 +3,7 @@ pub mod files;
 pub mod image;
 pub mod inspect;
 pub mod jobs;
+pub mod log_cache;
 pub mod ls;
 pub mod nix_cache;
 pub mod simple;

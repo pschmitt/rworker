@@ -15,7 +15,7 @@ use std::process::{Child, Command, Stdio};
 pub const JOBS_SH: &str = include_str!("../jobs.sh");
 
 /// The ssh command that runs the job manager's ACTION on WORKER.
-fn jobs_command(ctx: &Ctx, args: &[String]) -> R<Command> {
+pub(super) fn jobs_command(ctx: &Ctx, args: &[String]) -> R<Command> {
     // `shift 2 || return 2`
     if args.len() < 2 {
         return Err(Fail(2));
@@ -105,6 +105,10 @@ fn s(v: &[&str]) -> Vec<String> {
 }
 
 pub fn cmd_logs(ctx: &Ctx, args: &[String]) -> R {
+    if let Some(index) = args.iter().position(|arg| arg == "--redact") {
+        return super::log_cache::redact(ctx, args, index);
+    }
+    let cached = args.iter().any(|arg| arg == "--cached");
     let mut positional: Vec<String> = Vec::new();
     let mut opts: Vec<String> = Vec::new();
     let mut i = 0;
@@ -116,6 +120,7 @@ pub fn cmd_logs(ctx: &Ctx, args: &[String]) -> R {
                 opts.push(args.get(i + 1).cloned().unwrap_or_default());
                 i += if i + 1 < args.len() { 2 } else { 1 };
             }
+            "--cached" => i += 1,
             s if s.starts_with('-') => {
                 opts.push(a.clone());
                 i += 1;
@@ -127,6 +132,37 @@ pub fn cmd_logs(ctx: &Ctx, args: &[String]) -> R {
         }
     }
     // Options may come before or after WORKER [JOB]: `logs -f WORKER` too.
+    let cache_lines = match opts.as_slice() {
+        [] => Some("200"),
+        [flag, count] if flag == "--lines" && count.parse::<usize>().is_ok() => {
+            Some(count.as_str())
+        }
+        _ => None,
+    };
+    if cached && (!(1..=2).contains(&positional.len()) || cache_lines.is_none()) {
+        ctx.err("--cached requires WORKER [JOB] and optionally --lines N");
+        return Err(Fail(2));
+    }
+    if (cached || std::env::var_os("RWORKER_LOG_CACHE_READ").is_some())
+        && (1..=2).contains(&positional.len())
+        && let Some(lines) = cache_lines
+    {
+        let result = super::log_cache::client_read(
+            ctx,
+            &positional[0],
+            positional.get(1).map_or("", String::as_str),
+            lines,
+        );
+        if result.is_ok() {
+            return result;
+        }
+        if cached {
+            ctx.err(
+                "No cached logs available. Check the exact worker name and control-host account.",
+            );
+            return result;
+        }
+    }
     if !positional.is_empty() {
         let mut all = vec!["logs".to_string(), positional[0].clone()];
         all.extend(positional[1..].iter().cloned());
@@ -240,6 +276,24 @@ fn ready(list: &Value) -> Vec<String> {
         })
         .map(|w| jq::raw(get(w, "name")))
         .collect()
+}
+
+pub(super) fn registered_jobs(ctx: &Ctx) -> R<Vec<(String, String)>> {
+    let mut names = ready(&workers(ctx, "", "")?);
+    names.retain(|name| !name.is_empty());
+    names.sort_unstable();
+    names.dedup();
+    let requests: Vec<_> = names.iter().map(|name| s(&["jobs", name])).collect();
+    let mut jobs = Vec::new();
+    for (worker, result) in names.iter().zip(poll_jobs(ctx, &requests)) {
+        if let Ok(output) = result {
+            jobs.extend(output.lines().filter_map(|line| {
+                let (job, _) = line.split_once('\t')?;
+                Some((worker.clone(), job.to_owned()))
+            }));
+        }
+    }
+    Ok(jobs)
 }
 
 /// List registered jobs on reachable workers without serial SSH round trips.
