@@ -19,6 +19,8 @@ The Rust client and controller replace the original Bash client.
 
 ### New
 
+- Preserve terminal colors in the redacted log view.
+
 - Register running `exec` commands as live jobs named `exec`.
 
 - Resize the TUI logs pane by dragging its border next to the worker list.

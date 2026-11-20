@@ -487,6 +487,7 @@ fn client_read_mode(ctx: &Ctx, action: &str, worker: &str, job: &str, lines: &st
 // secret. Rules run against bytes so other log content need not be UTF-8.
 struct Redactor {
     in_private_key: bool,
+    keep_color: bool,
     extra: Option<regex::bytes::Regex>,
 }
 
@@ -526,19 +527,84 @@ impl Redactor {
 
         let ending = line.ends_with(b"\n");
         let line = line.strip_suffix(b"\n").unwrap_or(line);
-        let line = ANSI.replace_all(line, &b""[..]);
-        if self.in_private_key || KEY_BEGIN.is_match(&line) {
-            self.in_private_key = !KEY_END.is_match(&line);
-            output.write_all(b"[REDACTED]")?;
-        } else {
-            let urls = USERINFO.replace_all(&line, &b"${1}[REDACTED]${2}"[..]);
-            let values = VALUES.replace_all(&urls, &b"${1}[REDACTED]"[..]);
-            let tokens = TOKENS.replace_all(&values, &b"[REDACTED]"[..]);
-            if let Some(regex) = &self.extra {
-                output.write_all(&regex.replace_all(&tokens, &b"[REDACTED]"[..]))?;
-            } else {
-                output.write_all(&tokens)?;
+        let mut text = Vec::with_capacity(line.len());
+        let mut colors = Vec::new();
+        let mut cursor = 0;
+        for escape in ANSI.find_iter(line) {
+            text.extend_from_slice(&line[cursor..escape.start()]);
+            let code = escape.as_bytes();
+            // Restore only SGR styling, never terminal commands or hyperlinks.
+            if self.keep_color
+                && let Some(params) = code
+                    .strip_prefix(b"\x1b[")
+                    .and_then(|rest| rest.strip_suffix(b"m"))
+                && params
+                    .iter()
+                    .all(|byte| byte.is_ascii_digit() || matches!(*byte, b';' | b':'))
+            {
+                colors.push((text.len(), code));
             }
+            cursor = escape.end();
+        }
+        text.extend_from_slice(&line[cursor..]);
+
+        let ranges = if self.in_private_key || KEY_BEGIN.is_match(&text) {
+            self.in_private_key = !KEY_END.is_match(&text);
+            vec![(0, text.len())]
+        } else {
+            let mut ranges = Vec::new();
+            for captures in USERINFO.captures_iter(&text) {
+                if let (Some(prefix), Some(suffix)) = (captures.get(1), captures.get(2)) {
+                    ranges.push((prefix.end(), suffix.start()));
+                }
+            }
+            for captures in VALUES.captures_iter(&text) {
+                if let (Some(whole), Some(prefix)) = (captures.get(0), captures.get(1)) {
+                    ranges.push((prefix.end(), whole.end()));
+                }
+            }
+            ranges.extend(TOKENS.find_iter(&text).map(|m| (m.start(), m.end())));
+            if let Some(regex) = &self.extra {
+                ranges.extend(regex.find_iter(&text).map(|m| (m.start(), m.end())));
+            }
+            ranges.sort_unstable();
+            ranges
+        };
+
+        let mut merged: Vec<(usize, usize)> = Vec::new();
+        for (start, end) in ranges {
+            if let Some(previous) = merged.last_mut()
+                && start < previous.1
+            {
+                previous.1 = previous.1.max(end);
+            } else {
+                merged.push((start, end));
+            }
+        }
+        let mut colors = colors.into_iter().peekable();
+        let mut cursor = 0;
+        // Include a final empty range to flush visible text and trailing resets.
+        for (start, end, mask) in merged
+            .into_iter()
+            .map(|(start, end)| (start, end, true))
+            .chain([(text.len(), text.len(), false)])
+        {
+            while let Some(&(offset, code)) = colors.peek().filter(|(offset, _)| *offset <= start) {
+                output.write_all(&text[cursor..offset])?;
+                output.write_all(code)?;
+                cursor = offset;
+                colors.next();
+            }
+            output.write_all(&text[cursor..start])?;
+            if mask {
+                output.write_all(b"[REDACTED]")?;
+            }
+            // Reapply styling changes inside a masked span for following text.
+            while let Some(&(_, code)) = colors.peek().filter(|(offset, _)| *offset < end) {
+                output.write_all(code)?;
+                colors.next();
+            }
+            cursor = end;
         }
         if ending {
             output.write_all(b"\n")?;
@@ -557,13 +623,14 @@ pub(super) fn redact(ctx: &Ctx, args: &[&String], pattern: Option<&str>) -> R {
         })?;
     let mut redactor = Redactor {
         in_private_key: false,
+        keep_color: !ctx.no_color,
         extra,
     };
     let exe = std::env::current_exe().map_err(|_| Fail(1))?;
     let mut child = Command::new(exe)
         .arg("logs")
         .args(args)
-        .env("__RWORKER_COLOR", "0")
+        .env("__RWORKER_COLOR", if ctx.color { "1" } else { "0" })
         .stdout(Stdio::piped())
         .spawn()
         .map_err(|_| Fail(1))?;
@@ -726,6 +793,7 @@ mod tests {
         );
         let mut redactor = Redactor {
             in_private_key: false,
+            keep_color: true,
             extra: Some(regex::bytes::Regex::new("custom fixture").unwrap()),
         };
         let mut output = Vec::new();
@@ -736,6 +804,27 @@ mod tests {
             output,
             b"ok\nPASSWORD=[REDACTED]\nAuthorization: Bearer [REDACTED]\nhttps://user:[REDACTED]@host.invalid/path\n[REDACTED]\n[REDACTED]\n[REDACTED]\n[REDACTED]\n[REDACTED]"
         );
+        Ok(())
+    }
+
+    #[test]
+    fn redact_matches_across_colors_and_preserves_sgr() -> io::Result<()> {
+        let mut output = Vec::new();
+        let mut redactor = Redactor {
+            in_private_key: false,
+            keep_color: true,
+            extra: None,
+        };
+        let line = b"\x1b[36mPASS\x1b[0mWORD=\x1b[31mtest-value\x1b[0m ordinary\n";
+        redactor.line(line, &mut output)?;
+        assert_eq!(
+            output,
+            b"\x1b[36mPASS\x1b[0mWORD=\x1b[31m[REDACTED]\x1b[0m ordinary\n"
+        );
+        output.clear();
+        redactor.keep_color = false;
+        redactor.line(line, &mut output)?;
+        assert_eq!(output, b"PASSWORD=[REDACTED] ordinary\n");
         Ok(())
     }
 
