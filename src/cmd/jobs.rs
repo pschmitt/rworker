@@ -10,6 +10,7 @@ use crate::signals;
 use crate::state;
 use serde_json::Value;
 use std::collections::{BTreeMap, BTreeSet, HashMap};
+use std::io::IsTerminal;
 use std::process::{Child, Command, Stdio};
 
 pub const JOBS_SH: &str = include_str!("../jobs.sh");
@@ -296,49 +297,201 @@ pub(super) fn registered_jobs(ctx: &Ctx, inventory: &Value) -> R<Vec<(String, St
     Ok(jobs)
 }
 
-/// List registered jobs on reachable workers without serial SSH round trips.
-pub fn jobs_all(ctx: &Ctx) -> R {
-    let list = workers(ctx, "", "")?;
-    let mut names = ready(&list);
+struct JobSnapshot {
+    rows: Vec<(String, String)>,
+    failed: usize,
+    workers: usize,
+}
+
+fn job_snapshot(ctx: &Ctx, worker: Option<&str>) -> R<JobSnapshot> {
+    let mut names = match worker {
+        Some(name) => vec![name.to_owned()],
+        None => ready(&workers(ctx, "", "")?),
+    };
     names.retain(|name| !name.is_empty());
     names.sort_unstable();
     names.dedup();
     let requests: Vec<_> = names.iter().map(|name| s(&["jobs", name])).collect();
-    let mut records = Vec::new();
-    let mut failed = 0;
-    for (worker, output) in names.iter().zip(poll_jobs(ctx, &requests)) {
-        let Ok(output) = output else {
-            failed += 1;
-            continue;
-        };
-        for line in output.lines().filter(|line| !line.is_empty()) {
-            if ctx.json.get() {
-                let mut fields = line.splitn(3, '\t');
-                if let (Some(job), Some(state), Some(started)) =
-                    (fields.next(), fields.next(), fields.next())
-                {
-                    records.push(serde_json::json!({
-                        "worker": worker, "job": job, "state": state, "started_at": started,
-                    }));
-                }
-            } else {
+    let mut snapshot = JobSnapshot {
+        rows: Vec::new(),
+        failed: 0,
+        workers: names.len(),
+    };
+    for (worker, output) in names.into_iter().zip(poll_jobs(ctx, &requests)) {
+        match output {
+            Ok(output) => snapshot.rows.extend(
+                output
+                    .lines()
+                    .filter(|line| !line.is_empty())
+                    .map(|line| (worker.clone(), line.to_owned())),
+            ),
+            Err(_) => snapshot.failed += 1,
+        }
+    }
+    Ok(snapshot)
+}
+
+impl JobSnapshot {
+    fn failure(&self) -> Option<String> {
+        (self.failed > 0).then(|| {
+            format!(
+                "Could not list jobs on {} of {} workers",
+                self.failed, self.workers
+            )
+        })
+    }
+
+    fn fields(line: &str) -> Option<(&str, &str, &str)> {
+        let (job, fields) = line.split_once('\t')?;
+        let (state, started) = fields.split_once('\t')?;
+        Some((job, state, started))
+    }
+
+    fn json(&self) -> String {
+        let records: Vec<_> = self
+            .rows
+            .iter()
+            .filter_map(|(worker, line)| {
+                let (job, state, started) = Self::fields(line)?;
+                Some(serde_json::json!({
+                    "worker": worker, "job": job, "state": state, "started_at": started,
+                }))
+            })
+            .collect();
+        Value::Array(records).to_string()
+    }
+
+    fn tsv(&self, all: bool) {
+        for (worker, line) in &self.rows {
+            if all {
                 outln(&format!("{worker}\t{line}"));
+            } else {
+                outln(line);
             }
         }
     }
+
+    fn table(&self, ctx: &Ctx, all: bool) -> String {
+        let mut rows = vec![if all {
+            vec!["WORKER", "JOB", "STATE", "STARTED"]
+        } else {
+            vec!["JOB", "STATE", "STARTED"]
+        }];
+        rows.extend(self.rows.iter().filter_map(|(worker, line)| {
+            let (job, state, started) = Self::fields(line)?;
+            let mut cells = vec![job, state, started];
+            if all {
+                cells.insert(0, worker);
+            }
+            Some(cells)
+        }));
+        if rows.len() == 1 {
+            return "No jobs found.".to_string();
+        }
+        let state_col = if all { 2 } else { 1 };
+        crate::table::styled_columns(ctx, &rows, |col, text| match col.cmp(&state_col) {
+            std::cmp::Ordering::Less => paint::vm(ctx, text),
+            std::cmp::Ordering::Equal if text == "exit 0" => paint::paint(ctx, "2", text),
+            std::cmp::Ordering::Equal => paint::value(ctx, text),
+            std::cmp::Ordering::Greater => paint::paint(ctx, "2", text),
+        })
+    }
+}
+
+pub fn cmd_jobs(ctx: &Ctx, args: &[String]) -> R {
+    let mut worker = None;
+    let mut watching = false;
+    let mut seconds = 5;
+    let mut args = args.iter().map(String::as_str);
+    while let Some(arg) = args.next() {
+        match arg {
+            "-w" | "--watch" => watching = true,
+            "-n" | "--interval" => {
+                let Some(n) = args.next().and_then(super::watch::interval) else {
+                    ctx.err("Interval must be a whole number of seconds");
+                    return Err(Fail(2));
+                };
+                seconds = n;
+            }
+            _ if !arg.starts_with('-') && worker.is_none() => worker = Some(arg),
+            _ => {
+                crate::help::plain(ctx, "jobs");
+                return Err(Fail(2));
+            }
+        }
+    }
+    let terminal = std::io::stdout().is_terminal();
+    if watching {
+        return watch_jobs(ctx, worker, seconds, terminal && !ctx.json.get());
+    }
+    if let Some(worker) = worker
+        && (!terminal || ctx.json.get())
+    {
+        return jobs_remote(ctx, &s(&["jobs", worker]));
+    }
+    let snapshot = job_snapshot(ctx, worker)?;
     if ctx.json.get() {
-        crate::ctx::json_out(ctx, &Value::Array(records).to_string());
+        crate::ctx::json_out(ctx, &snapshot.json());
+    } else if terminal {
+        outln(&snapshot.table(ctx, worker.is_none()));
+    } else {
+        snapshot.tsv(worker.is_none());
     }
-    if failed > 0 {
-        ctx.err(&format!(
-            "Could not list jobs on {failed} of {} workers",
-            names.len()
-        ));
-    }
-    if failed > 0 && failed == names.len() {
-        return Err(Fail(1));
+    if let Some(error) = snapshot.failure() {
+        ctx.err(&error);
+        if snapshot.failed == snapshot.workers {
+            return Err(Fail(1));
+        }
     }
     Ok(())
+}
+
+fn watch_jobs(ctx: &Ctx, worker: Option<&str>, seconds: u64, interactive: bool) -> R {
+    crate::signals::trap();
+    let mut screen = interactive.then(super::watch::Screen::enter);
+    let mut last = JobSnapshot {
+        rows: Vec::new(),
+        failed: 0,
+        workers: 0,
+    };
+    while crate::signals::pending().is_none() {
+        let error = match ctx.muted(|| job_snapshot(ctx, worker)) {
+            Ok(snapshot) => {
+                let error = snapshot.failure();
+                if snapshot.failed == 0 || snapshot.failed < snapshot.workers {
+                    last = snapshot;
+                }
+                error
+            }
+            Err(_) => Some("Could not refresh jobs".to_owned()),
+        };
+        if let Some(screen) = &mut screen {
+            let target = worker.map_or(String::new(), |name| format!(" {name}"));
+            let mut frame = format!(
+                "Every {seconds}s: rworker jobs{target}    {}    {} jobs    (q quits, any key refreshes)\n",
+                crate::time::now_hms(),
+                last.rows.len(),
+            );
+            if let Some(error) = error {
+                frame += &format!("{}\n", paint::paint(ctx, "33", &error));
+            }
+            frame += &format!("\n{}\n", last.table(ctx, worker.is_none()));
+            screen.draw(&frame);
+        } else {
+            if let Some(error) = &error {
+                ctx.err(error);
+            }
+            if ctx.json.get() {
+                crate::ctx::json_out(ctx, &last.json());
+            } else {
+                last.tsv(worker.is_none());
+            }
+        }
+        if !super::watch::wait(seconds as f64) {
+            break;
+        }
+    }
+    screen.map_or(Ok(()), super::watch::Screen::leave)
 }
 
 fn logs_all(ctx: &Ctx, lines: &str, topic: &str, agent: &str) -> R {
@@ -803,26 +956,23 @@ pub fn cmd_ps(ctx: &Ctx, args: &[String]) -> R {
             rows += &format!("\n{worker}\t{line}");
         }
     }
-    let rows = jq::column(&rows);
     if ctx.color {
-        let first = regex::Regex::new(r"^([^ ]+)( +)([^ ]+)").expect("valid regex");
-        let rest = regex::Regex::new(r"^(([^ ]+ +){5})(.*)$").expect("valid regex");
-        let painted: Vec<String> = rows
-            .split('\n')
-            .enumerate()
-            .map(|(i, l)| {
-                if i == 0 {
-                    return format!("\x1b[1m{l}\x1b[0m");
-                }
-                let l = first
-                    .replacen(l, 1, "\x1b[36m${1}\x1b[0m${2}\x1b[32m${3}\x1b[0m")
-                    .into_owned();
-                rest.replacen(&l, 1, "${1}\x1b[33m${3}\x1b[0m").into_owned()
-            })
+        let cells: Vec<_> = rows
+            .lines()
+            .map(|row| row.splitn(6, '\t').collect())
             .collect();
-        outln(&painted.join("\n"));
+        outln(&crate::table::styled_columns(
+            ctx,
+            &cells,
+            |col, text| match col {
+                0 | 1 => paint::vm(ctx, text),
+                2 | 3 => paint::paint(ctx, "34", text),
+                4 => paint::paint(ctx, "2", text),
+                _ => text.to_owned(),
+            },
+        ));
     } else {
-        outln(&rows);
+        outln(&jq::column(&rows));
     }
     status
 }

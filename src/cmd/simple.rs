@@ -251,11 +251,29 @@ pub fn cmd_profiles(ctx: &Ctx, args: &[String]) -> R {
             .join("\t"),
         );
     }
-    let table = jq::column(&rows.join("\n"));
     if ctx.color {
-        outln(&crate::table::colorize(&table));
+        let cells: Vec<_> = rows.iter().map(|row| row.split('\t').collect()).collect();
+        outln(&crate::table::styled_columns(
+            ctx,
+            &cells,
+            |col, text| match col {
+                0 => {
+                    let (name, marker) = text
+                        .strip_suffix('*')
+                        .map_or((text, ""), |name| (name, "*"));
+                    format!(
+                        "{}{}",
+                        paint::vm(ctx, name),
+                        paint::paint(ctx, "32", marker)
+                    )
+                }
+                1 => paint::flavor(ctx, text),
+                2 => paint::paint(ctx, "2", text),
+                _ => text.to_owned(),
+            },
+        ));
     } else {
-        outln(&table);
+        outln(&jq::column(&rows.join("\n")));
     }
     Ok(())
 }

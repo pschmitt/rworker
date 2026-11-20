@@ -1,6 +1,9 @@
-Usage: __ME__ jobs [WORKER] [--json]
+Usage: __ME__ jobs [WORKER] [--json] [-w | --watch] [-n SECONDS | --interval SECONDS]
 
 List registered jobs. With a worker name, print its usual job, state and
 start time columns. Without a worker name, list jobs on reachable workers
 as worker, job, state and start time, separated by tabs. --json returns
 objects when listing all workers.
+
+Watch refreshes every 5 seconds by default. Press q to quit or another key
+to refresh immediately. --json --watch emits one JSON array per refresh.

@@ -474,6 +474,9 @@ def main():
             wide = "wide" in args
             a["stdout"] = compare_ls_columns(a["stdout"], legacy=True, wide=wide)
             b["stdout"] = compare_ls_columns(b["stdout"], legacy=False, wide=wide)
+        if name == "profiles-tty":
+            for result in (a, b):
+                result["stdout"] = re.sub(r"\x1b\[[0-9;]*m", "", result["stdout"])
         if name == "logs-unknown":
             # Keep comparing the original diagnostic and usage after the two
             # new log options have been accounted for.
@@ -486,6 +489,8 @@ def main():
         if name in {"ls-h", "ls-o-bogus", "ls-o-missing", "ls-interval-zero", "ls-unknown"}:
             # Compare everything except the new --fresh usage and option lines.
             for stream in ("stdout", "stderr"):
+                b[stream] = b[stream].replace("machines", "ls")
+                b[stream] = b[stream].replace("Aliases: ls, nodes, instances.\n\n", "")
                 a[stream] = a[stream].replace(
                     "List all workers: ad-hoc ones (KIND adhoc) and nixbot's pool (KIND pool),",
                     "List ad-hoc workers and nixbot's pool workers,",

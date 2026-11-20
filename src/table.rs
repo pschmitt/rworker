@@ -233,6 +233,40 @@ pub fn colorize(table: &str) -> String {
     crate::paint::agents(&lines.join("\n"))
 }
 
+/// Align plain cells before styling them so ANSI escapes never shift columns.
+pub(crate) fn styled_columns(
+    ctx: &Ctx,
+    rows: &[Vec<&str>],
+    style: impl Fn(usize, &str) -> String,
+) -> String {
+    use std::fmt::Write;
+    use unicode_width::UnicodeWidthStr;
+    let mut widths = vec![0; rows.first().map_or(0, Vec::len)];
+    for row in rows {
+        for (width, cell) in widths.iter_mut().zip(row) {
+            *width = (*width).max(cell.width());
+        }
+    }
+    let mut table = String::new();
+    for (index, row) in rows.iter().enumerate() {
+        if index > 0 {
+            table.push('\n');
+        }
+        for (col, cell) in row.iter().enumerate() {
+            if index == 0 {
+                table.push_str(&crate::paint::paint(ctx, "1", cell));
+            } else {
+                table.push_str(&style(col, cell));
+            }
+            if col + 1 < row.len() {
+                let padding = widths[col] - cell.width() + 2;
+                let _ = write!(table, "{:padding$}", "");
+            }
+        }
+    }
+    table
+}
+
 /// The table on stdout: colored on a terminal, "No workers found." when
 /// empty.
 pub fn render(ctx: &Ctx, list: &Value) -> R {

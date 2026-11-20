@@ -49,6 +49,39 @@ pub const ACTIONS: &[&str] = &[
     "tui",
 ];
 
+const ALIASES: &[(&str, &str)] = &[
+    ("machines", "ls"),
+    ("nodes", "ls"),
+    ("instances", "ls"),
+    ("info", "inspect"),
+    ("flavors", "profiles"),
+];
+
+fn resolve_action(input: &str) -> Result<&str, Vec<&'static str>> {
+    let actions = ACTIONS
+        .iter()
+        .chain(&["help"])
+        .map(|&name| (name, name))
+        .chain(ALIASES.iter().copied());
+    if let Some((_, command)) = actions.clone().find(|(name, _)| *name == input) {
+        return Ok(command);
+    }
+    if input.is_empty() || input.starts_with('-') || input.starts_with("__") {
+        return Ok(input);
+    }
+    let mut matches: Vec<_> = actions
+        .filter(|(name, _)| name.starts_with(input))
+        .map(|(_, command)| command)
+        .collect();
+    matches.sort_unstable();
+    matches.dedup();
+    match matches.as_slice() {
+        [command] => Ok(command),
+        [] => Ok(input),
+        _ => Err(matches),
+    }
+}
+
 pub const ZSH_COMPLETION: &str = include_str!("completions/_rworker");
 pub const BASH_COMPLETION: &str = include_str!("completions/rworker.bash");
 
@@ -213,8 +246,8 @@ fn resolve_args(ctx: &Ctx, action: &str, args: &[String]) -> R<Vec<String>> {
 
 fn dispatch(ctx: &Ctx, action: &str, args: &[String]) -> R {
     match action {
-        "jobs" if args.is_empty() => cmd::jobs::jobs_all(ctx),
-        "start" | "jobs" | "register" => {
+        "jobs" => cmd::jobs::cmd_jobs(ctx, args),
+        "start" | "register" => {
             let mut all = vec![action.to_string()];
             all.extend(args.iter().cloned());
             cmd::jobs::jobs_remote(ctx, &all)
@@ -271,9 +304,13 @@ fn dispatch(ctx: &Ctx, action: &str, args: &[String]) -> R {
 }
 
 fn run(ctx: &Ctx, argv: &[String]) -> R {
-    let action = argv.first().cloned().unwrap_or_default();
+    let raw = argv.first().map_or("", String::as_str);
+    let action = resolve_action(raw).map_err(|matches| {
+        ctx.err(&format!("Ambiguous action {raw}: {}", matches.join(", ")));
+        Fail(2)
+    })?;
     let second = argv.get(1).cloned().unwrap_or_default();
-    match action.as_str() {
+    match action {
         "__serve-control-socket" => {
             return match argv {
                 [_, config] => server::socket::serve(config),
@@ -287,6 +324,11 @@ fn run(ctx: &Ctx, argv: &[String]) -> R {
             return Err(Fail(2));
         }
         "server" => return server::run(ctx, &argv[1..]),
+        "__action" => {
+            let action = resolve_action(&second).map_err(|_| Fail(2))?;
+            ctx::outln(action);
+            return Ok(());
+        }
         "__spec" => {
             ctx::out(help::SPEC);
             return Ok(());
@@ -359,14 +401,14 @@ fn run(ctx: &Ctx, argv: &[String]) -> R {
             break;
         }
         if a == "-h" || a == "--help" {
-            ctx::out(&help::painted(ctx, &action));
+            ctx::out(&help::painted(ctx, action));
             return Ok(());
         }
     }
     if action != "ssh" || args.first().map(String::as_str) != Some("--create") {
-        args = resolve_args(ctx, &action, &args)?;
+        args = resolve_args(ctx, action, &args)?;
     }
-    dispatch(ctx, &action, &args)
+    dispatch(ctx, action, &args)
 }
 
 fn main() {
@@ -403,6 +445,29 @@ fn main() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn action_prefixes_and_aliases() {
+        for name in [
+            "machines",
+            "ma",
+            "ls",
+            "no",
+            "nod",
+            "node",
+            "nodes",
+            "inst",
+            "instanc",
+            "instances",
+        ] {
+            assert_eq!(resolve_action(name), Ok("ls"));
+        }
+        assert_eq!(resolve_action("info"), Ok("inspect"));
+        assert_eq!(resolve_action("fl"), Ok("profiles"));
+        assert_eq!(resolve_action("lo"), Ok("logs"));
+        assert!(resolve_action("in").is_err());
+        assert_eq!(resolve_action("__jobs"), Ok("__jobs"));
+    }
 
     fn spec_lines(kind: &str) -> Vec<String> {
         help::SPEC
@@ -474,6 +539,15 @@ mod tests {
     /// per-action help list the same actions and flags.
     #[test]
     fn spec_dispatch_and_help_agree() {
+        let aliases: Vec<String> = ALIASES
+            .iter()
+            .map(|(name, target)| format!("{name} {target}"))
+            .collect();
+        let spec_aliases: Vec<String> = spec_lines("alias")
+            .iter()
+            .map(|line| line.splitn(3, ' ').take(2).collect::<Vec<_>>().join(" "))
+            .collect();
+        assert_eq!(spec_aliases, aliases);
         let mut spec: Vec<String> = spec_lines("action")
             .iter()
             .map(|l| l.split(' ').next().unwrap().to_string())

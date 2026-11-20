@@ -70,6 +70,10 @@ _rworker() {
         line="${line#action }"
         actions+=("${line%% *}:${line#* }")
         ;;
+      alias)
+        line="${line#alias }"
+        actions+=("${line%% *}:${${line#* }#* }")
+        ;;
       worker)
         takes_worker=(${=line#worker })
         ;;
@@ -85,7 +89,7 @@ _rworker() {
     return
   fi
 
-  action="${words[2]}"
+  action=$(rworker __action "${words[2]}" 2>/dev/null) || return
   # For _rworker_workers (extend and prune list only ad-hoc workers).
   local _rworker_action="$action"
   if [[ "$action" == help ]]

@@ -31,12 +31,22 @@ matches. `USER@NAME` picks the login user; the default is `agent` on ad-hoc
 workers this host created and yourself on all others. Workers this host has
 not seen yet are looked up on the control host on first use.
 
+`rworker machines` lists workers and accepts the aliases `ls`, `nodes`, and
+`instances`. Unique prefixes work too, for example `rworker lo` for `logs`
+and `rworker no` for `nodes`. `rworker info` is an alias for `inspect`, and `flavors` is an alias for `profiles`.
+
 ## Jobs
 
 `start NAME --name JOB -- 'COMMAND'` runs a command in the background on the
 worker, `jobs NAME` lists them with their state, `logs NAME [JOB]` prints
 their output and `logs -f` follows every job on every worker, with
 lifecycle events and a periodic worker count on stderr.
+
+Use `rworker jobs -w` to refresh the jobs table every five seconds, or
+`rworker jobs WORKER -w -n 2` for one worker at a two-second interval.
+Press `q` to quit or any other key to refresh immediately. With
+`--json --watch` and redirected output, each refresh writes one JSON array
+on its own line.
 
 A control host can collect the operator’s registered logs every 30 seconds.
 Set `services.rworker.logCache.operator` to the Unix account that already

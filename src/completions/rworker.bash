@@ -3,7 +3,7 @@
 # last ls, refreshed in the background), so TAB never waits on the network.
 
 _rworker_workers() {
-  rworker __workers "${COMP_WORDS[1]:-}" 2>/dev/null | cut -f1
+  rworker __workers "$action" 2>/dev/null | cut -f1
 }
 
 # Topics, agents and agent ids of the cached workers (rworker __values SET)
@@ -27,9 +27,13 @@ _rworker() {
   local spec words="" line flag
   spec=$(rworker __spec 2>/dev/null)
 
+  if [[ $COMP_CWORD -gt 1 ]]
+  then
+    action=$(rworker __action "$action" 2>/dev/null) || return
+  fi
   if [[ $COMP_CWORD -eq 1 ]] || [[ "$action" == help && $COMP_CWORD -eq 2 ]]
   then
-    words=$(sed -n 's/^action \([^ ]*\) .*/\1/p' <<< "$spec")
+    words=$(sed -n -e 's/^action \([^ ]*\) .*/\1/p' -e 's/^alias \([^ ]*\) .*/\1/p' <<< "$spec")
   elif [[ $COMP_CWORD -eq 2 && "$cur" != -* ]] && grep -q -E "^worker( .*)? ${action}( |\$)" <<< "$spec"
   then
     words=$(_rworker_workers)

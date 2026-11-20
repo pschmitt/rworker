@@ -10,3 +10,5 @@ pub mod nix_cache;
 pub mod simple;
 pub mod up;
 pub mod workers;
+
+mod watch;

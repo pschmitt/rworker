@@ -42,6 +42,7 @@ pub fn usage(ctx: &Ctx) -> String {
 
 /// The help of one action; the usage for anything else.
 pub fn action_help(ctx: &Ctx, action: &str) -> String {
+    let action = crate::resolve_action(action).unwrap_or(action);
     match HELP.iter().find(|(a, _)| *a == action) {
         Some((_, text)) => text.replace("__ME__", &ctx.me),
         None => usage(ctx),

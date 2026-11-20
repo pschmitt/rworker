@@ -1,6 +1,7 @@
 //! `ls`, `ls --watch` and the worker filters shared with logs and events.
 
-use crate::ctx::{Ctx, Fail, R, out};
+use super::watch;
+use crate::ctx::{Ctx, Fail, R};
 use crate::jq::{self, get};
 use crate::state;
 use crate::table;
@@ -133,92 +134,6 @@ pub fn cmd_ls(ctx: &Ctx, args: &[String]) -> R {
     table::render(ctx, &list)
 }
 
-/// The terminal state while `--watch` waits for a key: no echo, no line
-/// buffering, signals still on (like `read -s -n 1`).
-struct KeyWait {
-    saved: Option<libc::termios>,
-}
-
-impl KeyWait {
-    fn new() -> KeyWait {
-        // SAFETY: tcgetattr/tcsetattr on stdin with a valid termios buffer.
-        unsafe {
-            let mut t: libc::termios = std::mem::zeroed();
-            if libc::tcgetattr(0, &mut t) != 0 {
-                return KeyWait { saved: None };
-            }
-            let saved = t;
-            t.c_lflag &= !(libc::ICANON | libc::ECHO);
-            t.c_cc[libc::VMIN] = 1;
-            t.c_cc[libc::VTIME] = 0;
-            libc::tcsetattr(0, libc::TCSANOW, &t);
-            KeyWait { saved: Some(saved) }
-        }
-    }
-
-    /// A key pressed within `secs`, if any.
-    fn key(&self, secs: f64) -> Option<u8> {
-        let mut fds = libc::pollfd {
-            fd: 0,
-            events: libc::POLLIN,
-            revents: 0,
-        };
-        let ms = (secs * 1000.0).min(i32::MAX as f64) as i32;
-        // SAFETY: one valid pollfd.
-        let n = unsafe { libc::poll(&mut fds, 1, ms) };
-        if n <= 0 {
-            return None;
-        }
-        let mut b = [0u8; 1];
-        // SAFETY: reading one byte into a valid buffer.
-        let r = unsafe { libc::read(0, b.as_mut_ptr().cast(), 1) };
-        (r == 1).then_some(b[0])
-    }
-}
-
-impl Drop for KeyWait {
-    fn drop(&mut self) {
-        if let Some(t) = self.saved {
-            // SAFETY: restoring the attributes read in new().
-            unsafe {
-                libc::tcsetattr(0, libc::TCSANOW, &t);
-            }
-        }
-    }
-}
-
-/// `tput CAP 2>/dev/null` (terminfo knows the sequences), its status.
-fn tput(cap: &str) -> i32 {
-    use std::io::Write;
-    let _ = std::io::stdout().flush();
-    std::process::Command::new("tput")
-        .arg(cap)
-        .stderr(std::process::Stdio::null())
-        .status()
-        .map_or(127, crate::proc::code_of)
-}
-
-/// The alternate screen without a cursor while watching. Leaving it is
-/// the bash client's EXIT trap under `set -e`: a failing tput (no terminal
-/// type, no tput) became the exit status.
-struct Screen;
-
-impl Screen {
-    fn enter() -> Screen {
-        tput("smcup");
-        tput("civis");
-        Screen
-    }
-
-    fn leave(self) -> R {
-        let code = tput("cnorm");
-        if code != 0 {
-            return Err(Fail(code));
-        }
-        crate::ctx::status(tput("rmcup"))
-    }
-}
-
 /// `ls --watch`: redraw in place, like `kw` (kubectl-watch), and mark what
 /// changed since the previous refresh: + new, ~ changed, - gone (shown
 /// once more).
@@ -230,7 +145,7 @@ fn watch_ls(ctx: &Ctx, interval: &str, topic: &str, agent: &str) -> R {
         ("", "", "", "", "")
     };
     crate::signals::trap();
-    let screen = Screen::enter();
+    let mut screen = watch::Screen::enter();
     let mut prev_sig: HashMap<String, String> = HashMap::new();
     let mut prev_row: BTreeMap<String, String> = BTreeMap::new();
     let mut first = true;
@@ -294,24 +209,12 @@ fn watch_ls(ctx: &Ctx, interval: &str, topic: &str, agent: &str) -> R {
         if plain_lines.is_empty() {
             frame += "No workers found.\n";
         }
-        // Home, draw, clear the rest: no flicker. \e[K ends every line, or
-        // a line shorter than the one drawn there before keeps its tail.
-        out(&format!("\x1b[H{}\x1b[J", frame.replace('\n', "\x1b[K\n")));
+        screen.draw(&frame);
         prev_sig = cur_sig;
         prev_row = cur_row;
         first = false;
 
-        let key = if std::io::stdin().is_terminal() {
-            let wait = KeyWait::new();
-            let k = wait.key(secs);
-            drop(wait);
-            k
-        } else {
-            // No keyboard (e.g. piped or in a script): just wait.
-            crate::signals::sleep(secs);
-            None
-        };
-        if matches!(key, Some(b'q' | b'Q')) || crate::signals::pending().is_some() {
+        if !watch::wait(secs) {
             return screen.leave();
         }
     }
@@ -322,7 +225,11 @@ fn watch_ls(ctx: &Ctx, interval: &str, topic: &str, agent: &str) -> R {
 fn refresh(ctx: &Ctx, topic: &str, agent: &str) -> Result<String, String> {
     let mut cmd = state::control_cmd(ctx, &["ls"]);
     let output = cmd
-        .stdin(std::process::Stdio::inherit())
+        .stdin(if std::io::stdin().is_terminal() {
+            std::process::Stdio::null()
+        } else {
+            std::process::Stdio::inherit()
+        })
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped())
         .output()

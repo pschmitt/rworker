@@ -1,5 +1,7 @@
-Usage: __ME__ ls [-o json|wide | --wide] [--fresh | -w|--watch [-n SECONDS]]
+Usage: __ME__ machines [-o json|wide | --wide] [--fresh | -w|--watch [-n SECONDS]]
           [--topic REGEX] [--agent REGEX] [--agent-id REGEX]
+
+Aliases: ls, nodes, instances.
 
 List ad-hoc workers and nixbot's pool workers,
 with status, creating agent, topic, time to expiry and age.

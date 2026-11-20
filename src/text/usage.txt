@@ -4,10 +4,13 @@ Usage: __ME__ ACTION [ARGS] [-j|--json]
 -j, --json prints JSON instead of the human-readable output; every action
 but ssh takes it (scripts and the MCP server use it).
 
+Subcommands accept unique prefixes. ls, nodes and instances are aliases
+for machines. info aliases inspect and flavors aliases profiles.
+
 Actions:
   start NAME [--name JOB] [--workdir DIR] -- CMD
                        start a registered job
-  jobs [NAME]          list registered jobs across workers or on one worker
+  jobs [NAME] [-w]     list registered jobs across workers or on one worker
   ps [NAME] [--long]   show processes of running jobs on one or all workers
   logs [NAME [JOB]] [--lines N] [--follow] [--no-events] [--quiet]
        [--topic REGEX] [--agent REGEX]
@@ -23,7 +26,7 @@ Actions:
                        create a worker and wait until it is ready
   image create [--flake FLAKE] [--upload] | image upload --name NAME IMAGE
                        build or upload a worker disk image
-  ls [-o json|wide | --wide] [--watch [-n SECONDS]]
+  machines [-o json|wide | --wide] [--watch [-n SECONDS]]
                        list all workers (ad-hoc and nixbot's pool)
   exec [UP_OPTIONS] [--sync SRC[:DEST]] [--fetch REMOTE[:LOCAL]] [--keep] -- CMD
                        one-shot: create a worker, run CMD, delete the worker

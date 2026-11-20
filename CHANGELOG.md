@@ -21,6 +21,12 @@ Actions, flags, output, JSON and exit statuses are the same; see
 
 ### New
 
+- Add `jobs --watch` and aligned, colored terminal tables for jobs, profiles,
+  and processes. Interactive list watches update only changed rows.
+- List workers with `machines`, `ls`, `nodes`, or `instances`. Accept unique
+  action prefixes, `info` for `inspect`, and `flavors` for `profiles`.
+
+
 - Archive one-shot `exec` stdout and stderr before worker cleanup. The TUI
   has a retired-worker history and a borderless Jobs view with active jobs
   shown by default.

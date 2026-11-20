@@ -144,8 +144,8 @@ pub fn run(ctx: &Ctx, argv: &[String]) -> R {
         return Err(usage_error(ctx, "Choose image create or image upload"));
     };
     let create = match action.as_str() {
-        "create" => true,
-        "upload" => false,
+        prefix if !prefix.is_empty() && "create".starts_with(prefix) => true,
+        prefix if !prefix.is_empty() && "upload".starts_with(prefix) => false,
         _ => return Err(usage_error(ctx, "Choose image create or image upload")),
     };
     let (mut flake, mut path) = (None, None);
