@@ -1,12 +1,13 @@
-Usage: __ME__ image create --flake FLAKE [--upload [--name NAME] [--tag TAG]] [--json]
-       __ME__ image upload --name NAME [--tag TAG] IMAGE [--json]
+Usage: __ME__ image create [--flake FLAKE] [--upload [UPLOAD_OPTIONS]] [--json]
+       __ME__ image upload --name NAME [UPLOAD_OPTIONS] IMAGE [--json]
 
-Create builds one raw or qcow2 worker disk image with Nix. A flake reference
-without an attribute selects nixosConfigurations.rworker.config.image.repart.image.
-Use a flake reference with #ATTR to select another image output.
-Without --upload, the command prints the image path in the Nix store.
+Create builds the standalone rworker disk image by default. --flake selects
+another flake, with optional #ATTR to select a specific image output.
+Without --upload, create prints the image path in the Nix store.
 
-Upload accepts a local .raw, .img, or .qcow2 file and creates a private OpenStack
-image. It uses the local openstack CLI and its configured credentials (OS_CLOUD
-or the usual OpenStack environment). --tag opts into an image tag. With
-create --upload, --name defaults to the filename without its extension.
+Upload creates a private OpenStack image from a .raw, .img, or .qcow2 file.
+Upload options:
+  --name NAME        image name (required for upload, optional for create)
+  --tag TAG          tag the uploaded image
+  --cloud CLOUD      select a clouds.yaml entry (overrides OS_CLOUD)
+  --project PROJECT  set the image's owner project by name or ID (requires permission)

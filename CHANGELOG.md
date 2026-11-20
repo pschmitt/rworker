@@ -21,6 +21,9 @@ Actions, flags, output, JSON and exit statuses are the same; see
 
 ### New
 
+- Add OpenStack cloud and project selectors to image uploads.
+- Ship a standalone NixOS worker image and a reusable image module.
+
 - Build worker disk images with `rworker image create` and upload private
   images to OpenStack with `rworker image upload`.
 

@@ -147,6 +147,28 @@
         rworker = packageFor prev;
       };
 
+      nixosConfigurations.rworker = nixpkgs.lib.nixosSystem {
+        system = "x86_64-linux";
+        modules = [
+          self.nixosModules.workerImageOpenStack
+          { system.stateVersion = "26.11"; }
+        ];
+      };
+
+      nixosModules.workerImage = {
+        imports = [
+          ./nix/worker/disk.nix
+          ./nix/worker/image.nix
+        ];
+      };
+
+      nixosModules.workerImageOpenStack = {
+        imports = [
+          self.nixosModules.workerImage
+          ./nix/worker/standalone.nix
+        ];
+      };
+
       nixosModules.default =
         { lib, pkgs, ... }:
         {

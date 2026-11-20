@@ -21,7 +21,7 @@ Actions:
   up [--ttl 2h] [--flavor s1.xlarge] [--disk 150] [--topic TEXT]
      [--no-nix-cache] [--no-niks3-token] [--ssh [-l USER]]
                        create a worker and wait until it is ready
-  image create --flake FLAKE [--upload] | image upload --name NAME IMAGE
+  image create [--flake FLAKE] [--upload] | image upload --name NAME IMAGE
                        build or upload a worker disk image
   ls [-o json|wide] [--watch [-n SECONDS]]
                        list all workers (ad-hoc and nixbot's pool)

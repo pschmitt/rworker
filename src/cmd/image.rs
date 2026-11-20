@@ -7,6 +7,7 @@ use serde_json::json;
 use crate::ctx::{self, Ctx, Fail, R};
 use crate::proc;
 
+const DEFAULT_FLAKE: &str = "github:pschmitt/rworker";
 const DEFAULT_IMAGE: &str = "nixosConfigurations.rworker.config.image.repart.image";
 
 fn usage_error(ctx: &Ctx, message: &str) -> Fail {
@@ -75,7 +76,15 @@ fn build(ctx: &Ctx, flake: &str) -> R<PathBuf> {
     Ok(images.remove(0))
 }
 
-fn upload(ctx: &Ctx, image: &Path, name: &str, tag: Option<&str>) -> R<String> {
+#[derive(Default)]
+struct UploadOptions<'a> {
+    name: Option<&'a str>,
+    tag: Option<&'a str>,
+    cloud: Option<&'a str>,
+    project: Option<&'a str>,
+}
+
+fn upload(ctx: &Ctx, image: &Path, name: &str, options: &UploadOptions<'_>) -> R<String> {
     let Some(format) = disk_format(image) else {
         return Err(image_error(
             ctx,
@@ -89,6 +98,9 @@ fn upload(ctx: &Ctx, image: &Path, name: &str, tag: Option<&str>) -> R<String> {
         ));
     }
     let mut command = Command::new("openstack");
+    if let Some(cloud) = options.cloud {
+        command.args(["--os-cloud", cloud]);
+    }
     command
         .args(["image", "create", "--file"])
         .arg(image)
@@ -111,8 +123,11 @@ fn upload(ctx: &Ctx, image: &Path, name: &str, tag: Option<&str>) -> R<String> {
             "-c",
             "id",
         ]);
-    if let Some(tag) = tag {
+    if let Some(tag) = options.tag {
         command.args(["--tag", tag]);
+    }
+    if let Some(project) = options.project {
+        command.args(["--project", project]);
     }
     let (code, id) = proc::capture(ctx, command.args(["--", name]))?;
     if code != 0 {
@@ -133,14 +148,17 @@ pub fn run(ctx: &Ctx, argv: &[String]) -> R {
         "upload" => false,
         _ => return Err(usage_error(ctx, "Choose image create or image upload")),
     };
-    let (mut flake, mut name, mut tag, mut path) = (None, None, None, None);
+    let (mut flake, mut path) = (None, None);
+    let mut options = UploadOptions::default();
     let mut publish = !create;
     let mut args = rest.iter().map(String::as_str);
     while let Some(arg) = args.next() {
         let target = match arg {
             "--flake" if create => &mut flake,
-            "--name" => &mut name,
-            "--tag" => &mut tag,
+            "--name" => &mut options.name,
+            "--tag" => &mut options.tag,
+            "--cloud" => &mut options.cloud,
+            "--project" => &mut options.project,
             "--upload" if create => {
                 publish = true;
                 continue;
@@ -175,28 +193,31 @@ pub fn run(ctx: &Ctx, argv: &[String]) -> R {
         }
     }
 
-    if !publish && (name.is_some() || tag.is_some()) {
+    if !publish
+        && (options.name.is_some()
+            || options.tag.is_some()
+            || options.cloud.is_some()
+            || options.project.is_some())
+    {
         return Err(usage_error(
             ctx,
-            "--name and --tag require --upload with image create",
+            "--name, --tag, --cloud, and --project require --upload with image create",
         ));
     }
     let image = if create {
-        build(
-            ctx,
-            flake.ok_or_else(|| usage_error(ctx, "image create needs --flake"))?,
-        )?
+        build(ctx, flake.unwrap_or(DEFAULT_FLAKE))?
     } else {
-        if name.is_none() {
+        if options.name.is_none() {
             return Err(usage_error(ctx, "image upload needs --name"));
         }
         PathBuf::from(path.ok_or_else(|| usage_error(ctx, "image upload needs an IMAGE path"))?)
     };
     if publish {
-        let name = name
+        let name = options
+            .name
             .or_else(|| image.file_stem().and_then(|value| value.to_str()))
             .ok_or_else(|| image_error(ctx, "Specify --name for this image"))?;
-        let id = upload(ctx, &image, name, tag)?;
+        let id = upload(ctx, &image, name, &options)?;
         if ctx.json.get() {
             ctx::json_out(
                 ctx,

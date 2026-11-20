@@ -125,3 +125,5 @@ flag image --flake=installable build a Nix worker image
 flag image --upload upload the built image to OpenStack
 flag image --name=name set the OpenStack image name
 flag image --tag=tag set an OpenStack image tag
+flag image --cloud=cloud select a clouds.yaml entry
+flag image --project=project set the OpenStack image owner project

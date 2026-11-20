@@ -76,6 +76,7 @@ rworker down "$w"                                    # delete it
 | --- | --- |
 | [Usage](docs/usage.md) | Actions, worker names, environment variables |
 | [Nix](docs/nix.md) | Flake outputs, overlay options and the MCP server |
+| [Worker images](docs/images.md) | Building, uploading and booting worker images |
 | [Development](docs/development.md) | Building, tests and the parity harness |
 | [Parity contract](PARITY.md) | What the Rust client keeps from the bash client it replaces |
 | [Changelog](CHANGELOG.md) | Release notes |
