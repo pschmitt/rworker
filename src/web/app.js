@@ -175,15 +175,39 @@ function eventLabel(row) {
   return label;
 }
 
-function ago(value) {
-  if (!value) return "—";
-  const date = typeof value === "number" ? value * 1000 : Date.parse(value);
-  if (!Number.isFinite(date)) return "—";
-  const minutes = Math.floor((Date.now() - date) / 60000);
-  if (minutes < 1) return "Just now";
-  if (minutes < 60) return minutes + "m ago";
-  if (minutes < 1440) return Math.floor(minutes / 60) + "h ago";
-  return Math.floor(minutes / 1440) + "d ago";
+function duration(seconds) {
+  if (seconds < 0) return "expired";
+  const minutes = Math.floor(seconds / 60);
+  if (minutes < 60) return minutes + "m";
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return hours + "h" + (minutes % 60) + "m";
+  return Math.floor(hours / 24) + "d" + (hours % 24) + "h";
+}
+
+function workerAge(created, now) {
+  const seconds = typeof created === "number" ? created : Date.parse(created) / 1000;
+  return Number.isFinite(seconds) ? duration(now - seconds) : "—";
+}
+
+function workerExpiry(row, now) {
+  let label = "—";
+  let tone = "";
+  if (row.kind === "pool" && row.pool_state) {
+    label = row.pool_state;
+    if (label === "idle" && row.last_busy > 0) {
+      label += " " + duration(now - row.last_busy);
+      tone = " idle";
+    }
+  } else if (row.grace_until > now) {
+    label = "grace " + duration(row.grace_until - now);
+    tone = " urgent";
+  } else if (row.expires_at > 0) {
+    const remaining = row.expires_at - now;
+    label = duration(remaining);
+    if (remaining < 0) tone = " urgent";
+    else if (remaining < 900) tone = " soon";
+  }
+  return element("span", label, "worker-expiry" + tone);
 }
 
 function clock(value) {
@@ -276,14 +300,20 @@ function render() {
   let columns;
   let rows;
   switch (state.view) {
-    case "workers":
-      columns = [["Worker"], ["Status"], ["Agent", true], ["Age", true]];
-      rows = visible.map((row) => ({
-        selected: state.selected?.name === row.name,
-        cells: [named(row.name, row.topic || row.profile, () => selected(row)), badge(row.retired ? "Retired" : row.status),
-          agentLabel(row.agent), element("span", ago(row.created_at), "worker-age")],
-      }));
+    case "workers": {
+      const now = Date.now() / 1000;
+      columns = [["Name"], ["Status"], ["Agent", true], ["Topic", true], ["Expires"], ["Age", true]];
+      rows = visible.map((row) => {
+        const name = named(row.name, row.topic, () => selected(row));
+        name.className = "worker-name";
+        return {
+          selected: state.selected?.name === row.name,
+          cells: [name, badge(row.retired ? "Retired" : row.status), agentLabel(row.agent),
+            row.topic || "—", workerExpiry(row, now), element("span", workerAge(row.created_at, now), "worker-age")],
+        };
+      });
       break;
+    }
     case "jobs":
       columns = [["Job"], ["State"]];
       rows = visible.map((row) => ({

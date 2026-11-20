@@ -154,7 +154,7 @@ dialog footer { justify-content: end; border-top: 1px solid var(--line); }
 .worker-actions details[open] { display: grid; gap: 4px; min-width: 145px; }
 .worker-actions details button { text-align: left; }
 
-.agent, .worker-age { white-space: nowrap; overflow-wrap: normal; }
+.agent, .worker-age, .worker-expiry { white-space: nowrap; overflow-wrap: normal; }
 .agent { display: inline-flex; align-items: baseline; gap: .42em; }
 .agent-icon { font-family: "rworker agents"; font-size: 1.02em; }
 .agent-icon.claude { color: #d97757; }
@@ -174,3 +174,11 @@ dialog footer { justify-content: end; border-top: 1px solid var(--line); }
 .event-tone.busy { color: var(--amber); }
 .event-tone.info { color: var(--cyan); }
 .rail-status #sign-out { margin-left: auto; color: inherit; white-space: nowrap; }
+
+
+.worker-expiry.urgent { color: var(--red); }
+.worker-expiry.soon { color: var(--amber); }
+.worker-expiry.idle { color: var(--muted); }
+@media (min-width: 701px) {
+  .worker-name .secondary { display: none; }
+}
