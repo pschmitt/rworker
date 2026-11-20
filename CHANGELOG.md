@@ -4,6 +4,11 @@
 
 The Rust client and controller replace the original Bash client.
 
+### Web console
+
+- Open worker details and logs on a full-width, linkable worker page.
+- Connect to live logs immediately and use current log snapshots during reconnects.
+
 ### Autoscaler pools other than nixbot's
 
 - Scale a pool on Circus CI demand (`demand.source = "circus"`: pending

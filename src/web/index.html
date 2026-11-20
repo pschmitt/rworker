@@ -22,7 +22,7 @@
     </aside>
     <main id="main">
       <header class="page-head">
-        <div><h1 id="heading">Workers</h1><p id="subtitle">Manage worker leases and inspect build output.</p></div>
+        <div><h1 id="heading" tabindex="-1">Workers</h1><p id="subtitle">Manage worker leases and inspect build output.</p></div>
         <button class="primary" id="create" type="button" hidden><span aria-hidden="true">＋</span> New worker</button>
       </header>
       <div id="notice" class="notice" aria-live="polite" hidden></div>
@@ -36,7 +36,7 @@
       <div id="console" hidden>
         <div id="summary" class="summary"></div>
         <div class="workspace" id="workspace">
-          <section class="inventory" aria-label="Results">
+          <section class="inventory" id="inventory" aria-label="Results">
             <div class="toolbar">
               <label class="search"><span aria-hidden="true">⌕</span><input id="search" type="search" aria-label="Filter results" placeholder="Filter workers"></label>
               <label class="toggle" id="extra-toggle"><input type="checkbox" id="extra"><span id="extra-label">Show retired</span></label>
@@ -44,16 +44,16 @@
             </div>
             <div id="results"></div>
           </section>
-          <aside id="detail" class="detail" aria-label="Worker details" hidden>
+          <section id="detail" class="detail" aria-label="Worker details" hidden>
             <div class="detail-head">
-              <div><div id="detail-state"></div><h2 id="detail-name"></h2></div>
-              <button id="close-detail" type="button" title="Close details" aria-label="Close details">×</button>
+              <div id="detail-state"></div>
+              <a href="#workers">All workers</a>
             </div>
             <dl id="metadata" class="metadata"></dl>
             <div id="worker-actions" class="worker-actions"></div>
             <div class="details-nav" id="detail-tabs" aria-label="Worker views"></div>
             <div id="detail-output"></div>
-          </aside>
+          </section>
         </div>
       </div>
     </main>

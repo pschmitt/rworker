@@ -91,7 +91,7 @@ function lock() {
 }
 
 function navigate() {
-  const requested = location.hash.slice(1);
+  const [requested, worker, job] = location.hash.slice(1).split("/");
   state.view = Object.hasOwn(views, requested) ? requested : "workers";
   state.selected = null;
   state.limit = 200;
@@ -111,6 +111,13 @@ function navigate() {
   $("extra").checked = isWorkers ? state.showRetired : state.showFinished;
   detailPanel();
   render();
+  if (state.authenticated && requested === "workers" && worker) {
+    try {
+      openWorker(workerFor(decodeURIComponent(worker)), job ? decodeURIComponent(job) : null);
+    } catch (error) {
+      notice(error.message, true);
+    }
+  }
   refresh();
 }
 
@@ -288,16 +295,18 @@ function named(title, secondary, click) {
 }
 
 function selected(row, job = null) {
+  location.hash = "workers/" + encodeURIComponent(row.name) + (job ? "/" + encodeURIComponent(job) : "");
+}
+
+function openWorker(row, job) {
   state.selected = row;
   state.job = job;
   state.tab = "logs";
   state.follow = !row.retired;
   detailPanel();
-  render();
   updateDetail(true);
-  if (window.matchMedia("(max-width: 1100px)").matches) {
-    $("detail").scrollIntoView({ block: "start" });
-  }
+  window.scrollTo(0, 0);
+  $("heading").focus({ preventScroll: true });
 }
 
 function sourceWorker(name) {
@@ -411,9 +420,11 @@ async function refresh(manual = false) {
       if (state.selected && view === "workers") {
         const current = sourceWorker(state.selected.name);
         if (current && ["status", "owner", "retired", "expires_at"].some((field) => current[field] !== state.selected[field])) {
+          const retired = Boolean(current.retired) !== Boolean(state.selected.retired);
           state.selected = current;
+          if (retired) state.follow = !current.retired;
           detailPanel();
-          updateDetail(true);
+          if (retired) updateDetail(true);
         }
       }
       render();
@@ -430,7 +441,12 @@ async function refresh(manual = false) {
 function detailPanel() {
   const row = state.selected;
   $("detail").hidden = !row;
-  $("workspace").classList.toggle("has-detail", Boolean(row));
+  $("inventory").hidden = Boolean(row);
+  $("summary").hidden = Boolean(row);
+  $("create").hidden = Boolean(row) || !state.authenticated;
+  $("heading").textContent = row?.name || views[state.view][0];
+  $("subtitle").textContent = row ? "" : views[state.view][1];
+  document.title = $("heading").textContent + " · rworker";
   if (!row) {
     closeLogStream();
     detailRequest++;
@@ -438,7 +454,6 @@ function detailPanel() {
     $("detail-output").replaceChildren();
     return;
   }
-  $("detail-name").textContent = row.name;
   $("detail-state").replaceChildren(badge(row.retired ? "Retired" : row.status));
   $("metadata").replaceChildren();
   for (const [key, value] of [["Owner", row.owner], ["Profile", row.profile], ["Agent", row.agent], ["Expires", clock(row.expires_at)]]) {
@@ -505,6 +520,7 @@ function closeLogStream() {
 
 function followLogs(path, content, indicator) {
   if (logSocket || Date.now() < logRetryAt) return;
+  indicator.textContent = "Connecting…";
   const url = new URL("/v1/ui/follow/" + path, location.href);
   url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
   const socket = new WebSocket(url);
@@ -529,8 +545,8 @@ function followLogs(path, content, indicator) {
   socket.onclose = () => {
     if (logSocket !== socket) return;
     logSocket = undefined;
-    logRetryAt = Date.now() + 15000;
-    indicator.textContent = "Snapshot";
+    logRetryAt = Date.now() + 5000;
+    indicator.textContent = "Reconnecting…";
   };
 }
 
@@ -550,12 +566,17 @@ async function updateDetail(reset = false) {
   try {
     let data;
     if (tab === "logs") {
-      const useArchive = row.retired || state.follow;
+      const live = !row.retired && state.follow;
+      const useArchive = row.retired;
       const endpoint = useArchive ? (state.redact ? "archived-logs" : "raw-archive") : (state.redact ? "logs" : "raw-logs");
-      data = await request(endpoint + "/" + target + (job ? "/" + encodeURIComponent(job) : "")).catch((error) => {
-        if (row.retired || !state.follow || !state.authenticated) throw error;
-        return "";
-      });
+      if (live && Date.now() >= logRetryAt) {
+        data = reset ? "" : destination.querySelector("pre")?.textContent || "";
+      } else {
+        data = await request(endpoint + "/" + target + (job ? "/" + encodeURIComponent(job) : "")).catch((error) => {
+          if (!live) throw error;
+          return destination.querySelector("pre")?.textContent || "";
+        });
+      }
     } else if (row.retired && tab === "inspect") {
       data = row;
     } else {
@@ -564,7 +585,7 @@ async function updateDetail(reset = false) {
     if (id !== detailRequest) return;
     if (tab === "jobs") {
       destination.replaceChildren(data.length ? table([["Job"], ["State"]], data.map((entry) => ({
-        cells: [named(entry.job, "", () => { state.job = entry.job; state.tab = "logs"; detailPanel(); updateDetail(true); }), badge(entry.state)],
+        cells: [named(entry.job, "", () => selected(row, entry.job)), badge(entry.state)],
       }))) : element("p", "No jobs on this worker.", "empty"));
       return;
     }
@@ -582,7 +603,7 @@ async function updateDetail(reset = false) {
           else { closeLogStream(); indicator.textContent = "Snapshot"; }
         }), indicator);
       }
-      if (job) options.append(button("All jobs", () => { state.job = null; updateDetail(true); }));
+      if (job) options.append(button("All jobs", () => selected(row)));
     } else if (tab === "inspect" && !row.retired) {
       options.append(button("Load boot metadata", async () => {
         try {
@@ -729,7 +750,6 @@ $("extra").addEventListener("change", () => {
   render();
 });
 $("refresh").addEventListener("click", () => refresh(true));
-$("close-detail").addEventListener("click", () => { state.selected = null; detailPanel(); render(); });
 $("cancel").addEventListener("click", () => $("dialog").close());
 $("dismiss").addEventListener("click", () => $("dialog").close());
 $("action-form").addEventListener("submit", async (event) => {
@@ -741,12 +761,9 @@ $("action-form").addEventListener("submit", async (event) => {
     await request("action", action);
     $("dialog").close();
     notice(action.action === "create" ? "Worker is ready." : "Action completed.");
-    if (action.action === "delete") {
-      state.selected = null;
-      detailPanel();
-    }
+    if (action.action === "delete") location.hash = "workers";
     await refresh(true);
-    if (state.selected) { detailPanel(); updateDetail(); }
+    if (state.selected && !logSocket && action.action !== "delete") updateDetail();
   } catch (error) {
     $("form-error").textContent = error.message;
     $("form-error").hidden = false;
