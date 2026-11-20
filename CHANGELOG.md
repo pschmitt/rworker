@@ -19,6 +19,8 @@ The Rust client and controller replace the original Bash client.
 
 ### New
 
+- Resize the TUI logs pane by dragging its border next to the worker list.
+
 - Remove the legacy Bash client and its differential test harness.
 
 - Color error usage consistently with normal help.

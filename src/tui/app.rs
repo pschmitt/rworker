@@ -10,7 +10,7 @@ use ratatui::crossterm::event::{
     MouseButton, MouseEvent, MouseEventKind,
 };
 use ratatui::crossterm::execute;
-use ratatui::layout::{Position, Rect};
+use ratatui::layout::{Direction, Position, Rect};
 use ratatui::widgets::TableState;
 use serde_json::Value;
 use std::collections::{HashMap, VecDeque};
@@ -220,6 +220,12 @@ pub struct Flash {
     at: Instant,
 }
 
+pub(super) struct LogDivider {
+    pub area: Rect,
+    pub border: Rect,
+    pub direction: Direction,
+}
+
 pub struct App {
     pub control_host: String,
     pub owner: String,
@@ -231,6 +237,10 @@ pub struct App {
     pub table: TableState,
     pub mouse_table: Option<Rect>,
     pub mouse_text: Option<Rect>,
+    pub(super) log_divider: Option<LogDivider>,
+    pub(super) log_drag: Option<Direction>,
+    pub(super) log_width: Option<u16>,
+    pub(super) log_height: Option<u16>,
     pub preview: Option<(String, TextView)>,
     pub filter: String,
     pub mine_only: bool,
@@ -472,10 +482,44 @@ impl App {
     }
 
     fn mouse(&mut self, event: MouseEvent) {
+        if event.kind == MouseEventKind::Up(MouseButton::Left) {
+            self.log_drag = None;
+            return;
+        }
         if self.help || self.prompt.is_some() || self.confirm.is_some() {
             return;
         }
         let point = Position::new(event.column, event.row);
+        if let Some(divider) = &self.log_divider {
+            if event.kind == MouseEventKind::Down(MouseButton::Left)
+                && divider.border.contains(point)
+            {
+                self.log_drag = Some(divider.direction);
+                return;
+            }
+            if event.kind == MouseEventKind::Drag(MouseButton::Left)
+                && self.log_drag == Some(divider.direction)
+            {
+                match divider.direction {
+                    Direction::Horizontal => {
+                        self.log_width = Some(super::ui::log_size(
+                            divider.area.width,
+                            divider.area.right().saturating_sub(event.column),
+                            divider.direction,
+                        ));
+                    }
+                    Direction::Vertical => {
+                        self.log_height = Some(super::ui::log_size(
+                            divider.area.height,
+                            divider.area.bottom().saturating_sub(event.row),
+                            divider.direction,
+                        ));
+                    }
+                }
+                return;
+            }
+        }
+
         let delta = match event.kind {
             MouseEventKind::ScrollUp => -3,
             MouseEventKind::ScrollDown => 3,
@@ -1397,6 +1441,10 @@ pub fn run(ctx: &Ctx, interval: Duration) -> std::io::Result<()> {
         table: TableState::default(),
         mouse_table: None,
         mouse_text: None,
+        log_divider: None,
+        log_drag: None,
+        log_width: None,
+        log_height: None,
         preview: None,
         filter: String::new(),
         mine_only: false,

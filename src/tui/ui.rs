@@ -2,13 +2,13 @@
 //! and overlays (prompt, confirmation, help).
 
 use super::ansi;
-use super::app::{App, Jobs, Sub, TextView, Urgency};
+use super::app::{App, Jobs, LogDivider, Sub, TextView, Urgency};
 use crate::{
     paint,
     table::{COLUMNS, WIDE_COLUMNS, glyph},
 };
 use ratatui::Frame;
-use ratatui::layout::{Alignment, Constraint, Layout, Rect};
+use ratatui::layout::{Alignment, Constraint, Direction, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span, Text};
 use ratatui::widgets::{Block, BorderType, Cell, Clear, Paragraph, Row, Table, Wrap};
@@ -59,18 +59,38 @@ enum WorkerPane {
     Hidden,
 }
 
-fn workers_layout(area: Rect, has_selection: bool) -> (Rect, WorkerPane) {
+pub(super) fn log_size(total: u16, requested: u16, direction: Direction) -> u16 {
+    match direction {
+        Direction::Horizontal => requested.clamp(24, total - 36),
+        Direction::Vertical => requested.clamp(4, total - 5),
+    }
+}
+
+fn workers_layout(
+    area: Rect,
+    has_selection: bool,
+    log_width: Option<u16>,
+    log_height: Option<u16>,
+) -> (Rect, WorkerPane) {
     if !has_selection {
         return (area, WorkerPane::Hidden);
     }
     if area.width >= 116 && area.height >= 10 {
-        let sidebar_width = (area.width / 3).clamp(36, 56);
+        let sidebar_width = log_size(
+            area.width,
+            log_width.unwrap_or_else(|| (area.width / 3).clamp(36, 56)),
+            Direction::Horizontal,
+        );
         let [table, details] =
             Layout::horizontal([Constraint::Fill(1), Constraint::Length(sidebar_width)])
                 .areas(area);
         (table, WorkerPane::Sidebar(details))
     } else if area.height >= 14 {
-        let height = if area.width < 80 { 7 } else { 5 };
+        let height = log_size(
+            area.height,
+            log_height.unwrap_or(if area.width < 80 { 7 } else { 5 }),
+            Direction::Vertical,
+        );
         let [table, details] =
             Layout::vertical([Constraint::Fill(1), Constraint::Length(height)]).areas(area);
         (table, WorkerPane::Below(details))
@@ -119,6 +139,7 @@ impl App {
         self.draw_header(f, head);
         self.mouse_table = None;
         self.mouse_text = None;
+        self.log_divider = None;
         let mut stack = std::mem::take(&mut self.stack);
         match stack.last_mut() {
             None => self.draw_workers(f, body),
@@ -132,6 +153,13 @@ impl App {
             }
         }
         self.stack = stack;
+        if self.log_drag != self.log_divider.as_ref().map(|divider| divider.direction)
+            || self.help
+            || self.prompt.is_some()
+            || self.confirm.is_some()
+        {
+            self.log_drag = None;
+        }
         self.draw_footer(f, foot);
         if self.help {
             self.draw_help(f);
@@ -337,7 +365,12 @@ impl App {
         let now = crate::time::now() as f64;
         let selected = self.selected().map(|w| w.name.clone());
         let visible = self.visible();
-        let (table_area, details) = workers_layout(area, selected.is_some() && !visible.is_empty());
+        let (table_area, details) = workers_layout(
+            area,
+            selected.is_some() && !visible.is_empty(),
+            self.log_width,
+            self.log_height,
+        );
         let wide = table_area.width >= 150;
         let mask = [
             true,                   // name
@@ -488,18 +521,27 @@ impl App {
             height: table_area.height.saturating_sub(1),
             ..table_area
         });
-        if let WorkerPane::Sidebar(area) | WorkerPane::Below(area) = details {
-            self.mouse_text = Some(area);
-            if let Some((worker, preview)) = &mut self.preview
-                && Some(worker.as_str()) == selected.as_deref()
-            {
-                draw_text(f, area, preview, self.tick);
-            } else {
-                f.render_widget(
-                    Paragraph::new("Connecting to logs…").block(Block::bordered().title(" logs ")),
-                    area,
-                );
-            }
+        let (pane, border, direction) = match details {
+            WorkerPane::Sidebar(pane) => (pane, Rect { width: 1, ..pane }, Direction::Horizontal),
+            WorkerPane::Below(pane) => (pane, Rect { height: 1, ..pane }, Direction::Vertical),
+            WorkerPane::Hidden => return,
+        };
+        self.log_divider = Some(LogDivider {
+            area,
+            border,
+            direction,
+        });
+        let area = pane;
+        self.mouse_text = Some(area);
+        if let Some((worker, preview)) = &mut self.preview
+            && Some(worker.as_str()) == selected.as_deref()
+        {
+            draw_text(f, area, preview, self.tick);
+        } else {
+            f.render_widget(
+                Paragraph::new("Connecting to logs…").block(Block::bordered().title(" logs ")),
+                area,
+            );
         }
     }
 
@@ -534,6 +576,7 @@ impl App {
             row("/  m", "filter · only yours"),
             row("r", "refresh now"),
             row("click / wheel", "select rows or scroll logs"),
+            row("drag border", "resize the logs pane"),
         ];
         let right = vec![
             section("Jobs"),
@@ -754,25 +797,45 @@ mod tests {
     #[test]
     fn details_follow_terminal_geometry() {
         let area = Rect::new(0, 1, 120, 28);
-        let (table, WorkerPane::Sidebar(sidebar)) = workers_layout(area, true) else {
+        let (table, WorkerPane::Sidebar(sidebar)) = workers_layout(area, true, None, None) else {
             panic!("expected sidebar on wide terminal");
         };
         assert_eq!(sidebar.x, table.right());
         assert_eq!(sidebar.height, table.height);
 
         let area = Rect::new(0, 1, 72, 24);
-        let (table, WorkerPane::Below(details)) = workers_layout(area, true) else {
+        let (table, WorkerPane::Below(details)) = workers_layout(area, true, None, None) else {
             panic!("expected details under the table");
         };
         assert_eq!(details.y, table.bottom());
         assert_eq!(details.width, table.width);
 
         let area = Rect::new(0, 1, 72, 10);
-        assert!(matches!(workers_layout(area, true), (table, WorkerPane::Hidden) if table == area));
+        assert!(
+            matches!(workers_layout(area, true, None, None), (table, WorkerPane::Hidden) if table == area)
+        );
         let area = Rect::new(0, 1, 160, 28);
         assert!(
-            matches!(workers_layout(area, false), (table, WorkerPane::Hidden) if table == area)
+            matches!(workers_layout(area, false, None, None), (table, WorkerPane::Hidden) if table == area)
         );
+    }
+
+    #[test]
+    fn log_pane_sizes_clamp_without_crowding_out_workers() {
+        let area = Rect::new(0, 1, 120, 28);
+        let (table, WorkerPane::Sidebar(logs)) = workers_layout(area, true, Some(100), Some(4))
+        else {
+            panic!("expected sidebar");
+        };
+        assert_eq!((table.width, logs.width), (36, 84));
+
+        let area = Rect::new(0, 1, 72, 24);
+        let (table, WorkerPane::Below(logs)) = workers_layout(area, true, Some(100), Some(22))
+        else {
+            panic!("expected stacked logs");
+        };
+        assert_eq!((table.height, logs.height), (5, 19));
+        assert_eq!(log_size(24, 0, Direction::Vertical), 4);
     }
 
     #[test]
