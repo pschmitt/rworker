@@ -3,10 +3,10 @@ use std::io;
 use std::os::unix::fs::PermissionsExt;
 use std::path::PathBuf;
 
+use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
 use axum::extract::{Path, State};
 use axum::http::{HeaderMap, StatusCode, header};
-use axum::response::sse::{Event, KeepAlive};
-use axum::response::{IntoResponse, Response, Sse};
+use axum::response::{IntoResponse, Response};
 use axum::{Router, routing::get};
 use serde_json::{Value, json};
 use std::time::Duration;
@@ -28,7 +28,7 @@ pub(super) fn serve(dir: PathBuf, socket: &str) -> io::Result<()> {
             std::fs::set_permissions(socket, std::fs::Permissions::from_mode(0o660))?;
             let app = Router::new()
                 .route("/v1/workers", get(workers))
-                .route("/v1/workers/events/stream", get(events))
+                .route("/v1/workers/events/ws", get(events))
                 .route("/v1/workers/{name}", get(worker));
             #[cfg(feature = "web")]
             let app = super::web::routes(app);
@@ -36,54 +36,67 @@ pub(super) fn serve(dir: PathBuf, socket: &str) -> io::Result<()> {
         })
 }
 
-async fn events(State(dir): State<PathBuf>) -> Response {
-    inventory_events(dir, true).await
+async fn events(
+    State(dir): State<PathBuf>,
+    headers: HeaderMap,
+    upgrade: WebSocketUpgrade,
+) -> Response {
+    if headers.contains_key(header::ORIGIN) {
+        return StatusCode::FORBIDDEN.into_response();
+    }
+    upgrade_inventory(dir, true, upgrade)
 }
 
-pub(super) async fn inventory_events(dir: PathBuf, send_snapshot: bool) -> Response {
-    let stream = futures_util::stream::unfold(
-        inventory_cache::Events::new(dir),
-        move |mut source| async move {
-            loop {
-                let result = tokio::task::spawn_blocking(move || {
-                    let snapshot = source
-                        .next_snapshot()
-                        .map(|snapshot| snapshot.map(str::to_owned));
-                    (source, snapshot)
-                })
-                .await
-                .ok()?;
-                source = result.0;
-                match result.1 {
-                    Ok(Some(snapshot)) => {
-                        return Some((
-                            Ok::<_, std::convert::Infallible>(Event::default().data(
-                                if send_snapshot {
-                                    snapshot.as_str()
-                                } else {
-                                    "updated"
-                                },
-                            )),
-                            source,
-                        ));
-                    }
-                    Ok(None) => tokio::time::sleep(Duration::from_millis(250)).await,
-                    Err(_) => return None,
+pub(super) fn upgrade_inventory(
+    dir: PathBuf,
+    send_snapshot: bool,
+    upgrade: WebSocketUpgrade,
+) -> Response {
+    upgrade
+        .max_message_size(125)
+        .max_frame_size(125)
+        .on_upgrade(move |socket| stream_inventory(dir, send_snapshot, socket))
+}
+
+async fn stream_inventory(dir: PathBuf, send_snapshot: bool, mut socket: WebSocket) {
+    let mut source = inventory_cache::Events::new(dir);
+    let mut ticks = tokio::time::interval(Duration::from_millis(250));
+    let mut heartbeats = tokio::time::interval(Duration::from_secs(5));
+    loop {
+        let text = tokio::select! {
+            _ = ticks.tick() => {
+                let Ok((next, result)) = tokio::task::spawn_blocking(move || {
+                    let update = source.next_snapshot().map(|snapshot| snapshot.map(|body| {
+                        if send_snapshot { format!("{body}\n") } else { "updated".to_owned() }
+                    }));
+                    (source, update)
+                }).await else { return };
+                source = next;
+                match result {
+                    Ok(Some(text)) => text,
+                    Ok(None) => continue,
+                    Err(_) => return,
                 }
             }
-        },
-    );
-    let mut response = Sse::new(stream)
-        .keep_alive(KeepAlive::new().interval(Duration::from_secs(5)))
-        .into_response();
-    response
-        .headers_mut()
-        .insert("x-accel-buffering", header::HeaderValue::from_static("no"));
-    response.headers_mut().insert(
-        header::CACHE_CONTROL,
-        header::HeaderValue::from_static("no-store"),
-    );
-    response
+            _ = heartbeats.tick() => "\n".into(),
+            message = socket.recv() => {
+                match message {
+                    Some(Ok(Message::Ping(_) | Message::Pong(_))) => continue,
+                    _ => return,
+                }
+            }
+        };
+        if !matches!(
+            tokio::time::timeout(
+                Duration::from_secs(3),
+                socket.send(Message::Text(text.into()))
+            )
+            .await,
+            Ok(Ok(()))
+        ) {
+            return;
+        }
+    }
 }
 
 async fn workers(State(dir): State<PathBuf>, headers: HeaderMap) -> Response {

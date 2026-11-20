@@ -2,7 +2,7 @@
 
 use axum::Router;
 use axum::body::Bytes;
-use axum::extract::{DefaultBodyLimit, Path, State};
+use axum::extract::{DefaultBodyLimit, Path, State, ws::WebSocketUpgrade};
 use axum::http::{HeaderMap, StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
@@ -70,8 +70,24 @@ pub(super) fn routes(router: Router<PathBuf>) -> Router<PathBuf> {
         )
 }
 
-async fn updates(State(dir): State<PathBuf>) -> Response {
-    super::inventory_api::inventory_events(dir, false).await
+async fn updates(
+    State(dir): State<PathBuf>,
+    headers: HeaderMap,
+    upgrade: WebSocketUpgrade,
+) -> Response {
+    if !same_origin(&headers) {
+        return failure((StatusCode::FORBIDDEN, "Invalid WebSocket origin."));
+    }
+    super::inventory_api::upgrade_inventory(dir, false, upgrade)
+}
+
+fn same_origin(headers: &HeaderMap) -> bool {
+    let origin = std::env::var("RWORKER_WEB_ORIGIN").ok();
+    headers
+        .get(header::ORIGIN)
+        .and_then(|value| value.to_str().ok())
+        .zip(origin.as_deref())
+        .is_some_and(|(provided, configured)| provided == configured)
 }
 
 fn asset(content_type: &'static str, body: &'static str) -> Response {
@@ -482,13 +498,7 @@ impl Action {
 async fn action(headers: HeaderMap, body: Bytes) -> Response {
     let result = async {
         authorized(&headers)?;
-        let origin = std::env::var("RWORKER_WEB_ORIGIN").ok();
-        if !headers
-            .get(header::ORIGIN)
-            .and_then(|header| header.to_str().ok())
-            .zip(origin.as_deref())
-            .is_some_and(|(provided, configured)| provided == configured)
-        {
+        if !same_origin(&headers) {
             return Err((
                 StatusCode::FORBIDDEN,
                 "Open the console on its configured hostname.",

@@ -145,7 +145,7 @@ pub fn cmd_ls(ctx: &Ctx, args: &[String]) -> R {
 /// changed since the previous refresh: + new, ~ changed, - gone (shown
 /// once more).
 fn watch_ls(ctx: &Ctx, interval: &str, topic: &str, agent: &str, history: bool) -> R {
-    let secs: f64 = interval.parse().unwrap_or(5.0);
+    let secs: u64 = interval.parse::<u64>().unwrap_or(5).min(u32::MAX.into());
     let (green, yellow, red, dim, reset) = if ctx.color {
         ("\x1b[32m", "\x1b[33m", "\x1b[31m", "\x1b[2m", "\x1b[0m")
     } else {
@@ -158,77 +158,130 @@ fn watch_ls(ctx: &Ctx, interval: &str, topic: &str, agent: &str, history: bool) 
     let mut first = true;
     let mut json = String::new();
     let mut error = String::new();
+    use std::time::{Duration, Instant};
+    let endpoint = crate::inventory_feed::endpoint();
+    let mut feed = crate::inventory_feed::Feed::open(ctx, endpoint.as_deref());
+    let interval_duration = Duration::from_secs(secs);
+    let initial = Instant::now() + Duration::from_millis(400);
+    let mut next_poll = initial;
+    let mut next_draw = initial;
+    let mut next_connect = initial;
+    let mut last_message = Instant::now();
+    let mut live = false;
+    let mut manual = false;
     loop {
         if crate::signals::pending().is_some() {
             return screen.leave();
         }
-        match refresh(ctx, topic, agent, history) {
-            Ok(out) => {
-                json = out;
-                error.clear();
-            }
-            Err(msg) => error = msg,
-        }
-        let list: Value =
-            serde_json::from_str(if json.is_empty() { "[]" } else { &json }).unwrap_or(Value::Null);
-        let cur_sig: HashMap<String, String> = table::signatures(&list).into_iter().collect();
-        let plain = ctx.muted(|| table::plain(ctx, &list)).unwrap_or_default();
-        let plain_lines: Vec<&str> = if plain.is_empty() {
-            Vec::new()
-        } else {
-            plain.split('\n').collect()
-        };
-        let colored;
-        let shown: Vec<&str> = if ctx.color && !plain.is_empty() {
-            colored = table::colorize(&plain);
-            colored.split('\n').collect()
-        } else {
-            plain_lines.clone()
-        };
-        let command = if std::io::stdout().is_terminal() {
-            "machines"
-        } else {
-            "ls"
-        };
-        let mut frame = format!(
-            "Every {interval}s: rworker {command}    {}    {} workers    (q quits, any key refreshes)\n",
-            crate::time::now_hms(),
-            cur_sig.len()
-        );
-        if !error.is_empty() {
-            frame += &format!("{red}update failed, showing the last state: {error}{reset}\n");
-        }
-        frame.push('\n');
-        let mut cur_row: BTreeMap<String, String> = BTreeMap::new();
-        for (i, line) in plain_lines.iter().enumerate() {
-            let name = line.split(' ').next().unwrap_or("").to_string();
-            let mut marker = "  ".to_string();
-            if i > 0 {
-                cur_row.insert(name.clone(), line.to_string());
-                if !first && !prev_sig.contains_key(&name) {
-                    marker = format!("{green}+{reset} ");
-                } else if !first && prev_sig.get(&name) != cur_sig.get(&name) {
-                    marker = format!("{yellow}~{reset} ");
+        let now = Instant::now();
+        let mut changed = false;
+        if let Some(stream) = &feed {
+            match stream.receive(Duration::ZERO) {
+                Ok(line) => {
+                    last_message = now;
+                    if line != b"\n"
+                        && let Ok(raw) = std::str::from_utf8(&line)
+                        && let Ok(out) = format_inventory(ctx, raw.trim(), topic, agent, history)
+                    {
+                        live = true;
+                        changed = json != out || !error.is_empty();
+                        json = out;
+                        error.clear();
+                    }
+                }
+                Err(std::sync::mpsc::RecvTimeoutError::Timeout)
+                    if last_message.elapsed() < Duration::from_secs(8) => {}
+                Err(_) => {
+                    feed = None;
+                    live = false;
+                    next_poll = now;
+                    next_connect = now + interval_duration;
                 }
             }
-            frame += &format!("{marker}{}\n", shown.get(i).copied().unwrap_or(""));
+        } else if now >= next_connect {
+            feed = crate::inventory_feed::Feed::open(ctx, endpoint.as_deref());
+            last_message = now;
+            next_connect = now + interval_duration;
         }
-        for (name, row) in &prev_row {
-            if !cur_sig.contains_key(name) {
-                frame += &format!("{red}-{reset} {dim}{row}{reset}\n");
+        if manual || (!live && now >= next_poll) {
+            match refresh(ctx, topic, agent, history) {
+                Ok(out) => {
+                    json = out;
+                    error.clear();
+                }
+                Err(message) => error = message,
             }
+            changed = true;
+            next_poll = Instant::now() + interval_duration;
         }
-        if plain_lines.is_empty() {
-            frame += "No workers found.\n";
+        if changed || now >= next_draw {
+            next_draw = Instant::now() + interval_duration;
+            let list: Value = serde_json::from_str(if json.is_empty() { "[]" } else { &json })
+                .unwrap_or(Value::Null);
+            let cur_sig: HashMap<String, String> = table::signatures(&list).into_iter().collect();
+            let plain = ctx.muted(|| table::plain(ctx, &list)).unwrap_or_default();
+            let plain_lines: Vec<&str> = if plain.is_empty() {
+                Vec::new()
+            } else {
+                plain.split('\n').collect()
+            };
+            let colored;
+            let shown: Vec<&str> = if ctx.color && !plain.is_empty() {
+                colored = table::colorize(&plain);
+                colored.split('\n').collect()
+            } else {
+                plain_lines.clone()
+            };
+            let command = if std::io::stdout().is_terminal() {
+                "machines"
+            } else {
+                "ls"
+            };
+            let mut frame = format!(
+                "{}: rworker {command}    {}    {} workers    (q quits, any key refreshes)\n",
+                if live {
+                    "Live".into()
+                } else {
+                    format!("Every {interval}s")
+                },
+                crate::time::now_hms(),
+                cur_sig.len()
+            );
+            if !error.is_empty() {
+                frame += &format!("{red}update failed, showing the last state: {error}{reset}\n");
+            }
+            frame.push('\n');
+            let mut cur_row: BTreeMap<String, String> = BTreeMap::new();
+            for (i, line) in plain_lines.iter().enumerate() {
+                let name = line.split(' ').next().unwrap_or("").to_string();
+                let mut marker = "  ".to_string();
+                if i > 0 {
+                    cur_row.insert(name.clone(), line.to_string());
+                    if !first && !prev_sig.contains_key(&name) {
+                        marker = format!("{green}+{reset} ");
+                    } else if !first && prev_sig.get(&name) != cur_sig.get(&name) {
+                        marker = format!("{yellow}~{reset} ");
+                    }
+                }
+                frame += &format!("{marker}{}\n", shown.get(i).copied().unwrap_or(""));
+            }
+            for (name, row) in &prev_row {
+                if !cur_sig.contains_key(name) {
+                    frame += &format!("{red}-{reset} {dim}{row}{reset}\n");
+                }
+            }
+            if plain_lines.is_empty() {
+                frame += "No workers found.\n";
+            }
+            screen.draw(&frame);
+            prev_sig = cur_sig;
+            prev_row = cur_row;
+            first = false;
         }
-        screen.draw(&frame);
-        prev_sig = cur_sig;
-        prev_row = cur_row;
-        first = false;
-
-        if !watch::wait(secs) {
+        let Some(refresh) = watch::wait_refresh(0.15) else {
             return screen.leave();
-        }
+        };
+        manual = refresh;
     }
 }
 
@@ -253,18 +306,22 @@ fn refresh(ctx: &Ctx, topic: &str, agent: &str, history: bool) -> Result<String,
         let combined = if stderr.is_empty() { stdout } else { stderr };
         return Err(last(&combined));
     }
-    // remote_ls keeps the cache for the completions.
-    if std::fs::create_dir_all(&ctx.state_dir).is_ok() {
-        let tmp = ctx.state_dir.join(".ls.json.tmp");
-        if std::fs::write(&tmp, format!("{stdout}\n")).is_ok() {
-            let _ = std::fs::rename(&tmp, ctx.ls_cache());
-        }
-    }
+    format_inventory(ctx, &stdout, topic, agent, history)
+}
+
+fn format_inventory(
+    ctx: &Ctx,
+    raw: &str,
+    topic: &str,
+    agent: &str,
+    history: bool,
+) -> Result<String, String> {
+    state::cache_inventory(ctx, &ctx.ls_cache(), raw);
     ctx.muted(|| {
         let inventory = if history {
-            super::history::with_retired(ctx, &stdout)?
+            super::history::with_retired(ctx, raw)?
         } else {
-            stdout
+            raw.to_owned()
         };
         filter_workers(ctx, &inventory, topic, agent)
     })

@@ -212,81 +212,15 @@ fn parse_inventory(bytes: &[u8]) -> Result<Vec<Value>, String> {
     }
 }
 
-struct InventoryFeed(Child);
-
-impl Drop for InventoryFeed {
-    fn drop(&mut self) {
-        let _ = self.0.kill();
-        let _ = self.0.wait();
-    }
-}
-
 fn stream_inventory(
     ctx: &crate::ctx::Ctx,
     tx: &Sender<Msg>,
     trigger: &Receiver<()>,
-    https: Option<&str>,
+    endpoint: Option<&str>,
 ) -> bool {
-    let mut command = if let Some(url) = https {
-        let mut cmd = Command::new("curl");
-        cmd.args([
-            "--disable",
-            "--silent",
-            "--fail",
-            "--no-buffer",
-            "--connect-timeout",
-            "3",
-            "--proto",
-            "=https",
-        ]);
-        if let Some(config) = std::env::var_os("RWORKER_API_CURL_CONFIG") {
-            cmd.arg("--config").arg(config);
-        }
-        cmd.arg("--url").arg(format!(
-            "{}/v1/workers/events/stream",
-            url.trim_end_matches('/')
-        ));
-        cmd
-    } else {
-        crate::state::control_cmd(ctx, &["inventory-events"])
-    };
-    command
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::null());
-    // SAFETY: prctl is async-signal-safe and ties the client process to this TUI.
-    unsafe {
-        command.pre_exec(|| {
-            libc::prctl(libc::PR_SET_PDEATHSIG, libc::SIGTERM);
-            Ok(())
-        });
-    }
-    let Ok(child) = command.spawn() else {
+    let Some(feed) = crate::inventory_feed::Feed::open(ctx, endpoint) else {
         return true;
     };
-    let mut feed = InventoryFeed(child);
-    let Some(output) = feed.0.stdout.take() else {
-        return true;
-    };
-    let (send, receive) = std::sync::mpsc::sync_channel(4);
-    thread::spawn(move || {
-        let mut output = BufReader::new(output);
-        let mut line = Vec::new();
-        loop {
-            line.clear();
-            let read = (&mut output)
-                .take(16 * 1024 * 1024)
-                .read_until(b'\n', &mut line);
-            if !matches!(read, Ok(n) if n > 0 && line.ends_with(b"\n")) {
-                return;
-            }
-            if (line.starts_with(b"data:") || line.starts_with(b":"))
-                && send.send(std::mem::take(&mut line)).is_err()
-            {
-                return;
-            }
-        }
-    });
     let mut last = Instant::now();
     let mut live = false;
     loop {
@@ -300,13 +234,11 @@ fn stream_inventory(
             Err(std::sync::mpsc::TryRecvError::Disconnected) => return false,
             Err(std::sync::mpsc::TryRecvError::Empty) => {}
         }
-        match receive.recv_timeout(Duration::from_millis(200)) {
+        match feed.receive(Duration::from_millis(200)) {
             Ok(line) => {
                 last = Instant::now();
-                if let Some(bytes) = line.strip_prefix(b"data:")
-                    && let Ok(workers) = parse_inventory(bytes)
-                {
-                    if let Ok(raw) = std::str::from_utf8(bytes) {
+                if let Ok(workers) = parse_inventory(&line) {
+                    if let Ok(raw) = std::str::from_utf8(&line) {
                         crate::state::cache_inventory(ctx, &ctx.ls_cache(), raw.trim());
                     }
                     if !live {
@@ -335,9 +267,7 @@ fn stream_inventory(
 pub fn refresher(tx: Sender<Msg>, interval: Duration, trigger: Receiver<()>) {
     thread::spawn(move || {
         let ctx = crate::ctx::Ctx::from_env();
-        let api = std::env::var("RWORKER_API_URL")
-            .ok()
-            .filter(|url| url.starts_with("https://"));
+        let api = crate::inventory_feed::endpoint();
         loop {
             if let Some(url) = &api
                 && !stream_inventory(&ctx, &tx, &trigger, Some(url))

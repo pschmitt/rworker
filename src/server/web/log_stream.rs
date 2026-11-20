@@ -1,4 +1,4 @@
-use super::{Failure, authorized, failure, worker_command};
+use super::{Failure, authorized, failure, same_origin, worker_command};
 use axum::Router;
 use axum::body::Bytes;
 use axum::extract::Path;
@@ -45,13 +45,7 @@ fn follow(
     worker: &str,
     job: Option<&str>,
 ) -> Response {
-    let origin = std::env::var("RWORKER_WEB_ORIGIN").ok();
-    if !headers
-        .get(header::ORIGIN)
-        .and_then(|value| value.to_str().ok())
-        .zip(origin.as_deref())
-        .is_some_and(|(provided, configured)| provided == configured)
-    {
+    if !same_origin(headers) {
         return failure((StatusCode::FORBIDDEN, "Invalid WebSocket origin."));
     }
     let check = authorized(headers);

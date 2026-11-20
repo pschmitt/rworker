@@ -34,6 +34,25 @@ def verify_log_stream(address, origin):
             assert received == b"fixture log first\nfixture log second\n"
 
 
+def verify_inventory_stream(binary, address, env, workers):
+    env = dict(env, PATH=os.environ["PATH"], RWORKER_INVENTORY_HTTP_SOCKET=str(address))
+    try:
+        response = subprocess.run([str(binary), "__inventory-websocket"], env=env,
+                                  capture_output=True, timeout=2)
+        output = response.stdout
+    except subprocess.TimeoutExpired as error:
+        output = error.stdout or b""
+    frames = [json.loads(line) for line in output.splitlines() if line]
+    assert frames == [workers], frames
+    env.update(RWORKER_CONTROL_SOCKET=str(address.parent / "absent-control.sock"), TERM="xterm")
+    try:
+        subprocess.run([str(binary), "ls", "-w"], stdin=subprocess.DEVNULL, env=env,
+                       capture_output=True, timeout=1.5, check=True)
+        raise AssertionError("watch exited before the timeout")
+    except subprocess.TimeoutExpired as error:
+        assert b"Live: rworker ls" in (error.stdout or b"")
+
+
 def verify(binary, root, web_enabled):
     credentials = root / "credentials.json"
     credentials.write_text(json.dumps({"fake": {"data": dict.fromkeys(
@@ -126,6 +145,7 @@ def verify(binary, root, web_enabled):
                 conditional = request("/v1/workers", "-H", f"If-None-Match: {tag}")[0]
                 assert conditional.startswith("HTTP/1.1 304"), conditional
                 assert json.loads(request("/v1/workers/example-worker")[1]) == workers[0]
+                verify_inventory_stream(binary, socket, env, workers)
                 assert request("/v1/workers/other")[0].startswith("HTTP/1.1 404")
                 if web_enabled:
                     headers, body = request("/")

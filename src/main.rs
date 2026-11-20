@@ -8,6 +8,7 @@ mod creator;
 mod ctx;
 mod event_history;
 mod help;
+mod inventory_feed;
 mod jq;
 mod paint;
 mod proc;
@@ -417,6 +418,7 @@ fn run(ctx: &Ctx, argv: &[String]) -> R {
             return cmd::jobs::jobs_names(ctx, &second);
         }
         // Internal: the background refresh of the completions' cache.
+        "__inventory-websocket" => return inventory_feed::serve(ctx),
         "__ls-refresh" => return state::remote_ls(ctx).map(|_| ()),
         // Internal: one follower of `logs -f`.
         "__worker-history" => return cmd::history::client(ctx),
@@ -484,7 +486,6 @@ fn main() {
                     | "topic"
                     | "claim"
                     | "niks3-token"
-                    | "inventory-events"
                     | "lifecycle-events"
             ),
             [] => false,

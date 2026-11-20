@@ -587,6 +587,22 @@ async function form(action, worker, profile) {
   $("dialog").showModal();
 }
 
+function followInventory() {
+  if (!state.authenticated || stream) return;
+  const url = new URL("/v1/ui/updates", location.href);
+  url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
+  const socket = new WebSocket(url);
+  stream = socket;
+  socket.onmessage = ({data}) => {
+    if (data === "updated" && state.view === "workers") refresh();
+  };
+  socket.onclose = () => {
+    if (stream !== socket) return;
+    stream = undefined;
+    setTimeout(followInventory, 5000);
+  };
+}
+
 async function openConsole(token = "", automatic = false) {
   state.token = token;
   try {
@@ -604,9 +620,7 @@ async function openConsole(token = "", automatic = false) {
     }
     notice("");
     navigate();
-    stream?.close();
-    stream = new EventSource("/v1/ui/updates");
-    stream.onmessage = () => { if (state.view === "workers") refresh(); };
+    followInventory();
   } catch (error) {
     lock();
     if (!automatic || error.message !== "Enter the console access token.") notice(error.message, true);

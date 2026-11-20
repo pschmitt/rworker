@@ -66,10 +66,11 @@ let
   };
   # Extras first: a wrapped ssh has to win over openssh's. nix, tput and
   # the host's own tools come from the user's PATH.
+  websocketCurl = curl.override { websocketSupport = true; };
   runtimePath = lib.makeBinPath (
     extraRuntimeInputs
     ++ [
-      curl
+      websocketCurl
       openssh
       rsync
     ]
@@ -125,7 +126,7 @@ runCommand "rworker-${version}"
     inherit version meta;
     nativeBuildInputs = [ makeWrapper ];
     passthru = {
-      inherit mcp unwrapped;
+      inherit mcp unwrapped websocketCurl;
       # CI (ci-workflows nix-build) also pushes the crane dependency build
       # and vendored sources it finds on the package.
       inherit (unwrapped) cargoArtifacts cargoVendorDir;

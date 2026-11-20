@@ -74,9 +74,9 @@ Responses include an `ETag` for conditional reads and
 `X-Rworker-Inventory-Age-Ms` for freshness. A missing worker returns 404.
 A missing or invalidated snapshot returns 503 until the next successful refresh.
 
-`GET /v1/workers/events/stream` sends the current worker array as a Server-Sent
-Event followed by changed arrays. It uses the same authentication and snapshot
-as the read API and keeps the connection alive between changes.
+`/v1/workers/events/ws` upgrades to a WebSocket and sends the current worker
+array followed by changed arrays. It uses the same authentication and inventory
+snapshot as the read API.
 
 ```sh
 curl --unix-socket /run/rworker-inventory-api/http.sock http://localhost/v1/workers
@@ -105,7 +105,8 @@ strip any incoming `Remote-User` header and replace it with the identity from it
 own authentication check. Only the proxy and trusted local accounts should have
 access to the Unix socket. Optionally set `web.signOutUrl` to the sign-out page
 of the identity provider. If you configure your own reverse proxy, enable
-WebSocket upgrades on `/v1/ui/follow/` for live logs.
+WebSocket upgrades on `/v1/ui/follow/` and `/v1/ui/updates` for live logs and
+inventory notifications.
 Set `web.identityFile` and `web.publicKeyFile` to the matching SSH key pair when
 the operator needs a dedicated identity.
 

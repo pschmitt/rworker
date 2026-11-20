@@ -98,12 +98,11 @@ starts at activation and can miss transitions between observations.
 
 ## Terminal UI
 
-The TUI subscribes to inventory changes from the control host over the
-authenticated control connection and falls back to polling if the stream
-is unavailable. It can use the HTTPS event endpoint instead when
-`RWORKER_API_URL` is set to the control host's HTTPS origin. Supply client
-certificate options through a runtime curl config at
-`RWORKER_API_CURL_CONFIG` when required.
+The TUI and `rworker ls -w` follow worker inventory over a WebSocket on the
+controller and fall back to polling if the connection drops. By default they
+use the configured SSH control connection to reach the socket. To use mutual
+TLS directly, set `RWORKER_API_URL` to the control host’s HTTPS origin and
+supply curl client certificate options through `RWORKER_API_CURL_CONFIG`.
 
 Run `rworker` in a terminal, or type `rworker tui` explicitly. The TUI is an interactive front end over the same actions, in the
 spirit of k9s. The worker list refreshes in the background (`-n SECONDS`,

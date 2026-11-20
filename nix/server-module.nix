@@ -578,9 +578,17 @@ in
           '';
           locations = {
             "/v1/workers".proxyPass = "http://unix:${apiSocket}:";
+            "= /v1/workers/events/ws" = {
+              proxyPass = "http://unix:${apiSocket}:";
+              proxyWebsockets = true;
+            };
           }
           // lib.optionalAttrs (cfg.web.enable && cfg.web.origin == null) {
             "/".proxyPass = "http://unix:${apiSocket}:";
+            "= /v1/ui/updates" = {
+              proxyPass = "http://unix:${apiSocket}:";
+              proxyWebsockets = true;
+            };
             "/v1/ui/follow/" = {
               proxyPass = "http://unix:${apiSocket}:";
               proxyWebsockets = true;

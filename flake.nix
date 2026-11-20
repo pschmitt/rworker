@@ -51,7 +51,7 @@
               pkgs.runCommand "rworker-inventory-cache-test"
                 {
                   nativeBuildInputs = [
-                    pkgs.curl
+                    rworker.websocketCurl
                     pkgs.python3
                   ];
                 }
@@ -133,7 +133,7 @@
               nixfmt
               statix
               deadnix
-              curl
+              rworker.websocketCurl
               python3
             ];
           };

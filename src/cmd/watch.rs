@@ -159,13 +159,18 @@ fn clip(line: &str, width: usize) -> String {
 }
 
 pub(super) fn wait(secs: f64) -> bool {
+    wait_refresh(secs).is_some()
+}
+
+pub(super) fn wait_refresh(secs: f64) -> Option<bool> {
     let key = if std::io::stdin().is_terminal() {
         KeyWait::new().key(secs)
     } else {
         crate::signals::sleep(secs);
         None
     };
-    !matches!(key, Some(b'q' | b'Q')) && crate::signals::pending().is_none()
+    (!matches!(key, Some(b'q' | b'Q')) && crate::signals::pending().is_none())
+        .then_some(key.is_some())
 }
 
 pub(super) fn interval(value: &str) -> Option<u64> {
