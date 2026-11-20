@@ -2,7 +2,7 @@
 //! the command, copy results back and delete the worker, also on errors
 //! and Ctrl-C.
 
-use crate::ctx::{Ctx, Fail, R, outln};
+use crate::ctx::{Ctx, Fail, R};
 use crate::jq;
 use crate::paint::{self, paint};
 use crate::proc;
@@ -214,10 +214,13 @@ pub fn cmd_exec(ctx: &Ctx, args: &[String]) -> R {
         ));
     }
     if json {
-        outln(&jq::pretty(&json!({
-            "name": name, "exit_code": rc, "stdout": stdout, "stderr": stderr,
-            "kept": cleanup.keep,
-        })));
+        crate::ctx::json_out(
+            ctx,
+            &jq::pretty(&json!({
+                "name": name, "exit_code": rc, "stdout": stdout, "stderr": stderr,
+                "kept": cleanup.keep,
+            })),
+        );
     }
     drop(cleanup);
     crate::ctx::status(rc)

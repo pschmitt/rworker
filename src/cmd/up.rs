@@ -311,7 +311,7 @@ pub fn up(ctx: &Ctx, args: &[String], capture: bool) -> R<Option<String>> {
         return Ok(Some(info_text));
     }
     if ctx.json.get() {
-        outln(&info_text);
+        crate::ctx::json_out(ctx, &info_text);
         return Ok(None);
     }
     let me = &ctx.me;

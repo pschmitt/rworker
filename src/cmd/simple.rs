@@ -30,7 +30,7 @@ pub fn cmd_down(ctx: &Ctx, args: &[String]) -> R {
     }
     state::forget(ctx, name);
     if ctx.json.get() {
-        outln(&jq::compact(&json!({"name": name, "deleted": true})));
+        crate::ctx::json_out(ctx, &jq::compact(&json!({"name": name, "deleted": true})));
     } else {
         paint::ok(ctx, &format!("deleted {}", paint::vm(ctx, name)));
     }
@@ -43,7 +43,7 @@ pub fn cmd_extend(ctx: &Ctx, args: &[String]) -> R {
     remote.extend(["--owner".to_string(), ctx.owner()]);
     let out = state::remote(ctx, &remote)?;
     if ctx.json.get() {
-        outln(&out);
+        crate::ctx::json_out(ctx, &out);
         return Ok(());
     }
     let v = parsed(&out);
@@ -89,7 +89,7 @@ pub fn cmd_topic(ctx: &Ctx, args: &[String]) -> R {
     remote.extend(["--owner".to_string(), ctx.owner()]);
     let out = state::remote(ctx, &remote)?;
     if ctx.json.get() {
-        outln(&out);
+        crate::ctx::json_out(ctx, &out);
         return Ok(());
     }
     let topic = jq::or(get(&parsed(&out), "topic"), "-");
@@ -160,7 +160,7 @@ pub fn cmd_claim(ctx: &Ctx, args: &[String]) -> R {
     remote.extend(["--owner".to_string(), ctx.owner()]);
     let out = state::remote(ctx, &remote)?;
     if ctx.json.get() {
-        outln(&out);
+        crate::ctx::json_out(ctx, &out);
         return Ok(());
     }
     let v = parsed(&out);
@@ -187,7 +187,7 @@ pub fn cmd_niks3_token(ctx: &Ctx, args: &[String]) -> R {
     remote.extend(["--owner".to_string(), ctx.owner()]);
     let out = state::remote(ctx, &remote)?;
     if ctx.json.get() {
-        outln(&out);
+        crate::ctx::json_out(ctx, &out);
         return Ok(());
     }
     let v = parsed(&out);
@@ -227,7 +227,7 @@ pub fn cmd_profiles(ctx: &Ctx, args: &[String]) -> R {
         jq::cmp(&key(a), &key(b))
     });
     if ctx.json.get() {
-        outln(&jq::pretty(&Value::Array(list)));
+        crate::ctx::json_out(ctx, &jq::pretty(&Value::Array(list)));
         return Ok(());
     }
     let mut rows = vec!["PROFILE\tFLAVOR\tDISK (GiB)\tIMAGE TAGS".to_string()];
@@ -284,7 +284,7 @@ pub fn cmd_builder(ctx: &Ctx, args: &[String]) -> R {
         "ssh-ng://agent@{ip} x86_64-linux {identity} 16 1 nixos-test,benchmark,big-parallel,kvm - {key}"
     );
     if ctx.json.get() {
-        outln(&jq::compact(&json!({"name": name, "builder": line})));
+        crate::ctx::json_out(ctx, &jq::compact(&json!({"name": name, "builder": line})));
     } else {
         outln(&line);
     }

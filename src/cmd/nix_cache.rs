@@ -278,7 +278,7 @@ pub fn cmd_nix_cache(ctx: &Ctx, args: &[String]) -> R {
     }
     let out = push(ctx, &name, dry).map_err(|_| Fail(1))?;
     if ctx.json.get() {
-        outln(&out);
+        crate::ctx::json_out(ctx, &out);
         return Ok(());
     }
     let v: Value = serde_json::from_str(&out).unwrap_or(Value::Null);

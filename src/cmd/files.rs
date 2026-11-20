@@ -1,6 +1,6 @@
 //! ssh, sync and cp: talking to a worker with its pinned host key.
 
-use crate::ctx::{Ctx, Fail, R, outln};
+use crate::ctx::{Ctx, Fail, R};
 use crate::jq;
 use crate::paint;
 use crate::proc;
@@ -121,9 +121,10 @@ pub fn cmd_sync(ctx: &Ctx, args: &[String]) -> R {
         return Err(Fail(1));
     }
     if ctx.json.get() {
-        outln(&jq::compact(
-            &json!({"name": t.name, "src": src, "dest": dest, "user": user}),
-        ));
+        crate::ctx::json_out(
+            ctx,
+            &jq::compact(&json!({"name": t.name, "src": src, "dest": dest, "user": user})),
+        );
     } else {
         paint::ok(
             ctx,
@@ -197,9 +198,10 @@ pub fn cmd_cp(ctx: &Ctx, args: &[String]) -> R {
     }
     if ctx.json.get() {
         let direction = if down { "down" } else { "up" };
-        outln(&jq::compact(
-            &json!({"name": t.name, "src": src, "dest": dst, "direction": direction}),
-        ));
+        crate::ctx::json_out(
+            ctx,
+            &jq::compact(&json!({"name": t.name, "src": src, "dest": dst, "direction": direction})),
+        );
     } else {
         paint::ok(ctx, &format!("copied {src} to {dst}"));
     }

@@ -89,7 +89,7 @@ pub fn cmd_inspect(ctx: &Ctx, args: &[String]) -> R {
         info
     };
     if ctx.json.get() {
-        outln(&jq::pretty(&info));
+        crate::ctx::json_out(ctx, &jq::pretty(&info));
         return Ok(());
     }
     let f = |k: &str| jq::raw(get(&info, k));
@@ -235,7 +235,7 @@ pub fn cmd_prune(ctx: &Ctx, args: &[String]) -> R {
     let entry = |n: &str, o: &str, d: bool| json!({"name": n, "owner": o, "deleted": d});
     if json && dry {
         let v: Vec<Value> = targets.iter().map(|(n, o)| entry(n, o, false)).collect();
-        outln(&jq::compact(&Value::Array(v)));
+        crate::ctx::json_out(ctx, &jq::compact(&Value::Array(v)));
         return Ok(());
     }
     if !json {
@@ -282,7 +282,7 @@ pub fn cmd_prune(ctx: &Ctx, args: &[String]) -> R {
         }
     }
     if json {
-        outln(&jq::compact(&Value::Array(results)));
+        crate::ctx::json_out(ctx, &jq::compact(&Value::Array(results)));
     }
     if failed { Err(Fail(1)) } else { Ok(()) }
 }
