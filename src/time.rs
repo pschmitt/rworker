@@ -8,7 +8,10 @@ pub fn now() -> i64 {
 
 fn local(epoch: i64, fmt: &str) -> String {
     match Timestamp::from_second(epoch) {
-        Ok(ts) => ts.to_zoned(TimeZone::system()).strftime(fmt).to_string(),
+        Ok(ts) => ts
+            .to_zoned_datetime(TimeZone::system())
+            .strftime(fmt)
+            .to_string(),
         Err(_) => String::new(),
     }
 }
@@ -67,7 +70,7 @@ pub fn created_epoch(created_at: &str) -> Option<i64> {
         0,
     )
     .ok()?;
-    dt.to_zoned(TimeZone::UTC)
+    dt.to_zoned_datetime(TimeZone::UTC)
         .ok()
         .map(|z| z.timestamp().as_second())
 }
