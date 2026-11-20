@@ -131,6 +131,8 @@ pub(super) fn create(
             Value::String(setting(&key, "key")?.into()),
         );
         let mut metadata = request.metadata;
+        metadata.insert("image_name".into(), Value::String(image_name.clone()));
+        metadata.insert("image_id".into(), Value::String(image_id.clone()));
         metadata.insert("setup_key_id".into(), Value::String(key_id.into()));
         if let Some(client) = &mut tailscale {
             match client.create_key(request.name) {

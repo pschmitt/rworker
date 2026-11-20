@@ -153,6 +153,11 @@ fn info(
     for key in CREATOR_KEYS {
         worker[key] = meta.get(key).cloned().unwrap_or_default();
     }
+    for key in ["image_name", "image_id"] {
+        if let Some(value) = meta.get(key) {
+            worker[key] = value.clone();
+        }
+    }
     meta.remove("setup_key_id");
     meta.remove("ts_key_id");
     worker["metadata"] = Value::Object(meta);

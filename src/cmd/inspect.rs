@@ -113,6 +113,15 @@ pub fn cmd_inspect(ctx: &Ctx, args: &[String]) -> R {
     label(ctx, "  Topic", &or("topic", "-"));
     label(ctx, "  Cwd", &or("cwd", "-"));
     label(ctx, "Flavor", &or("flavor", "-"));
+    for (key, title) in [("image_name", "Image"), ("image_id", "Image ID")] {
+        if let Some(value) = info[key]
+            .as_str()
+            .or_else(|| info["metadata"][key].as_str())
+            .filter(|value| !value.is_empty())
+        {
+            label(ctx, title, value);
+        }
+    }
     label(ctx, "Zone", &or("availability_zone", "-"));
     label(
         ctx,
