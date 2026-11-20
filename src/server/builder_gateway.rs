@@ -7,6 +7,7 @@ use std::net::IpAddr;
 use std::os::fd::AsRawFd;
 use std::os::unix::fs::OpenOptionsExt;
 use std::path::Path;
+use std::process::{Command, Stdio};
 
 use serde_json::{Value, json};
 
@@ -132,6 +133,19 @@ fn session(
     let mut lease = match current {
         Some(lease) => lease,
         None => {
+            // Provisioning requires an agent login key. Reuse the controller's
+            // existing worker identity without copying its private key.
+            let key = Command::new("ssh-keygen")
+                .args(["-y", "-P", "", "-f", setting(settings, "sshKeyFile")?])
+                .stdin(Stdio::null())
+                .stderr(Stdio::null())
+                .output()?;
+            if !key.status.success() || key.stdout.is_empty() {
+                return Err(
+                    "could not read the public key for the controller's worker identity".into(),
+                );
+            }
+            let public_key = std::str::from_utf8(&key.stdout)?.trim();
             let args = [
                 "--profile",
                 profile,
@@ -139,6 +153,8 @@ fn session(
                 ttl,
                 "--owner",
                 OWNER,
+                "--ssh-key",
+                public_key,
                 "--no-niks3-token",
                 "--meta",
                 "topic=On-demand Nix builder",

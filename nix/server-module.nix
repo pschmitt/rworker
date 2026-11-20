@@ -45,7 +45,7 @@ let
       builderState
       mode
       cfg.builderGateway.profile
-      "${toString cfg.builderGateway.leaseSeconds}s"
+      (toString cfg.builderGateway.leaseSeconds)
       (toString cfg.builderGateway.idleSeconds)
     ];
   builderService = {

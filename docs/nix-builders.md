@@ -35,7 +35,9 @@ has an account allowlist, add `rworker-builder` to it. The account accepts the
 Nix daemon command and does not provide a shell, PTY, or forwarding.
 
 The controller uses its existing `sshUser` and `sshKeyFile` for the second hop.
-The selected worker image must authorize that key for a Nix build account.
+It also derives the agent login public key for provisioning from that identity.
+The private key must be usable without an interactive prompt. The selected
+worker image must authorize that key for a Nix build account.
 The managed worker image provides `nix-remote-builder` for this purpose. Keep
 client keys within one trust boundary. Clients using this gateway share a
 worker store and can have the privileges of a trusted Nix user on that worker.
@@ -52,17 +54,18 @@ pinned host key, and worker system in this example.
 
 ```sh
 builder="ssh-ng://rworker-builder@builder.example.com x86_64-linux /run/secrets/rworker-builder-key 1 1 - - $gateway_public_host_key"
-nix build --max-jobs 0 --builders "$builder" --no-link --print-out-paths \
+nix build -L --max-jobs 0 --builders "$builder" --no-link --print-out-paths \
   --impure --expr '
     let pkgs = import (builtins.getFlake "nixpkgs").outPath { };
     in pkgs.runCommand "rworker-gateway-probe-${toString builtins.currentTime}" { }
-      "hostname > $out"
+      "echo gateway-probe > $out"
   '
 ```
 
-The output records the builder hostname. Try another build within the idle
-window to check worker reuse. A cold build waits for OpenStack provisioning
-and worker boot before the Nix daemon handshake can finish.
+Nix reports the gateway address when it dispatches the build. Check
+`rworker machines --fresh` for the leased worker, then try another build within
+the idle window to check worker reuse. A cold build waits for OpenStack
+provisioning and worker boot before the Nix daemon handshake can finish.
 
 ## Add the builder with NixOS
 
