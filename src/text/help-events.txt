@@ -1,1 +1,12 @@
-Usage: __ME__ events [--interval SECONDS] [--topic REGEX] [--agent REGEX] [--agent-id REGEX]
+Usage: __ME__ events [-w|--watch] [--since-now] [--interval SECONDS]
+          [--topic REGEX] [--agent REGEX] [--agent-id REGEX] [--json]
+
+List retained worker and job lifecycle events from the controller.
+
+  -w, --watch         follow new events after listing history
+  --since-now         skip history and follow new events only (with --watch)
+  --interval SECONDS  reconnect delay for --watch (default 2)
+  --json              print a JSON array or one JSON object per line in watch mode
+
+Use --topic, --agent, or --agent-id to filter events by worker metadata.
+Prefix a regex with ! to invert it.

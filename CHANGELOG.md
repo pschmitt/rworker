@@ -19,6 +19,9 @@ The Rust client and controller replace the original Bash client.
 
 ### New
 
+- Retain observed worker and job lifecycle events on the controller and follow
+  them with `events -w` or the TUI.
+
 - Preserve terminal colors in the redacted log view.
 
 - Register running `exec` commands as live jobs named `exec`.

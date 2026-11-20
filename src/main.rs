@@ -6,6 +6,7 @@
 mod cmd;
 mod creator;
 mod ctx;
+mod event_history;
 mod help;
 mod jq;
 mod paint;
@@ -238,7 +239,7 @@ fn dispatch(ctx: &Ctx, action: &str, args: &[String]) -> R {
         }
         "ps" => cmd::jobs::cmd_ps(ctx, args),
         "logs" => cmd::jobs::cmd_logs(ctx, args),
-        "events" => cmd::jobs::cmd_events(ctx, args),
+        "events" => cmd::events::run(ctx, args),
         "up" => cmd::up::up(ctx, args, false).map(|_| ()),
         "image" => cmd::image::run(ctx, args),
         "profiles" => cmd::simple::cmd_profiles(ctx, args),
@@ -421,6 +422,7 @@ fn run(ctx: &Ctx, argv: &[String]) -> R {
         "__worker-history" => return cmd::history::client(ctx),
         "__cached-worker-history" => return cmd::history::show(ctx),
         "__cached-archive-exec" => return cmd::log_cache::receive_exec(ctx, &argv[1..]),
+        "__collect-job-events" => return cmd::events::collect_jobs(ctx),
         "__collect-logs" => return cmd::log_cache::collect(ctx, &argv[1..]),
         "__cached-logs" => return cmd::log_cache::read(ctx, &argv[1..], false),
         "__cached-preview" => return cmd::log_cache::preview(ctx, &argv[1..]),
@@ -483,6 +485,7 @@ fn main() {
                     | "claim"
                     | "niks3-token"
                     | "inventory-events"
+                    | "lifecycle-events"
             ),
             [] => false,
         };

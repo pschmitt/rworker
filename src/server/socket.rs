@@ -102,6 +102,32 @@ fn serve_connection(config: &str) -> io::Result<()> {
             .write_all(b"eInvalid control command\nx2\n")?;
         return Ok(());
     }
+    if let [action, flag, cursor] = args.as_slice()
+        && action == "lifecycle-events"
+        && flag == "--watch"
+        && let Ok(cursor) = cursor.parse()
+        && let Some(dir) = crate::event_history::directory()
+    {
+        let mut out = io::stdout().lock();
+        return crate::event_history::watch(&dir, cursor, |event| {
+            out.write_all(b"o")?;
+            if let Some(event) = event {
+                serde_json::to_writer(&mut out, event)?;
+            }
+            out.write_all(b"\n")?;
+            out.flush()
+        })
+        .or_else(|error| {
+            if matches!(
+                error.kind(),
+                io::ErrorKind::BrokenPipe | io::ErrorKind::ConnectionReset
+            ) {
+                Ok(())
+            } else {
+                Err(error)
+            }
+        });
+    }
     if args == ["inventory-events"]
         && let Some(dir) = super::inventory_cache::directory()
     {

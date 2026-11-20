@@ -55,6 +55,9 @@ assert
   (builtins.head config.services.nginx.virtualHosts."control.example.com".listen).addr == "127.0.0.1";
 assert timers.rworker-reaper.timerConfig.OnUnitActiveSec == "1m";
 assert services.rworker-log-cache.serviceConfig.User == "operator";
+assert services.rworker-job-events.serviceConfig.User == "operator";
+assert services.rworker-job-events.serviceConfig.SupplementaryGroups == [ "rworker" ];
+assert services."rworker-control@".environment.RWORKER_EVENT_DIRECTORY == "/var/lib/rworker-events";
 assert services.rworker-log-cache.environment.RWORKER_USER == "agent";
 assert timers.rworker-log-cache.timerConfig.OnUnitInactiveSec == "30s";
 assert sockets.rworker-builder.socketConfig.Accept;
@@ -75,6 +78,7 @@ pkgs.runCommand "rworker-server-module-check" { } ''
   test -e ${config.systemd.units."rworker-reaper.service".unit}
   test -e ${config.systemd.units."nixbot-autoscaler.service".unit}
   test -e ${config.systemd.units."rworker-log-cache.service".unit}
+  test -e ${config.systemd.units."rworker-job-events.service".unit}
   test -e ${config.systemd.units."rworker-builder.socket".unit}
   test -e ${config.systemd.units."rworker-builder@.service".unit}
   test -e ${config.systemd.units."rworker-builder-reap.timer".unit}

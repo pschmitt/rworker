@@ -84,6 +84,18 @@ stderr to the control host before deleting the worker. Read the retained
 `exec` job with `rworker logs WORKER exec --cached`. The collector keeps up to
 1,024 worker history records for 30 days from last observation.
 
+## Lifecycle history
+
+`rworker events` lists retained worker and job transitions from the controller.
+Use `rworker events -w` to follow new entries, or add `--since-now` to skip the
+backlog. The TUI's `E` view follows the same feed. Use `--json` for an array
+when listing and newline-delimited JSON when watching.
+
+The controller retains up to 8192 events for the configured log retention age.
+It records worker events as inventory refreshes and polls job states every
+three seconds when the log collector has a configured operator. The history
+starts at activation and can miss transitions between observations.
+
 ## Terminal UI
 
 The TUI subscribes to inventory changes from the control host over the

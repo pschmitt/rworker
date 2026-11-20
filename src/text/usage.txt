@@ -17,8 +17,8 @@ Actions:
        [--topic REGEX] [--agent REGEX]
                        show logs; follow includes lifecycle events and a worker
                        count status line (every 5 min, once when none) by default
-  events [--interval SECONDS] [--topic REGEX] [--agent REGEX]
-                       stream worker and job lifecycle events
+  events [-w|--watch] [--topic REGEX] [--agent REGEX]
+                       list and follow worker and job lifecycle events
   register NAME JOB --log PATH
                        register an existing log file
   profiles             list available worker profiles

@@ -151,6 +151,11 @@ pub(super) fn refresh_forever(config: &str, dir: &Path) -> Result<(), Box<dyn st
             .then(|| serde_json::from_slice::<Value>(&output.stdout))
         {
             Some(Ok(workers)) => {
+                if let Some(dir) = crate::event_history::directory()
+                    && let Err(error) = crate::event_history::observe_workers(&dir, &workers)
+                {
+                    eprintln!("Record worker lifecycle events: {error}");
+                }
                 let snapshot =
                     json!({"mutation": mutation, "refresh": refresh, "workers": workers});
                 replace(dir, "inventory.json", |file| {

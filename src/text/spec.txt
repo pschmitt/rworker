@@ -2,7 +2,7 @@ action start start a registered job
 action jobs list registered jobs
 action ps show processes of running jobs
 action logs show job logs on one or all workers
-action events stream worker and job lifecycle events
+action events list retained worker and job lifecycle events
 action register register an existing log file
 action up create a worker and wait until it is ready
 action image build or upload worker disk images
@@ -44,7 +44,10 @@ flag logs --no-events suppress lifecycle events while following
 flag logs --quiet suppress all status messages (timestamped, italic) while following
 flag logs --topic=topic-re limit to workers whose topic matches this regex (prefix with ! to invert)
 flag logs --agent=agent-re limit to workers whose creating agent matches this regex (prefix with ! to invert)
-flag events --interval=interval event polling interval
+flag events --watch follow new lifecycle events after listing history
+flag events -w short for --watch
+flag events --since-now skip retained history while watching
+flag events --interval=interval reconnect delay in seconds
 flag events --topic=topic-re limit to workers whose topic matches this regex (prefix with ! to invert)
 flag events --agent=agent-re limit to workers whose creating agent matches this regex (prefix with ! to invert)
 flag register --log=path absolute path to an existing log file

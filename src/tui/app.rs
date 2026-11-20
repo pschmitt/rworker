@@ -869,7 +869,7 @@ impl App {
                 let _ = self.refresh.send(());
             }
             KeyCode::Char('L') => self.open_text("logs · all workers", s(&["logs", "--follow"])),
-            KeyCode::Char('E') => self.open_text("events", s(&["events"])),
+            KeyCode::Char('E') => self.open_text("events", s(&["events", "--watch"])),
             KeyCode::Char('P') => self.open_text("profiles", s(&["profiles"])),
             KeyCode::Char('n') => self.ask(
                 PromptKind::Up,

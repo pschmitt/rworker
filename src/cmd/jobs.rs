@@ -4,12 +4,12 @@
 
 use crate::ctx::{Ctx, Fail, R, outln};
 use crate::jq::{self, get};
-use crate::paint::{self, paint};
+use crate::paint;
 use crate::proc;
 use crate::signals;
 use crate::state;
 use serde_json::Value;
-use std::collections::{BTreeMap, BTreeSet, HashMap};
+use std::collections::{BTreeMap, BTreeSet};
 use std::io::IsTerminal;
 use std::process::{Child, Command, Stdio};
 
@@ -318,22 +318,36 @@ fn ready(list: &Value) -> Vec<String> {
         .collect()
 }
 
-pub(super) fn registered_jobs(ctx: &Ctx, inventory: &Value) -> R<Vec<(String, String)>> {
+pub(super) fn observed_jobs(ctx: &Ctx, inventory: &Value) -> crate::event_history::Jobs {
     let mut names = ready(inventory);
     names.retain(|name| !name.is_empty());
     names.sort_unstable();
     names.dedup();
     let requests: Vec<_> = names.iter().map(|name| s(&["jobs", name])).collect();
-    let mut jobs = Vec::new();
-    for (worker, result) in names.iter().zip(poll_jobs(ctx, &requests)) {
-        if let Ok(output) = result {
-            jobs.extend(output.lines().filter_map(|line| {
-                let (job, _) = line.split_once('\t')?;
-                Some((worker.clone(), job.to_owned()))
-            }));
-        }
-    }
-    Ok(jobs)
+    names
+        .into_iter()
+        .zip(poll_jobs(ctx, &requests))
+        .filter_map(|(worker, output)| {
+            let states = output
+                .ok()?
+                .lines()
+                .filter_map(|line| {
+                    let mut fields = line.split('\t');
+                    let job = fields.next()?;
+                    let state = fields.next()?;
+                    Some((job.to_owned(), state.to_owned()))
+                })
+                .collect();
+            Some((worker, states))
+        })
+        .collect()
+}
+
+pub(super) fn registered_jobs(ctx: &Ctx, inventory: &Value) -> Vec<(String, String)> {
+    observed_jobs(ctx, inventory)
+        .into_iter()
+        .flat_map(|(worker, jobs)| jobs.into_keys().map(move |job| (worker.clone(), job)))
+        .collect()
 }
 
 struct JobSnapshot {
@@ -613,7 +627,7 @@ fn logs_all_follow(
     if !no_events {
         // Events are status messages here: stderr, keeping stdout for logs.
         let mut cmd = self_command(ctx);
-        cmd.args(["events", "--interval", "5"]);
+        cmd.args(["events", "--watch", "--since-now", "--interval", "5"]);
         if !topic.is_empty() {
             cmd.args(["--topic", topic]);
         }
@@ -746,181 +760,6 @@ fn emit_status(ctx: &Ctx, list: &Value, interval: i64, last_key: &mut String, la
     ));
     *last_key = key;
     *last_at = now;
-}
-
-fn emit_event(ctx: &Ctx, kind: &str, target: &str, details: &str) {
-    let color = if kind.ends_with("-added") {
-        "32"
-    } else if kind.ends_with("-deleted") {
-        "31"
-    } else if kind == "job-state" {
-        "33"
-    } else {
-        "36"
-    };
-    let mut text = format!(
-        "{} {}",
-        paint(ctx, color, kind),
-        paint::event_target(ctx, target)
-    );
-    if !details.is_empty() {
-        if let Some((a, b)) = details.split_once(" -> ") {
-            text += &format!(" {} -> {}", paint::value(ctx, a), paint::value(ctx, b));
-        } else if let Some(c) = regex::Regex::new(r"^([a-z_-]+=)(.*)$")
-            .expect("valid regex")
-            .captures(details)
-        {
-            // key=value: only the value is colored
-            text += &format!(" {}{}", &c[1], paint::value(ctx, &c[2]));
-        } else {
-            text += &format!(" {}", paint(ctx, "33", details));
-        }
-    }
-    outln(&format!(
-        "{} {}",
-        paint::timestamp(ctx),
-        paint::italic(ctx, &text)
-    ));
-}
-
-pub fn cmd_events(ctx: &Ctx, args: &[String]) -> R {
-    let mut interval = "2".to_string();
-    let (mut topic, mut agent) = (String::new(), String::new());
-    let need = |flag: &str, v: &str| -> R<String> {
-        if v.is_empty() {
-            ctx.err(&format!("{flag} requires a regex pattern"));
-            Err(Fail(2))
-        } else {
-            Ok(v.to_string())
-        }
-    };
-    let mut i = 0;
-    while i < args.len() && !args[i].is_empty() {
-        let a = args[i].as_str();
-        let next = args.get(i + 1).cloned();
-        match a {
-            "--interval" => {
-                // `shift 2` past the end stopped the bash client (set -e).
-                let Some(v) = next else {
-                    return Err(Fail(1));
-                };
-                interval = v;
-                i += 2;
-            }
-            "--topic" | "--agent" | "--agent-id" => {
-                let v = need(a, &next.unwrap_or_default())?;
-                match a {
-                    "--topic" => topic = v,
-                    "--agent" => agent = v,
-                    _ => *ctx.filter_agent_id.borrow_mut() = v,
-                }
-                i += 2;
-            }
-            _ if a.starts_with("--topic=")
-                || a.starts_with("--agent=")
-                || a.starts_with("--agent-id=") =>
-            {
-                let (flag, v) = a.split_once('=').unwrap_or((a, ""));
-                let v = need(flag, v)?;
-                match flag {
-                    "--topic" => topic = v,
-                    "--agent" => agent = v,
-                    _ => *ctx.filter_agent_id.borrow_mut() = v,
-                }
-                i += 1;
-            }
-            _ => {
-                ctx.err(&format!("Unknown events option: {a}"));
-                crate::help::show(ctx, "events");
-                return Err(Fail(2));
-            }
-        }
-    }
-    let secs = match interval.parse::<u64>() {
-        Ok(n) if n >= 1 && interval.bytes().all(|b| b.is_ascii_digit()) => n as f64,
-        _ => {
-            ctx.err("interval must be a positive whole number of seconds");
-            return Err(Fail(2));
-        }
-    };
-    if !topic.is_empty() {
-        super::ls::validate_regex(ctx, "--topic", &topic)?;
-    }
-    if !agent.is_empty() {
-        super::ls::validate_regex(ctx, "--agent", &agent)?;
-    }
-    let mut initialized = false;
-    let mut prev_workers: BTreeSet<String> = BTreeSet::new();
-    let mut prev_jobs: BTreeMap<String, String> = BTreeMap::new();
-    loop {
-        let Ok(out) = state::poll_ls(ctx) else {
-            ctx.err("could not refresh worker list; retrying");
-            proc::sleep_secs(secs);
-            continue;
-        };
-        let Ok(list) = super::ls::filter_workers(ctx, &out, &topic, &agent)
-            .and_then(|f| state::parse(ctx, &f))
-        else {
-            proc::sleep_secs(secs);
-            continue;
-        };
-        let mut cur_workers: BTreeSet<String> = BTreeSet::new();
-        let mut cur_jobs: BTreeMap<String, String> = BTreeMap::new();
-        let mut polled: HashMap<String, bool> = HashMap::new();
-        for w in names(&list) {
-            if w.is_empty() {
-                continue;
-            }
-            if initialized && !prev_workers.contains(&w) {
-                emit_event(ctx, "worker-added", &w, "");
-            }
-            cur_workers.insert(w);
-        }
-        if initialized {
-            for w in &prev_workers {
-                if !cur_workers.contains(w) {
-                    emit_event(ctx, "worker-deleted", w, "");
-                }
-            }
-        }
-        let workers: Vec<_> = ready(&list).into_iter().filter(|w| !w.is_empty()).collect();
-        let requests: Vec<_> = workers.iter().map(|w| s(&["jobs", w])).collect();
-        for (w, jobs) in workers.into_iter().zip(poll_jobs(ctx, &requests)) {
-            let Ok(jobs) = jobs else { continue };
-            polled.insert(w.clone(), true);
-            for line in jobs.lines() {
-                // `read job state started` with IFS=tab: empty fields merge.
-                let mut fields = line.split('\t').filter(|f| !f.is_empty());
-                let Some(job) = fields.next() else { continue };
-                let state = fields.next().unwrap_or("").to_string();
-                let key = format!("{w}/{job}");
-                let previous = prev_jobs.get(&key).cloned().unwrap_or_default();
-                cur_jobs.insert(key.clone(), state.clone());
-                if initialized && previous.is_empty() {
-                    emit_event(ctx, "job-added", &key, &format!("state={state}"));
-                } else if initialized && state != previous {
-                    emit_event(ctx, "job-state", &key, &format!("{previous} -> {state}"));
-                }
-            }
-        }
-        if initialized {
-            for (key, state) in &prev_jobs {
-                let w = key.split('/').next().unwrap_or("");
-                if !cur_workers.contains(w) {
-                    continue;
-                }
-                if !polled.contains_key(w) {
-                    cur_jobs.insert(key.clone(), state.clone());
-                } else if !cur_jobs.contains_key(key) {
-                    emit_event(ctx, "job-deleted", key, "");
-                }
-            }
-        }
-        prev_workers = cur_workers;
-        prev_jobs = cur_jobs;
-        initialized = true;
-        proc::sleep_secs(secs);
-    }
 }
 
 pub fn cmd_ps(ctx: &Ctx, args: &[String]) -> R {

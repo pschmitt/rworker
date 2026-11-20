@@ -205,7 +205,7 @@ pub fn collect(ctx: &Ctx, args: &[String]) -> R {
         let _lock = lock(&root).map_err(report)?;
         super::history::observe(ctx, &inventory)?;
     }
-    let jobs = super::jobs::registered_jobs(ctx, &inventory)?;
+    let jobs = super::jobs::registered_jobs(ctx, &inventory);
     let cutoff = (SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .unwrap_or_default())

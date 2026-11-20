@@ -36,7 +36,8 @@ def verify(binary, root):
         path = root / name
         path.write_text(f"#!{sys.executable}\n{program}\n")
         path.chmod(0o700)
-    env = dict(os.environ, PATH=f"{root}:{os.environ['PATH']}", RWORKER_INVENTORY_DIRECTORY=str(root))
+    env = dict(os.environ, PATH=f"{root}:{os.environ['PATH']}",
+               RWORKER_INVENTORY_DIRECTORY=str(root), RWORKER_EVENT_DIRECTORY=str(root))
     command = [str(binary), "server", str(settings)]
     socket = root / "http.sock"
 
@@ -54,6 +55,12 @@ def verify(binary, root):
             try:
                 workers = ls()
                 assert workers[0]["name"] == "example-worker", workers
+                events = json.loads(subprocess.check_output(
+                    [*command, "lifecycle-events"], env=env, timeout=5
+                ))
+                assert [(row["kind"], row["target"]) for row in events] == [
+                    ("worker-added", "example-worker")
+                ]
                 with ThreadPoolExecutor(8) as pool:
                     assert all(x == workers for x in pool.map(lambda _: ls(), range(12)))
                 assert calls.read_text().splitlines() == ["read"]
@@ -68,6 +75,9 @@ def verify(binary, root):
                     assert refreshing.result() == workers
                 pause.unlink()
                 assert calls.read_text().splitlines() == ["read", "read"]
+                assert json.loads(subprocess.check_output(
+                    [*command, "lifecycle-events"], env=env, timeout=5
+                )) == events
                 headers, body = request("/v1/workers")
                 assert json.loads(body) == workers
                 tag = next(line.split(": ", 1)[1] for line in headers.splitlines() if line.startswith("etag:"))

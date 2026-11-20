@@ -61,6 +61,24 @@ pub fn run(ctx: &crate::ctx::Ctx, args: &[String]) -> R {
             );
         }
     }
+    if action == "lifecycle-events" && (rest.is_empty() || rest == ["--latest-id"]) {
+        let Some(dir) = crate::event_history::directory() else {
+            eprintln!("Lifecycle event history is not configured on this controller");
+            return Err(Fail(1));
+        };
+        let output = if rest.is_empty() {
+            crate::event_history::list(&dir)
+                .and_then(|events| serde_json::to_string(&events).map_err(io::Error::other))
+        } else {
+            crate::event_history::latest_id(&dir).map(|id| id.to_string())
+        }
+        .map_err(|error| {
+            eprintln!("Read lifecycle events: {error}");
+            Fail(1)
+        })?;
+        crate::ctx::outln(&output);
+        return Ok(());
+    }
     let cache = inventory_cache::directory();
     if action == "refresh-inventory" && rest.is_empty() {
         return match cache {

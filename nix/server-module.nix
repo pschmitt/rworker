@@ -8,6 +8,20 @@
 let
   cfg = config.services.rworker;
   inventoryDirectory = "/run/rworker-inventory";
+  eventDirectory = "/var/lib/rworker-events";
+  eventEnvironment = {
+    RWORKER_EVENT_DIRECTORY = eventDirectory;
+    RWORKER_EVENT_RETENTION_DAYS = toString cfg.logCache.retentionDays;
+  };
+  logReaderEnvironment = {
+    RWORKER_CONTROL_SOCKET = socket;
+  }
+  // lib.optionalAttrs (cfg.logCache.workerUser != null) {
+    RWORKER_USER = cfg.logCache.workerUser;
+  }
+  // lib.optionalAttrs (cfg.logCache.identityFile != null) {
+    RWORKER_LOG_CACHE_IDENTITY = cfg.logCache.identityFile;
+  };
   socket = "/run/rworker-control.sock";
   apiSocket = "/run/rworker-inventory-api/http.sock";
   apiGroup = if cfg.api.https == null then cfg.group else "rworker-inventory-api";
@@ -249,6 +263,9 @@ in
   config = lib.mkMerge [
     (lib.mkIf cfg.enable {
       environment.systemPackages = [ client ];
+      systemd.tmpfiles.rules = [
+        "d ${eventDirectory} 2770 ${cfg.user} ${cfg.group} -"
+      ];
       systemd = {
         sockets.rworker-control = {
           wantedBy = [ "sockets.target" ];
@@ -267,7 +284,9 @@ in
             wants = [ "network-online.target" ];
             after = [ "network-online.target" ];
             path = runtimeTools;
-            environment.RWORKER_INVENTORY_DIRECTORY = inventoryDirectory;
+            environment = eventEnvironment // {
+              RWORKER_INVENTORY_DIRECTORY = inventoryDirectory;
+            };
             serviceConfig = {
               User = cfg.user;
               Group = cfg.group;
@@ -308,12 +327,14 @@ in
             description = "rworker control request";
             wants = [ "rworker-inventory.service" ];
             after = [ "rworker-inventory.service" ];
-            environment = {
-              RWORKER_INVENTORY_DIRECTORY = inventoryDirectory;
-            }
-            // lib.optionalAttrs cfg.builderGateway.enable {
-              RWORKER_BUILDER_ARCHIVE_DIRECTORY = builderState;
-            };
+            environment =
+              eventEnvironment
+              // {
+                RWORKER_INVENTORY_DIRECTORY = inventoryDirectory;
+              }
+              // lib.optionalAttrs cfg.builderGateway.enable {
+                RWORKER_BUILDER_ARCHIVE_DIRECTORY = builderState;
+              };
             path = runtimeTools;
             serviceConfig = {
               User = cfg.user;
@@ -471,40 +492,62 @@ in
           message = "services.rworker.logCache.maxJobMiB must not exceed maxMiB";
         }
       ];
-      systemd.services.rworker-log-cache = {
-        description = "Collect the operator's registered rworker job logs";
-        path = [
-          pkgs.coreutils
-          pkgs.openssh
-        ];
-        environment = {
-          RWORKER_CONTROL_SOCKET = socket;
-        }
-        // lib.optionalAttrs (cfg.logCache.workerUser != null) {
-          RWORKER_USER = cfg.logCache.workerUser;
-        }
-        // lib.optionalAttrs (cfg.logCache.identityFile != null) {
-          RWORKER_LOG_CACHE_IDENTITY = cfg.logCache.identityFile;
-        };
-        serviceConfig = {
-          Type = "oneshot";
-          User = cfg.logCache.operator;
-          UMask = "0077";
-          TimeoutStartSec = "5min";
-          ExecStart = command [
-            "__collect-logs"
-            (toString cfg.logCache.retentionDays)
-            (toString cfg.logCache.maxMiB)
-            (toString cfg.logCache.maxJobMiB)
+      systemd = {
+        services.rworker-log-cache = {
+          description = "Collect the operator's registered rworker job logs";
+          path = [
+            pkgs.coreutils
+            pkgs.openssh
           ];
+          environment = logReaderEnvironment;
+          serviceConfig = {
+            Type = "oneshot";
+            User = cfg.logCache.operator;
+            UMask = "0077";
+            TimeoutStartSec = "5min";
+            ExecStart = command [
+              "__collect-logs"
+              (toString cfg.logCache.retentionDays)
+              (toString cfg.logCache.maxMiB)
+              (toString cfg.logCache.maxJobMiB)
+            ];
+          };
         };
-      };
-      systemd.timers.rworker-log-cache = {
-        wantedBy = [ "timers.target" ];
-        timerConfig = {
-          OnBootSec = "30s";
-          OnUnitInactiveSec = "30s";
-          AccuracySec = "5s";
+        services.rworker-job-events = {
+          description = "Observe registered rworker job lifecycle events";
+          wantedBy = [ "multi-user.target" ];
+          wants = [
+            "rworker-control.socket"
+            "rworker-inventory.service"
+          ];
+          after = [
+            "rworker-control.socket"
+            "rworker-inventory.service"
+          ];
+          path = [ pkgs.openssh ];
+          environment =
+            eventEnvironment
+            // logReaderEnvironment
+            // {
+              XDG_STATE_HOME = "/var/lib/rworker-job-events";
+            };
+          serviceConfig = {
+            User = cfg.logCache.operator;
+            SupplementaryGroups = [ cfg.group ];
+            StateDirectory = "rworker-job-events";
+            StateDirectoryMode = "0700";
+            UMask = "0077";
+            Restart = "on-failure";
+            ExecStart = command [ "__collect-job-events" ];
+          };
+        };
+        timers.rworker-log-cache = {
+          wantedBy = [ "timers.target" ];
+          timerConfig = {
+            OnBootSec = "30s";
+            OnUnitInactiveSec = "30s";
+            AccuracySec = "5s";
+          };
         };
       };
     })
