@@ -53,7 +53,7 @@ nav a[aria-current] { border-color: #505a91; }
 .signal.online { background: #73dec0; }
 .signal.error { background: #ff9fab; }
 .rail-status button { margin-left: auto; border-color: #505a91; background: transparent; color: #e6e9f7; padding: 3px 7px; min-height: 28px; }
-main { max-width: 1840px; width: 100%; padding: 31px clamp(14px, 3.4vw, 52px) 50px; margin: auto; align-self: start; }
+main { max-width: 1840px; width: 100%; padding: 31px clamp(14px, 3.4vw, 52px) 50px; margin-inline: auto; align-self: start; }
 .page-head { display: flex; justify-content: space-between; align-items: center; gap: 16px; margin-bottom: 24px; }
 .page-head p { color: var(--muted); margin-top: 6px; }
 .primary { background: var(--accent); border-color: var(--accent); color: #171a31; font-weight: 650; white-space: nowrap; }

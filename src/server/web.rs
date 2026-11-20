@@ -58,6 +58,10 @@ pub(super) fn routes(router: Router<PathBuf>) -> Router<PathBuf> {
                 )
             }),
         )
+        .route(
+            "/assets/favicon.svg",
+            get(|| async { asset("image/svg+xml", include_str!("../web/favicon.svg")) }),
+        )
         .merge(log_stream::routes())
         .route("/v1/ui/session", get(session))
         .route("/v1/ui/updates", get(updates))
@@ -94,7 +98,7 @@ fn asset(content_type: &'static str, body: &'static str) -> Response {
     ([
         (header::CONTENT_TYPE, content_type),
         (header::CACHE_CONTROL, "no-cache"),
-        (header::CONTENT_SECURITY_POLICY, "default-src 'none'; script-src 'self'; style-src 'self'; font-src 'self'; connect-src 'self'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'"),
+        (header::CONTENT_SECURITY_POLICY, "default-src 'none'; script-src 'self'; style-src 'self'; font-src 'self'; img-src 'self'; connect-src 'self'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'"),
         (header::X_CONTENT_TYPE_OPTIONS, "nosniff"),
         (header::REFERRER_POLICY, "no-referrer"),
     ], body).into_response()
