@@ -15,6 +15,15 @@ use std::time::Duration;
 /// `ssh CONTROL rworker ARGS...` over one shared connection (kept 10 min):
 /// repeated calls (ls --watch, the completions' refresh) skip the handshake.
 pub fn control_cmd<S: AsRef<str>>(ctx: &Ctx, args: &[S]) -> Command {
+    if args.first().is_some_and(|action| {
+        matches!(
+            action.as_ref(),
+            "up" | "down" | "extend" | "claim" | "topic" | "niks3-token"
+        )
+    }) {
+        ctx.resolution_snapshot.borrow_mut().take();
+        let _ = fs::remove_file(discovery_cache(ctx));
+    }
     if let Some(path) = std::env::var_os("RWORKER_CONTROL_SOCKET").filter(|p| !p.is_empty()) {
         let exe = std::env::current_exe().unwrap_or_else(|_| "rworker".into());
         let mut cmd = Command::new(exe);
@@ -73,15 +82,18 @@ fn cache_inventory(ctx: &Ctx, path: &std::path::Path, inventory: &str) {
     }
 }
 
-/// Discovery loops can share the latest successful inventory with each other.
-pub fn poll_ls(ctx: &Ctx) -> R<String> {
+fn discovery_cache(ctx: &Ctx) -> std::path::PathBuf {
     use std::hash::{DefaultHasher, Hash, Hasher};
     let mut key = DefaultHasher::new();
     ctx.control_host.hash(&mut key);
     std::env::var_os("RWORKER_CONTROL_SOCKET").hash(&mut key);
-    let path = ctx
-        .state_dir
-        .join(format!(".discovery-{:016x}.json", key.finish()));
+    ctx.state_dir
+        .join(format!(".discovery-{:016x}.json", key.finish()))
+}
+
+/// Discovery loops can share the latest successful inventory with each other.
+pub fn poll_ls(ctx: &Ctx) -> R<String> {
+    let path = discovery_cache(ctx);
     let cached = (|| {
         let mut file = fs::File::open(&path).ok()?;
         let age = file.metadata().ok()?.modified().ok()?.elapsed().ok()?;
