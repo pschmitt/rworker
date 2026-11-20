@@ -21,6 +21,9 @@ Actions, flags, output, JSON and exit statuses are the same; see
 
 ### New
 
+- Reuse restricted SSH connections when collecting worker logs.
+- Escape brackets in zsh option descriptions so log completions load.
+
 - Accept grouped short options such as `ls -Aw` and attached option values.
 
 - Offer an opt-in NixOS SSH gateway and machines entry for on-demand Nix builds.

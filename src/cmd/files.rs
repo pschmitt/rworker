@@ -73,6 +73,18 @@ pub fn ssh_command(ctx: &Ctx, args: &[String]) -> R<Command> {
         if opts.is_empty() {
             return Err(Fail(1));
         }
+        // Keep the restricted collector transport separate from interactive SSH.
+        // Its initial jobs request opens a master before the parallel tail reads.
+        let directory = ctx.state_dir.join("log-ssh");
+        super::log_cache::private_dir(&directory).map_err(|error| {
+            ctx.err(&format!("log collector SSH state: {error}"));
+            Fail(1)
+        })?;
+        let connection = std::hash::BuildHasher::hash_one(
+            &std::hash::BuildHasherDefault::<std::hash::DefaultHasher>::default(),
+            (&t.name, &ip, &user, &identity),
+        );
+        let socket = directory.join(format!("{connection:016x}"));
         opts.splice(
             0..0,
             [
@@ -82,6 +94,12 @@ pub fn ssh_command(ctx: &Ctx, args: &[String]) -> R<Command> {
                 "IdentityAgent=none".into(),
                 "-o".into(),
                 "ConnectTimeout=5".into(),
+                "-o".into(),
+                "ControlMaster=auto".into(),
+                "-o".into(),
+                "ControlPersist=45s".into(),
+                "-o".into(),
+                format!("ControlPath={}", socket.display()),
                 "-i".into(),
                 identity,
             ],

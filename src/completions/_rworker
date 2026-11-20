@@ -178,6 +178,9 @@ _rworker() {
     line="${line#flag $action }"
     spec_flag="${line%% *}"
     desc="${line#* }"
+    desc="${desc//\\/\\\\}"
+    desc="${desc//\[/\\[}"
+    desc="${desc//\]/\\]}"
     if [[ "$spec_flag" == *=path ]]
     then
       flags+=("${spec_flag%%=*}[${desc}]:path:_files")
@@ -197,7 +200,11 @@ _rworker() {
   do
     [[ "$line" == "global "* ]] || continue
     line="${line#global }"
-    flags+=("${line%% *}[${line#* }]")
+    desc="${line#* }"
+    desc="${desc//\\/\\\\}"
+    desc="${desc//\[/\\[}"
+    desc="${desc//\]/\\]}"
+    flags+=("${line%% *}[${desc}]")
   done
   flags+=('(-h --help)'{-h,--help}'[show help]')
   # _arguments must only see what follows the action (and its worker):
