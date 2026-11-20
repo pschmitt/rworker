@@ -442,8 +442,14 @@ def main():
     bash = run_all("bash", selected)
     ours = run_all(rust, selected)
     differences = accepted = 0
-    for name, _, _ in selected:
+    for name, args, _ in selected:
         a, b = bash[name], ours[name]
+        if args == ["ls"] or (args[:1] == ["ls"] and not {"--json", "-j", "json"}.intersection(args)):
+            # Drop the legacy display column while retaining alignment and every other field.
+            a["stdout"] = re.sub(
+                r"(?m)^([^\n]*?(?:NAME|adhoc-[a-f0-9]+|pool-[0-9]+)(?:\x1b\[0m)? {2,})(?:KIND|adhoc|pool) {2,}",
+                r"\1", a["stdout"],
+            )
         if name == "logs-follow":
             # The fake follower's shell may report the killed test sleep.
             for result in (a, b):
@@ -451,6 +457,10 @@ def main():
         if name in {"ls-h", "ls-o-bogus", "ls-o-missing", "ls-interval-zero", "ls-unknown"}:
             # Compare everything except the new --fresh usage and option lines.
             for stream in ("stdout", "stderr"):
+                a[stream] = a[stream].replace(
+                    "List all workers: ad-hoc ones (KIND adhoc) and nixbot's pool (KIND pool),",
+                    "List ad-hoc workers and nixbot's pool workers,",
+                )
                 b[stream] = b[stream].replace("\x1b[36m--fresh\x1b[0m | ", "")
                 b[stream] = b[stream].replace(
                     "  \x1b[36m--fresh\x1b[0m        wait for a fresh inventory snapshot\n", ""

@@ -21,6 +21,9 @@ Actions, flags, output, JSON and exit statuses are the same; see
 
 ### New
 
+- Remove the worker row markers from the TUI and the `KIND` column from
+  the TUI and `ls` tables. The JSON schema still includes `kind`.
+
 - The TUI moves worker details beside the table on wide terminals and
   prioritizes essential columns on narrow ones.
 

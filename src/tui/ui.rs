@@ -356,9 +356,7 @@ impl App {
         let (table_area, details) = workers_layout(area, selected.is_some() && !visible.is_empty());
         let wide = table_area.width >= 150;
         let mask = [
-            table_area.width >= 48, // row marker
             true,                   // name
-            table_area.width >= 70, // kind
             true,                   // status
             table_area.width >= 55, // agent
             table_area.width >= 37, // topic
@@ -392,9 +390,7 @@ impl App {
             return;
         }
 
-        let mut header = vec![
-            "", "NAME", "KIND", "STATUS", "AGENT", "TOPIC", "EXPIRES", "AGE",
-        ];
+        let mut header = vec!["NAME", "STATUS", "AGENT", "TOPIC", "EXPIRES", "AGE"];
         if wide {
             header.extend(["OWNER", "PROFILE", "IP"]);
         }
@@ -408,29 +404,14 @@ impl App {
                     Urgency::Idle => dim(),
                     Urgency::None => Style::new(),
                 };
-                let fresh = self.new_at.contains_key(&w.name);
-                let mark = if fresh {
-                    Span::styled("+", Style::new().fg(Color::Green).bold())
-                } else if w.mine {
-                    Span::styled("●", Style::new().fg(ACCENT))
-                } else {
-                    Span::raw(" ")
-                };
                 let agent = agent_cell(&w.agent, self.icons);
-                let kind_style = if w.kind == "pool" {
-                    dim()
-                } else {
-                    Style::new()
-                };
                 let topic = if w.topic.is_empty() {
                     Span::styled("-", dim())
                 } else {
                     Span::raw(w.topic.clone())
                 };
                 let mut cells = vec![
-                    Cell::from(mark),
                     Cell::from(Span::styled(w.name.clone(), Style::new().fg(ACCENT))),
-                    Cell::from(Span::styled(w.kind.clone(), kind_style)),
                     Cell::from(Span::styled(w.status.clone(), status_style(&w.status))),
                     Cell::from(agent),
                     Cell::from(topic),
@@ -480,9 +461,7 @@ impl App {
             .unwrap_or(5)
             .clamp(5, 16) as u16;
         let mut widths = vec![
-            Constraint::Length(1),
             Constraint::Length(name_w),
-            Constraint::Length(5),
             Constraint::Length(7),
             Constraint::Length(agent_w),
             Constraint::Fill(1),

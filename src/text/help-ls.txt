@@ -1,7 +1,7 @@
 Usage: __ME__ ls [-o json|wide] [--fresh | -w|--watch [-n SECONDS]]
           [--topic REGEX] [--agent REGEX] [--agent-id REGEX]
 
-List all workers: ad-hoc ones (KIND adhoc) and nixbot's pool (KIND pool),
+List ad-hoc workers and nixbot's pool workers,
 with status, owner, creating agent, topic, time to expiry and age.
 EXPIRES "grace 42m": expired but in use, deleted after 1h without use.
 Pool workers have no TTL; EXPIRES shows what the autoscaler last saw:

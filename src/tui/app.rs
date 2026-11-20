@@ -8,7 +8,7 @@ use crate::jq::{self, get};
 use ratatui::crossterm::event::{Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 use ratatui::widgets::TableState;
 use serde_json::Value;
-use std::collections::{HashMap, HashSet, VecDeque};
+use std::collections::{HashMap, VecDeque};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{self, Receiver, Sender};
@@ -207,7 +207,6 @@ pub struct App {
     pub refreshed: Option<(Instant, Duration)>,
     pub stale: bool,
     pub refresh_error: Option<String>,
-    pub new_at: HashMap<String, Instant>,
     pub stack: Vec<Sub>,
     pub prompt: Option<Prompt>,
     pub confirm: Option<Confirm>,
@@ -264,18 +263,8 @@ impl App {
 
     fn set_workers(&mut self, list: &[Value]) {
         let keep = self.selected().map(|w| w.name.clone());
-        let before: HashSet<String> = self.workers.iter().map(|w| w.name.clone()).collect();
         let mut workers: Vec<Worker> = list.iter().map(|v| Worker::from(v, &self.owner)).collect();
         workers.sort_by(|a, b| a.kind.cmp(&b.kind).then_with(|| a.name.cmp(&b.name)));
-        if self.refreshed.is_some() {
-            for w in &workers {
-                if !before.contains(&w.name) {
-                    self.new_at.insert(w.name.clone(), Instant::now());
-                }
-            }
-        }
-        self.new_at
-            .retain(|_, at| at.elapsed() < Duration::from_secs(30));
         self.workers = workers;
         self.reselect(keep);
     }
@@ -1119,7 +1108,6 @@ pub fn run(ctx: &Ctx, interval: Duration) -> std::io::Result<()> {
         refreshed: None,
         stale: false,
         refresh_error: None,
-        new_at: HashMap::new(),
         stack: Vec::new(),
         prompt: None,
         confirm: None,

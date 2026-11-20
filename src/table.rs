@@ -110,7 +110,7 @@ pub fn plain(ctx: &Ctx, list: &Value) -> R<String> {
     let now = crate::time::now() as f64;
     let wide = ctx.wide.get();
     let mut header = vec![
-        "NAME", "KIND", "PROFILE", "STATUS", "OWNER", "AGENT", "TOPIC", "EXPIRES", "AGE",
+        "NAME", "PROFILE", "STATUS", "OWNER", "AGENT", "TOPIC", "EXPIRES", "AGE",
     ];
     if wide {
         header.extend(["AGENT-ID", "FLAVOR", "IP", "CWD"]);
@@ -153,7 +153,6 @@ pub fn plain(ctx: &Ctx, list: &Value) -> R<String> {
         };
         let mut cells = vec![
             jq::tsv(get(w, "name")),
-            jq::tsv(get(w, "kind")),
             jq::tsv(jq::alt(
                 get(w, "profile"),
                 &Value::String("standard".into()),
