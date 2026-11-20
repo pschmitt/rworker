@@ -76,6 +76,7 @@ flag exec --keep-on-failure keep the worker if the command fails
 flag ssh --create create a worker first (same as up --ssh; up's options follow)
 flag ssh --profile=profile worker image profile when creating
 flag ssh -l=user log in as this user (like ssh -l)
+flag ls --fresh wait for a fresh inventory snapshot
 flag ls --watch redraw in place, marking changes
 flag ls -w short for --watch
 flag ls --interval=seconds refresh interval in seconds (with --watch; same as -n)

@@ -1,4 +1,4 @@
-Usage: __ME__ ls [-o json|wide] [-w|--watch [-n SECONDS]]
+Usage: __ME__ ls [-o json|wide] [--fresh | -w|--watch [-n SECONDS]]
           [--topic REGEX] [--agent REGEX] [--agent-id REGEX]
 
 List all workers: ad-hoc ones (KIND adhoc) and nixbot's pool (KIND pool),
@@ -12,6 +12,7 @@ busy, idle 12m (drained after 20m idle with nothing pending) or draining.
   --topic REGEX, --agent REGEX, --agent-id REGEX
                  only workers whose topic, creating agent or agent id
                  matches (a leading ! inverts the match)
+  --fresh        wait for a fresh inventory snapshot
   -w, --watch    redraw the table in place every -n seconds (default 5),
                  marking rows: + new, ~ changed (status, IP, owner, expiry,
                  flavor), - gone. q quits, any other key refreshes now.

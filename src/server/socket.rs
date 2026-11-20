@@ -88,6 +88,30 @@ fn serve_connection(config: &str) -> io::Result<()> {
         ));
     }
     let args: Vec<String> = serde_json::from_slice(&request)?;
+    if args
+        .first()
+        .is_some_and(|action| matches!(action.as_str(), "refresh-inventory" | "inventory-api"))
+    {
+        io::stdout()
+            .lock()
+            .write_all(b"eInvalid control command\nx2\n")?;
+        return Ok(());
+    }
+    if matches!(args.as_slice(), [action, rest @ ..] if action == "ls" && (rest.is_empty() || rest == ["--fresh"]))
+        && let Some(dir) = super::inventory_cache::directory()
+    {
+        let result = super::inventory_cache::list(&dir, args.len() == 2);
+        let mut out = io::stdout().lock();
+        match result {
+            Ok(workers) => {
+                out.write_all(b"o")?;
+                serde_json::to_writer(&mut out, &workers)?;
+                out.write_all(b"\nx0\n")?;
+            }
+            Err(error) => write!(out, "e{error}\nx1\n")?,
+        }
+        return out.flush();
+    }
     let mut child = Command::new(std::env::current_exe()?)
         .args(["server", config])
         .args(args)

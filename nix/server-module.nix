@@ -7,7 +7,10 @@
 }:
 let
   cfg = config.services.rworker;
+  inventoryDirectory = "/run/rworker-inventory";
   socket = "/run/rworker-control.sock";
+  apiSocket = "/run/rworker-inventory-api/http.sock";
+  apiGroup = if cfg.api.https == null then cfg.group else "rworker-inventory-api";
   runtimeTools = [
     pkgs.coreutils
     pkgs.curl
@@ -30,6 +33,21 @@ in
 {
   options.services.rworker = {
     enable = lib.mkEnableOption "the rworker control socket and local client";
+    api.https = lib.mkOption {
+      default = null;
+      description = "Serve the read API through nginx with mandatory client certificates on a private address.";
+      type = lib.types.nullOr (
+        lib.types.submodule {
+          options = {
+            serverName = lib.mkOption { type = lib.types.str; };
+            listenAddress = lib.mkOption { type = lib.types.str; };
+            certificateFile = lib.mkOption { type = lib.types.str; };
+            certificateKeyFile = lib.mkOption { type = lib.types.str; };
+            clientCAFile = lib.mkOption { type = lib.types.str; };
+          };
+        }
+      );
+    };
     reaper.enable = lib.mkEnableOption "periodic reaping of expired ad-hoc workers";
     reaper.dryRun = lib.mkEnableOption "reporting reaper decisions without changing workers";
     autoscaler = {
@@ -73,29 +91,105 @@ in
   config = lib.mkMerge [
     (lib.mkIf cfg.enable {
       environment.systemPackages = [ client ];
-      systemd.sockets.rworker-control = {
-        wantedBy = [ "sockets.target" ];
-        socketConfig = {
-          Accept = true;
-          ListenStream = socket;
-          SocketMode = "0660";
-          SocketUser = cfg.user;
-          SocketGroup = cfg.group;
+      systemd = {
+        sockets.rworker-control = {
+          wantedBy = [ "sockets.target" ];
+          socketConfig = {
+            Accept = true;
+            ListenStream = socket;
+            SocketMode = "0660";
+            SocketUser = cfg.user;
+            SocketGroup = cfg.group;
+          };
+        };
+        services = {
+          rworker-inventory = {
+            description = "Refresh shared rworker inventory";
+            wantedBy = [ "multi-user.target" ];
+            wants = [ "network-online.target" ];
+            after = [ "network-online.target" ];
+            path = runtimeTools;
+            environment.RWORKER_INVENTORY_DIRECTORY = inventoryDirectory;
+            serviceConfig = {
+              User = cfg.user;
+              Group = cfg.group;
+              RuntimeDirectory = "rworker-inventory";
+              RuntimeDirectoryMode = "0750";
+              UMask = "0027";
+              Restart = "on-failure";
+              RestartSec = "2s";
+              ExecStart = command [
+                "server"
+                cfg.settingsFile
+                "refresh-inventory"
+              ];
+            };
+          };
+          rworker-inventory-api = {
+            description = "rworker inventory HTTP API";
+            wantedBy = [ "multi-user.target" ];
+            requires = [ "rworker-inventory.service" ];
+            after = [ "rworker-inventory.service" ];
+            environment.RWORKER_INVENTORY_DIRECTORY = inventoryDirectory;
+            serviceConfig = {
+              User = cfg.user;
+              Group = apiGroup;
+              RuntimeDirectory = "rworker-inventory-api";
+              RuntimeDirectoryMode = "0750";
+              UMask = "0007";
+              Restart = "on-failure";
+              ExecStart = command [
+                "server"
+                cfg.settingsFile
+                "inventory-api"
+                apiSocket
+              ];
+            };
+          };
+          "rworker-control@" = {
+            description = "rworker control request";
+            wants = [ "rworker-inventory.service" ];
+            after = [ "rworker-inventory.service" ];
+            environment.RWORKER_INVENTORY_DIRECTORY = inventoryDirectory;
+            path = runtimeTools;
+            serviceConfig = {
+              User = cfg.user;
+              Group = cfg.group;
+              ExecStart = command [
+                "__serve-control-socket"
+                cfg.settingsFile
+              ];
+              StandardInput = "socket";
+              StandardOutput = "socket";
+              StandardError = "journal";
+            };
+          };
         };
       };
-      systemd.services."rworker-control@" = {
-        description = "rworker control request";
-        path = runtimeTools;
-        serviceConfig = {
-          User = cfg.user;
-          Group = cfg.group;
-          ExecStart = command [
-            "__serve-control-socket"
-            cfg.settingsFile
+    })
+    (lib.mkIf (cfg.enable && cfg.api.https != null) {
+      users.groups.rworker-inventory-api = { };
+      users.users.${config.services.nginx.user}.extraGroups = [ apiGroup ];
+      services.nginx = {
+        enable = true;
+        virtualHosts.${cfg.api.https.serverName} = {
+          onlySSL = true;
+          listen = [
+            {
+              addr = cfg.api.https.listenAddress;
+              port = 443;
+              ssl = true;
+            }
           ];
-          StandardInput = "socket";
-          StandardOutput = "socket";
-          StandardError = "journal";
+          sslCertificate = cfg.api.https.certificateFile;
+          sslCertificateKey = cfg.api.https.certificateKeyFile;
+          extraConfig = ''
+            ssl_client_certificate ${cfg.api.https.clientCAFile};
+            ssl_verify_client on;
+          '';
+          locations."/v1/workers" = {
+            proxyPass = "http://unix:${apiSocket}:";
+          };
         };
       };
     })

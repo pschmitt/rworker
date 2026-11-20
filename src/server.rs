@@ -1,6 +1,8 @@
 mod autoscale;
 mod http;
 mod inventory;
+mod inventory_api;
+mod inventory_cache;
 mod metadata;
 mod mutations;
 mod netbird;
@@ -39,6 +41,27 @@ pub fn run(ctx: &crate::ctx::Ctx, args: &[String]) -> R {
         eprintln!("error: {message}");
         return Err(Fail(2));
     }
+    let cache = inventory_cache::directory();
+    if action == "refresh-inventory" && rest.is_empty() {
+        return match cache {
+            Some(dir) => inventory_cache::refresh_forever(config, &dir).map_err(|error| {
+                eprintln!("Inventory cache: {error}");
+                Fail(1)
+            }),
+            None => {
+                eprintln!("RWORKER_INVENTORY_DIRECTORY is required");
+                Err(Fail(2))
+            }
+        };
+    }
+    if action == "inventory-api"
+        && let (Some(dir), [socket]) = (cache.as_ref(), rest)
+    {
+        return inventory_api::serve(dir.to_owned(), socket).map_err(|error| {
+            eprintln!("Inventory API: {error}");
+            Fail(1)
+        });
+    }
     let up = if action == "up" {
         match up::Args::parse(rest) {
             Ok(args) => Some(args),
@@ -54,7 +77,8 @@ pub fn run(ctx: &crate::ctx::Ctx, args: &[String]) -> R {
         "up" => None,
         "reap" if rest.is_empty() || rest == ["--dry-run"] => None,
         "autoscale" if rest.is_empty() || rest == ["--once"] => None,
-        "profiles" | "ls" if rest.is_empty() => None,
+        "profiles" if rest.is_empty() => None,
+        "ls" if rest.is_empty() || rest == ["--fresh"] => None,
         "topic" | "claim" | "extend" | "niks3-token" | "down" => match parse_edit(action, rest) {
             Ok(edit) => Some(edit),
             Err(error) => {
@@ -68,6 +92,15 @@ pub fn run(ctx: &crate::ctx::Ctx, args: &[String]) -> R {
         }
     };
     let result = (|| -> Result<(), Box<dyn std::error::Error>> {
+        if action == "ls"
+            && let Some(dir) = &cache
+        {
+            let response = inventory_cache::list(dir, !rest.is_empty())?;
+            let mut stdout = io::stdout().lock();
+            serde_json::to_writer(&mut stdout, &response)?;
+            writeln!(stdout)?;
+            return Ok(());
+        }
         let settings = serde_json::from_reader(BufReader::new(File::open(config)?))?;
         if action == "autoscale" {
             autoscale::run(&settings, !rest.is_empty())?;
@@ -122,6 +155,17 @@ pub fn run(ctx: &crate::ctx::Ctx, args: &[String]) -> R {
         writeln!(stdout)?;
         Ok(())
     })();
+    // Some operations can change provider state before returning an error.
+    if (action == "up"
+        || matches!(
+            action.as_str(),
+            "down" | "extend" | "topic" | "claim" | "niks3-token"
+        ))
+        && let Some(dir) = &cache
+        && let Err(error) = inventory_cache::invalidate(dir)
+    {
+        eprintln!("Invalidate worker inventory: {error}");
+    }
     result.map_err(|error| {
         eprintln!("{error}");
         Fail(1)

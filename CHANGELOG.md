@@ -8,6 +8,11 @@ Actions, flags, output, JSON and exit statuses are the same; see
 
 ### Control inventory and JSON output
 
+- Share a control-host inventory snapshot across SSH and local clients.
+  Use `rworker ls --fresh` to request a refresh before reading.
+- Serve the snapshot at `GET /v1/workers` and `GET /v1/workers/{name}` via a
+  group-restricted Unix socket, with ETags and snapshot age headers.
+
 - Fetch detailed OpenStack inventory in one command and overlap it with
   the NetBird and Tailscale reads.
 - Pretty-print JSON on a terminal with syntax colors. `NO_COLOR` disables

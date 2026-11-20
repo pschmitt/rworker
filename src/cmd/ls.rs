@@ -54,6 +54,7 @@ pub fn filter_workers(ctx: &Ctx, workers: &str, topic: &str, agent: &str) -> R<S
 pub fn cmd_ls(ctx: &Ctx, args: &[String]) -> R {
     let mut json = false;
     let mut watch = false;
+    let mut fresh = false;
     let mut interval = "5".to_string();
     let (mut topic, mut agent) = (String::new(), String::new());
     let mut i = 0;
@@ -74,6 +75,7 @@ pub fn cmd_ls(ctx: &Ctx, args: &[String]) -> R {
             }
             "--json" | "-ojson" => json = true,
             "-w" | "--watch" => watch = true,
+            "--fresh" => fresh = true,
             "--topic" | "--agent" | "--agent-id" => {
                 let v = args.get(i + 1).cloned().unwrap_or_default();
                 if v.is_empty() {
@@ -110,9 +112,17 @@ pub fn cmd_ls(ctx: &Ctx, args: &[String]) -> R {
         i += 1;
     }
     if watch {
+        if fresh {
+            ctx.err("--fresh cannot be used with --watch");
+            return Err(Fail(2));
+        }
         return watch_ls(ctx, &interval, &topic, &agent);
     }
-    let out = state::remote_ls(ctx)?;
+    let out = if fresh {
+        state::remote(ctx, &["ls", "--fresh"])?
+    } else {
+        state::remote_ls(ctx)?
+    };
     let out = filter_workers(ctx, &out, &topic, &agent)?;
     if json || ctx.json.get() {
         crate::ctx::json_out(ctx, &out);

@@ -60,3 +60,27 @@ completions come with the package (`share/zsh/site-functions`,
 
 `rworker-mcp --rworker PATH` serves the actions as MCP tools over stdio, on
 top of the client, so state and pinned host keys are shared.
+
+### Control-host inventory API
+
+The control service refreshes inventory five seconds after each successful or
+failed provider read. CLI and API readers share this snapshot. After a
+control mutation or `rworker ls --fresh`, the refresher starts another
+provider read. An unavailable or older-than-30-second snapshot returns an error.
+
+The read API accepts `GET /v1/workers` and `GET /v1/workers/{name}`.
+The responses are the worker array and a single worker object respectively.
+Responses include an `ETag` for conditional reads and
+`X-Rworker-Inventory-Age-Ms` for freshness. A missing worker returns 404.
+A missing or invalidated snapshot returns 503 until the next successful refresh.
+
+```sh
+curl --unix-socket /run/rworker-inventory-api/http.sock http://localhost/v1/workers
+```
+
+To expose the API on a private network, set `services.rworker.api.https` with
+`serverName`, `listenAddress`, `certificateFile`, `certificateKeyFile`, and
+`clientCAFile`. The certificate paths refer to runtime files on the server.
+Use a dedicated client CA whose certificates are issued only to API clients.
+nginx verifies the client certificate and has access to the read API socket.
+The CLI continues to use its existing SSH authentication.
