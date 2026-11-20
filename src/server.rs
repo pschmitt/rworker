@@ -1,4 +1,5 @@
 mod autoscale;
+pub(crate) mod builder_gateway;
 mod http;
 mod inventory;
 mod inventory_api;

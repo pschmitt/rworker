@@ -88,3 +88,9 @@ To expose the API on a private network, set `services.rworker.api.https` with
 Use a dedicated client CA whose certificates are issued only to API clients.
 nginx verifies the client certificate and has access to the read API socket.
 The TUI can use this HTTPS endpoint or its existing authenticated control connection.
+
+
+## On-demand Nix builders
+
+The NixOS module can provision workers on demand through a stable SSH gateway.
+See [On-demand Nix builders](nix-builders.md) for gateway and client options.

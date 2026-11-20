@@ -31,6 +31,7 @@ when its time runs out.
   worker substitute from this host's S3 cache over SSH only.
 - **Live list**: `ls --watch` redraws in place and marks new, changed and
   gone workers; `--topic`, `--agent` and `--agent-id` filter by regex.
+- **On-demand Nix builders** lease a worker through a stable SSH endpoint. See [On-demand Nix builders](docs/nix-builders.md).
 - **Terminal UI**: `tui` shows the workers, their jobs and logs, followed
   live, and runs the actions on the selected worker with a key or two.
 - **Scripting**: `--json` on every action but `ssh`; an MCP server
@@ -76,6 +77,7 @@ rworker down "$w"                                    # delete it
 | --- | --- |
 | [Usage](docs/usage.md) | Actions, worker names, environment variables |
 | [Nix](docs/nix.md) | Flake outputs, overlay options and the MCP server |
+| [On-demand Nix builders](docs/nix-builders.md) | Gateway, machines entry and worker leases |
 | [Worker images](docs/images.md) | Building, uploading and booting worker images |
 | [Development](docs/development.md) | Building, tests and the parity harness |
 | [Parity contract](PARITY.md) | What the Rust client keeps from the bash client it replaces |

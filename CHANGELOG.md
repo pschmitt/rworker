@@ -21,6 +21,8 @@ Actions, flags, output, JSON and exit statuses are the same; see
 
 ### New
 
+- Offer an opt-in NixOS SSH gateway and machines entry for on-demand Nix builds.
+
 - Store and display the OpenStack image name and ID in worker inspection.
 
 - Push worker inventory to the TUI and show workers as they are building.

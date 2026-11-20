@@ -324,6 +324,7 @@ fn run(ctx: &Ctx, argv: &[String]) -> R {
             return Err(Fail(2));
         }
         "server" => return server::run(ctx, &argv[1..]),
+        "__builder-gateway" => return server::builder_gateway::run(ctx, &argv[1..]),
         "__action" => {
             let action = resolve_action(&second).map_err(|_| Fail(2))?;
             ctx::outln(action);

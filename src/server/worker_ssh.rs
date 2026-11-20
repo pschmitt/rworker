@@ -22,14 +22,7 @@ pub(super) fn answers(ip: IpAddr) -> bool {
     TcpStream::connect_timeout(&SocketAddr::new(ip, 22), Duration::from_secs(4)).is_ok()
 }
 
-pub(super) fn run(
-    settings: &Value,
-    ip: IpAddr,
-    host_key: &str,
-    remote: &str,
-    input: Option<&str>,
-    timeout_secs: u64,
-) -> Result<Output, String> {
+fn pinned_hosts(settings: &Value, ip: IpAddr, host_key: &str) -> Result<KnownHosts, String> {
     if host_key.contains(['\r', '\n']) {
         return Err("Invalid worker host key".into());
     }
@@ -47,6 +40,54 @@ pub(super) fn run(
     let known = KnownHosts(path);
     writeln!(file, "{ip} {host_key}").map_err(|err| format!("Write worker host key: {err}"))?;
     drop(file);
+    Ok(known)
+}
+
+/// A Nix remote store connection leaves both protocol streams untouched.
+pub(super) fn daemon_stdio(settings: &Value, ip: IpAddr, host_key: &str) -> Result<i32, String> {
+    let known = pinned_hosts(settings, ip, host_key)?;
+    let user = setting(settings, "sshUser")?;
+    let status = Command::new("ssh")
+        .args(["-T", "-F", "/dev/null", "-i"])
+        .arg(setting(settings, "sshKeyFile")?)
+        .args([
+            "-o",
+            "BatchMode=yes",
+            "-o",
+            "IdentitiesOnly=yes",
+            "-o",
+            "IdentityAgent=none",
+            "-o",
+            "StrictHostKeyChecking=yes",
+            "-o",
+            "GlobalKnownHostsFile=/dev/null",
+            "-o",
+            "ConnectTimeout=10",
+            "-o",
+            "ServerAliveInterval=15",
+            "-o",
+            "ServerAliveCountMax=2",
+            "-o",
+        ])
+        .arg(format!("UserKnownHostsFile={}", known.0.display()))
+        .args(["--", &format!("{user}@{ip}"), "nix-daemon --stdio"])
+        .stdin(Stdio::inherit())
+        .stdout(Stdio::inherit())
+        .stderr(Stdio::inherit())
+        .status()
+        .map_err(|error| format!("Connect to worker Nix daemon: {error}"))?;
+    Ok(crate::proc::code_of(status))
+}
+
+pub(super) fn run(
+    settings: &Value,
+    ip: IpAddr,
+    host_key: &str,
+    remote: &str,
+    input: Option<&str>,
+    timeout_secs: u64,
+) -> Result<Output, String> {
+    let known = pinned_hosts(settings, ip, host_key)?;
     let user = setting(settings, "sshUser")?;
     let mut child = Command::new("timeout")
         .args(["--kill-after=5", &timeout_secs.to_string(), "ssh", "-i"])

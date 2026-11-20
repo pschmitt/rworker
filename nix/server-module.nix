@@ -19,6 +19,42 @@ let
     pkgs.openstackclient
   ];
   command = args: utils.escapeSystemdExecArgs ([ (lib.getExe cfg.package) ] ++ args);
+  builderSocket = "/run/rworker-builder.sock";
+  builderAccount = "rworker-builder";
+  builderState = "/var/lib/rworker-builder-gateway";
+  builderGate = pkgs.writeShellApplication {
+    name = "rworker-builder-gate";
+    runtimeInputs = [ pkgs.socat ];
+    text = ''
+      case "''${SSH_ORIGINAL_COMMAND:-}" in
+        "nix-daemon --stdio" | "nix daemon --stdio")
+          exec socat -t60 STDIO UNIX-CONNECT:${builderSocket}
+          ;;
+        *)
+          echo "This account serves the Nix daemon protocol." >&2
+          exit 126
+          ;;
+      esac
+    '';
+  };
+  builderCommand =
+    mode:
+    command [
+      "__builder-gateway"
+      cfg.settingsFile
+      builderState
+      mode
+      cfg.builderGateway.profile
+      "${toString cfg.builderGateway.leaseSeconds}s"
+      (toString cfg.builderGateway.idleSeconds)
+    ];
+  builderService = {
+    User = cfg.user;
+    Group = cfg.group;
+    StateDirectory = "rworker-builder-gateway";
+    StateDirectoryMode = "0700";
+    UMask = "0077";
+  };
   client = pkgs.symlinkJoin {
     name = "rworker-local-client";
     paths = [ cfg.package ];
@@ -51,6 +87,76 @@ in
           };
         }
       );
+    };
+    builderGateway = {
+      enable = lib.mkEnableOption "the on-demand SSH Nix builder gateway";
+      authorizedKeysFile = lib.mkOption {
+        type = lib.types.str;
+        example = "/run/secrets/rworker-builder-authorized-keys";
+        description = "Runtime authorized_keys file readable by the dedicated gateway SSH account.";
+      };
+      profile = lib.mkOption {
+        type = lib.types.str;
+        default = "standard";
+        description = "Worker profile to provision for remote Nix builds.";
+      };
+      leaseSeconds = lib.mkOption {
+        type = lib.types.ints.positive;
+        default = 7200;
+        description = "Maximum requested worker lifetime, subject to the normal controller limit.";
+      };
+      idleSeconds = lib.mkOption {
+        type = lib.types.ints.positive;
+        default = 300;
+        description = "Keep the leased worker warm for this long after its last SSH session ends.";
+      };
+      maxConnections = lib.mkOption {
+        type = lib.types.ints.positive;
+        default = 8;
+        description = "Maximum simultaneous gateway connections sharing the leased worker.";
+      };
+    };
+    builderClient = {
+      enable = lib.mkEnableOption "the on-demand rworker entry in /etc/nix/machines";
+      hostName = lib.mkOption {
+        type = lib.types.str;
+        example = "builder.example.com";
+        description = "SSH host name of the rworker builder gateway.";
+      };
+      identityFile = lib.mkOption {
+        type = lib.types.str;
+        example = "/run/secrets/rworker-builder-key";
+        description = "Runtime SSH private key path readable by the local Nix daemon.";
+      };
+      publicHostKey = lib.mkOption {
+        type = lib.types.str;
+        description = "Base64-encoded SSH public host-key line of the stable gateway.";
+      };
+      systems = lib.mkOption {
+        type = lib.types.nonEmptyListOf lib.types.str;
+        default = [ pkgs.stdenv.hostPlatform.system ];
+        description = "Systems the configured worker profile can build.";
+      };
+      maxJobs = lib.mkOption {
+        type = lib.types.ints.positive;
+        default = 1;
+        description = "Maximum concurrent builds Nix schedules on this entry from this client.";
+      };
+      speedFactor = lib.mkOption {
+        type = lib.types.ints.positive;
+        default = 1;
+        description = "Relative speed Nix uses when choosing among builders.";
+      };
+      supportedFeatures = lib.mkOption {
+        type = lib.types.listOf lib.types.str;
+        default = [ ];
+        description = "Nix system features the worker image provides.";
+      };
+      mandatoryFeatures = lib.mkOption {
+        type = lib.types.listOf lib.types.str;
+        default = [ ];
+        description = "Features a derivation must request before Nix selects this builder.";
+      };
     };
     logCache = {
       operator = lib.mkOption {
@@ -202,6 +308,112 @@ in
             };
           };
         };
+      };
+    })
+    (lib.mkIf cfg.builderGateway.enable {
+      assertions = [
+        {
+          assertion = cfg.enable;
+          message = "services.rworker.builderGateway requires services.rworker.enable.";
+        }
+        {
+          assertion =
+            lib.hasPrefix "/" cfg.builderGateway.authorizedKeysFile
+            && builtins.match "[^[:space:]]+" cfg.builderGateway.authorizedKeysFile != null;
+          message = "The rworker builder gateway authorizedKeysFile must be an absolute runtime path without whitespace.";
+        }
+      ];
+      users.groups.${builderAccount} = { };
+      users.users.${builderAccount} = {
+        isSystemUser = true;
+        group = builderAccount;
+        shell = pkgs.bash;
+      };
+      services.openssh = {
+        enable = true;
+        extraConfig = ''
+          Match User ${builderAccount}
+            AuthorizedKeysFile ${cfg.builderGateway.authorizedKeysFile}
+            ForceCommand ${lib.getExe builderGate}
+            AuthenticationMethods publickey
+            DisableForwarding yes
+            PermitTTY no
+            PermitUserRC no
+          Match All
+        '';
+      };
+      systemd = {
+        sockets.rworker-builder = {
+          wantedBy = [ "sockets.target" ];
+          socketConfig = {
+            Accept = true;
+            ListenStream = builderSocket;
+            SocketMode = "0660";
+            SocketUser = cfg.user;
+            SocketGroup = builderAccount;
+            MaxConnections = cfg.builderGateway.maxConnections;
+          };
+        };
+        services = {
+          "rworker-builder@" = {
+            description = "On-demand rworker Nix daemon connection";
+            environment.RWORKER_INVENTORY_DIRECTORY = inventoryDirectory;
+            path = runtimeTools;
+            serviceConfig = builderService // {
+              ExecStart = builderCommand "stdio";
+              StandardInput = "socket";
+              StandardOutput = "socket";
+              StandardError = "journal";
+            };
+          };
+          rworker-builder-reap = {
+            description = "Delete the idle rworker builder lease";
+            environment.RWORKER_INVENTORY_DIRECTORY = inventoryDirectory;
+            path = runtimeTools;
+            serviceConfig = builderService // {
+              Type = "oneshot";
+              ExecStart = builderCommand "reap";
+            };
+          };
+        };
+        timers.rworker-builder-reap = {
+          wantedBy = [ "timers.target" ];
+          timerConfig = {
+            OnBootSec = "1m";
+            OnUnitInactiveSec = "1m";
+            AccuracySec = "5s";
+          };
+        };
+      };
+    })
+    (lib.mkIf cfg.builderClient.enable {
+      assertions = [
+        {
+          assertion =
+            lib.hasPrefix "/" cfg.builderClient.identityFile
+            && builtins.match "[^[:space:]]+" cfg.builderClient.identityFile != null
+            && builtins.match "[A-Za-z0-9+/=]+" cfg.builderClient.publicHostKey != null;
+          message = "The rworker builder client needs an absolute runtime identity path and a pinned base64 SSH host key.";
+        }
+      ];
+      nix = {
+        distributedBuilds = true;
+        buildMachines = [
+          {
+            protocol = "ssh-ng";
+            sshUser = builderAccount;
+            sshKey = cfg.builderClient.identityFile;
+            inherit (cfg.builderClient)
+              hostName
+              publicHostKey
+              systems
+              maxJobs
+              speedFactor
+              supportedFeatures
+              mandatoryFeatures
+              ;
+          }
+        ];
       };
     })
     (lib.mkIf (cfg.enable && cfg.api.https != null) {
