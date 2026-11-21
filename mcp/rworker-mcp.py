@@ -52,6 +52,7 @@ def up(
     topic: str | None = None,
     agent_id: str | None = None,
     nix_cache: bool = True,
+    nix_auth: bool = True,
     profile: str | None = None,
     niks3_token: bool = True,
 ) -> dict:
@@ -69,7 +70,11 @@ def up(
     True) lets the worker substitute from the private S3 Nix cache with this
     host's read-only credentials (pushed over SSH, only if this host has an
     s3:// substituter); pass False to keep the key off the worker. The result
-    then has a nix_cache object, ok=false if it did not work.
+    then has a nix_cache object, ok=false if it did not work. nix_auth
+    (default True) also pushes this host's Nix access-tokens (only if it has
+    any), so the worker fetches private flake inputs itself; pass False to
+    keep the tokens off the worker. Both results are in the nix_cache object
+    (auth, auth_hosts).
     niks3_token (default True) gives the worker its own short-lived niks3
     push token, valid as long as the worker (extend() renews it), which the
     `niks3` command on the worker uses (`niks3 push PATH`); the result has a
@@ -93,6 +98,8 @@ def up(
         argv += ["--agent-id", agent_id]
     if not nix_cache:
         argv.append("--no-nix-cache")
+    if not nix_auth:
+        argv.append("--no-nix-auth")
     if not niks3_token:
         argv.append("--no-niks3-token")
     return json.loads(run(*argv, timeout=1200))
@@ -312,14 +319,42 @@ def sync(name: str, src: str, dest: str | None = None) -> dict:
 
 
 @mcp.tool()
+def setup_nix(
+    name: str,
+    cache: bool = True,
+    auth: bool = True,
+    auth_hosts: list[str] | None = None,
+    dry_run: bool = False,
+) -> dict:
+    """Get a worker ready to use this host's Nix (`rworker setup nix`).
+    cache (default True): the private S3 Nix cache, i.e. this host's s3://
+    substituters, the trusted public keys and the one AWS profile they name
+    (read-only), so the worker substitutes from it. auth (default True): this
+    host's Nix access-tokens (for example github.com), so the worker fetches
+    private flake inputs itself instead of receiving them from here.
+    auth_hosts limits the tokens to those hosts. Pushed over SSH into
+    /run/rworker-nix on the worker; nothing else of nix.conf is copied. Run
+    it again after a key or token was rotated. dry_run shows what would be
+    pushed (never credentials or tokens). ok=false: see daemon
+    (image-too-old, timeout) and reachable."""
+    argv = ["setup", "nix", name, "--json"]
+    if not cache:
+        argv.append("--no-cache")
+    if not auth:
+        argv.append("--no-auth")
+    for host in auth_hosts or []:
+        argv += ["--auth-host", host]
+    if dry_run:
+        argv.append("--dry-run")
+    return json.loads(run(*argv, timeout=300))
+
+
+@mcp.tool()
 def nix_cache(name: str, dry_run: bool = False) -> dict:
-    """Let a worker substitute from the private S3 Nix cache, using this
-    host's own settings: its s3:// substituters, the trusted public keys and
-    the one AWS profile they name (read-only), pushed over SSH into
-    /run/rworker-nix on the worker. Nothing else of nix.conf is copied. Run
-    it again after the key was rotated. dry_run shows what would be pushed
-    (never credentials). ok=false: see daemon (image-too-old, timeout) and
-    reachable."""
+    """The cache part of setup_nix only (kept for older callers): let a
+    worker substitute from the private S3 Nix cache with this host's s3://
+    substituters, trusted keys and read-only AWS profile. dry_run shows what
+    would be pushed (never credentials)."""
     argv = ["nix-cache", name, "--json"] + (["--dry-run"] if dry_run else [])
     return json.loads(run(*argv, timeout=300))
 

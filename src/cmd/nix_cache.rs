@@ -1,6 +1,11 @@
-//! `nix-cache`: let a worker substitute from this host's S3 cache. Only
-//! the s3:// substituters, the trusted keys and the AWS profiles they name
-//! leave the host, over SSH (pinned host key).
+//! `setup nix`: get a worker ready to use this host's Nix. Over SSH (pinned
+//! host key) it pushes
+//!   - the cache part: the s3:// substituters, the trusted keys and the AWS
+//!     profiles they name, so the worker substitutes from the private cache;
+//!   - the auth part: this host's `access-tokens`, so the worker fetches
+//!     private flake inputs itself instead of receiving them from here.
+//!
+//! Nothing else of this host's nix.conf leaves it (it can hold netrc paths).
 
 use crate::ctx::{Ctx, Fail, R, outln};
 use crate::jq::{self, get};
@@ -23,10 +28,28 @@ fn unique(mut v: Vec<String>) -> Vec<String> {
     v
 }
 
-/// The s3:// substituters, the AWS profiles they name and the trusted
-/// public keys of this host's Nix. nix.conf can hold access-tokens and
-/// netrc paths, and non-S3 caches are not reachable from OpenStack anyway.
-pub fn settings(ctx: &Ctx) -> R<Value> {
+/// What `setup nix` pushes. Both parts by default.
+#[derive(Clone, Debug)]
+pub struct Opts {
+    /// The S3 cache: substituters, trusted keys, AWS profiles.
+    pub cache: bool,
+    /// This host's access-tokens (private flake inputs).
+    pub auth: bool,
+    /// Only the tokens of these hosts (empty: all of them).
+    pub auth_hosts: Vec<String>,
+}
+
+impl Default for Opts {
+    fn default() -> Self {
+        Self {
+            cache: true,
+            auth: true,
+            auth_hosts: Vec::new(),
+        }
+    }
+}
+
+fn read_config(ctx: &Ctx) -> R<Value> {
     let out = Command::new("nix")
         .args(["config", "show", "--json"])
         .stderr(std::process::Stdio::null())
@@ -38,8 +61,40 @@ pub fn settings(ctx: &Ctx) -> R<Value> {
             return Err(Fail(1));
         }
     };
-    let cfg = state::parse(ctx, &cfg)?;
-    let vals = |k: &str| strings(jq::alt(jq::path(&cfg, &[k, "value"]), &json!([])));
+    state::parse(ctx, &cfg)
+}
+
+/// The access-tokens of this host's Nix as (host, token), sorted by host and
+/// limited to `hosts` when that is not empty. Entries nix.conf cannot carry
+/// (whitespace or `#` would split or comment them out) are dropped. The
+/// values stay in memory: they are pushed over SSH and never printed.
+fn access_tokens(cfg: &Value, hosts: &[String]) -> Vec<(String, String)> {
+    let mut out: Vec<(String, String)> = cfg["access-tokens"]["value"]
+        .as_object()
+        .map(|m| {
+            m.iter()
+                .filter_map(|(host, token)| Some((host.clone(), token.as_str()?.to_string())))
+                .collect()
+        })
+        .unwrap_or_default();
+    out.retain(|(host, token)| {
+        let ok = |t: &str| !t.is_empty() && !t.chars().any(|c| c.is_whitespace() || c == '#');
+        ok(host) && ok(token) && (hosts.is_empty() || hosts.contains(host))
+    });
+    out.sort();
+    out
+}
+
+/// The s3:// substituters, the AWS profiles they name, the trusted public
+/// keys and the hosts that have an access-token in this host's Nix (names
+/// only). Non-S3 caches are not reachable from OpenStack anyway.
+pub fn settings(ctx: &Ctx) -> R<Value> {
+    let cfg = read_config(ctx)?;
+    Ok(derive(&cfg))
+}
+
+fn derive(cfg: &Value) -> Value {
+    let vals = |k: &str| strings(jq::alt(jq::path(cfg, &[k, "value"]), &json!([])));
     let subs = unique(
         [vals("substituters"), vals("extra-substituters")]
             .concat()
@@ -64,7 +119,11 @@ pub fn settings(ctx: &Ctx) -> R<Value> {
         ]
         .concat(),
     );
-    Ok(json!({"substituters": subs, "profiles": profiles, "keys": keys}))
+    let auth_hosts: Vec<String> = access_tokens(cfg, &[])
+        .into_iter()
+        .map(|(h, _)| h)
+        .collect();
+    json!({"substituters": subs, "profiles": profiles, "keys": keys, "auth_hosts": auth_hosts})
 }
 
 /// One profile section ("[name]" and its lines) of an AWS credentials file.
@@ -103,13 +162,30 @@ fn ssh_capture(opts: &[String], login: &str, script: &str) -> String {
 }
 
 /// Push the settings to a worker. The JSON result, progress on stderr.
-pub fn push(ctx: &Ctx, name: &str, dry: bool) -> R<String> {
-    let settings = settings(ctx)?;
+pub fn push(ctx: &Ctx, name: &str, dry: bool, opts: &Opts) -> R<String> {
+    let cfg = read_config(ctx)?;
+    let settings = derive(&cfg);
     let subs = strings(get(&settings, "substituters"));
-    if subs.is_empty() {
-        ctx.err("This host's Nix has no s3:// substituter; nothing to push");
+    let tokens = if opts.auth {
+        access_tokens(&cfg, &opts.auth_hosts)
+    } else {
+        Vec::new()
+    };
+    let do_cache = opts.cache && !subs.is_empty();
+    let do_auth = !tokens.is_empty();
+    if !do_cache && !do_auth {
+        match (opts.cache, opts.auth) {
+            (true, false) => ctx.err("This host's Nix has no s3:// substituter; nothing to push"),
+            (false, true) => {
+                ctx.err("This host's Nix has no matching access-tokens; nothing to push")
+            }
+            _ => ctx.err(
+                "This host's Nix has no s3:// substituter and no access-tokens; nothing to push",
+            ),
+        }
         return Err(Fail(1));
     }
+    let auth_hosts: Vec<String> = tokens.iter().map(|(h, _)| h.clone()).collect();
     // RWORKER_AWS_CREDENTIALS_FILE: for rworker only, without pointing
     // every other AWS tool at that file.
     let creds_file = crate::ctx::env_or(
@@ -120,78 +196,100 @@ pub fn push(ctx: &Ctx, name: &str, dry: bool) -> R<String> {
         ),
     );
     let mut creds = String::new();
-    for profile in strings(get(&settings, "profiles")) {
-        let section = aws_profile_section(&creds_file, &profile);
-        if section.is_empty() {
-            ctx.err(&format!(
-                "No [{profile}] profile in {creds_file} (named by an s3:// substituter)"
-            ));
-            return Err(Fail(1));
+    if do_cache {
+        for profile in strings(get(&settings, "profiles")) {
+            let section = aws_profile_section(&creds_file, &profile);
+            if section.is_empty() {
+                ctx.err(&format!(
+                    "No [{profile}] profile in {creds_file} (named by an s3:// substituter)"
+                ));
+                return Err(Fail(1));
+            }
+            creds.push_str(&section);
+            creds.push('\n');
         }
-        creds.push_str(&section);
-        creds.push('\n');
     }
-    let conf = format!(
-        "# Pushed by rworker nix-cache from {} at {}.\nextra-substituters = {}\nextra-trusted-public-keys = {}",
+    let mut conf = format!(
+        "# Pushed by rworker setup nix from {} at {}.",
         ctx.hostname,
         crate::time::utc_iso(),
-        subs.join(" "),
-        strings(get(&settings, "keys")).join(" ")
     );
+    if do_cache {
+        conf.push_str(&format!(
+            "\nextra-substituters = {}\nextra-trusted-public-keys = {}",
+            subs.join(" "),
+            strings(get(&settings, "keys")).join(" ")
+        ));
+    }
+    if do_auth {
+        let pairs: Vec<String> = tokens.iter().map(|(h, t)| format!("{h}={t}")).collect();
+        conf.push_str(&format!("\nextra-access-tokens = {}", pairs.join(" ")));
+    }
+    let profiles = get(&settings, "profiles").clone();
+    let subs_v = get(&settings, "substituters").clone();
+    let shown = |ok: bool, daemon: &str, reachable: bool| {
+        json!({
+            "ok": ok, "name": name, "daemon": daemon, "reachable": reachable,
+            "cache": do_cache, "auth": do_auth,
+            "substituters": if do_cache { subs_v.clone() } else { json!([]) },
+            "profiles": if do_cache { profiles.clone() } else { json!([]) },
+            "auth_hosts": auth_hosts,
+        })
+    };
     if dry {
-        let v = jq::merge(
-            &settings,
-            &[("name", json!(name)), ("dry_run", json!(true))],
-        );
+        let mut v = shown(true, "dry-run", false);
+        v["dry_run"] = json!(true);
+        v["keys"] = if do_cache {
+            get(&settings, "keys").clone()
+        } else {
+            json!([])
+        };
         return Ok(jq::compact(&v));
     }
 
     let ip = state::worker_ip(ctx, name)?;
-    let opts = state::ssh_opts(ctx, name);
+    let opts_ssh = state::ssh_opts(ctx, name);
     let login = format!("agent@{ip}");
     // NetBird may still be setting up the route to a fresh worker.
     for _ in 1..=10 {
-        if super::up::probe(&opts, &login) {
+        if super::up::probe(&opts_ssh, &login) {
             break;
         }
         proc::sleep_secs(3.0);
     }
-    let profiles = get(&settings, "profiles").clone();
-    let subs_v = get(&settings, "substituters").clone();
     // An image without this feature has no /run/rworker-nix (agent cannot
     // create it); say so instead of failing on a shell error.
     let has_dir = Command::new("ssh")
-        .args(&opts)
+        .args(&opts_ssh)
         .arg(&login)
         .arg("test -d /run/rworker-nix")
         .stderr(std::process::Stdio::null())
         .status()
         .is_ok_and(|s| s.success());
     if !has_dir {
-        return Ok(jq::compact(&json!({
-            "ok": false, "name": name, "daemon": "image-too-old", "reachable": false,
-            "substituters": subs_v, "profiles": profiles,
-        })));
+        return Ok(jq::compact(&shown(false, "image-too-old", false)));
     }
     let unit = "rworker-nix-config.service";
     let before = ssh_capture(
-        &opts,
+        &opts_ssh,
         &login,
         &format!("systemctl show -p ExecMainStartTimestampMonotonic --value {unit}"),
     );
     // Credentials first, nix.conf last: replacing nix.conf is what restarts
-    // the daemon (path unit on the worker). The secret travels on stdin only.
+    // the daemon (path unit on the worker). Secrets travel on stdin only.
+    if do_cache {
+        let code = proc::run_with_input(
+            ctx,
+            state::worker_ssh(&opts_ssh, &login).arg(
+                "umask 077; cat > /run/rworker-nix/aws-credentials.new && mv /run/rworker-nix/aws-credentials.new /run/rworker-nix/aws-credentials",
+            ),
+            creds.as_bytes(),
+        )?;
+        crate::ctx::status(code).map_err(|_| Fail(1))?;
+    }
     let code = proc::run_with_input(
         ctx,
-        state::worker_ssh(&opts, &login).arg(
-            "umask 077; cat > /run/rworker-nix/aws-credentials.new && mv /run/rworker-nix/aws-credentials.new /run/rworker-nix/aws-credentials",
-        ),
-        creds.as_bytes(),
-    )?;
-    crate::ctx::status(code).map_err(|_| Fail(1))?;
-    let code = proc::run_with_input(
-        ctx,
-        state::worker_ssh(&opts, &login).arg(
+        state::worker_ssh(&opts_ssh, &login).arg(
             "umask 077; cat > /run/rworker-nix/nix.conf.new && mv /run/rworker-nix/nix.conf.new /run/rworker-nix/nix.conf",
         ),
         format!("{conf}\n").as_bytes(),
@@ -199,33 +297,37 @@ pub fn push(ctx: &Ctx, name: &str, dry: bool) -> R<String> {
     crate::ctx::status(code).map_err(|_| Fail(1))?;
 
     // Does the worker reach the bucket with what it was given?
-    let url = &subs[0];
-    let check = Command::new("ssh")
-        .args(&opts)
-        .arg(&login)
-        .arg(format!(
-            "AWS_SHARED_CREDENTIALS_FILE=/run/rworker-nix/aws-credentials timeout 60 nix store info --store {}",
-            proc::shell_quote(url)
-        ))
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::piped())
-        .output();
-    let verified = match check {
-        Ok(o) if o.status.success() => true,
-        Ok(o) => {
-            let err = String::from_utf8_lossy(&o.stderr);
-            let lines: Vec<&str> = err.lines().collect();
-            let tail = lines[lines.len().saturating_sub(3)..].join("\n");
-            ctx.err(&format!("The worker cannot reach the S3 cache: {tail}"));
-            false
+    let verified = if do_cache {
+        let url = &subs[0];
+        let check = Command::new("ssh")
+            .args(&opts_ssh)
+            .arg(&login)
+            .arg(format!(
+                "AWS_SHARED_CREDENTIALS_FILE=/run/rworker-nix/aws-credentials timeout 60 nix store info --store {}",
+                proc::shell_quote(url)
+            ))
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::piped())
+            .output();
+        match check {
+            Ok(o) if o.status.success() => true,
+            Ok(o) => {
+                let err = String::from_utf8_lossy(&o.stderr);
+                let lines: Vec<&str> = err.lines().collect();
+                let tail = lines[lines.len().saturating_sub(3)..].join("\n");
+                ctx.err(&format!("The worker cannot reach the S3 cache: {tail}"));
+                false
+            }
+            Err(_) => false,
         }
-        Err(_) => false,
+    } else {
+        true
     };
 
     // Did its nix-daemon pick the settings up (restarted by the path unit)?
     let mut daemon = "timeout";
     if ssh_capture(
-        &opts,
+        &opts_ssh,
         &login,
         &format!("systemctl show -p LoadState --value {unit}"),
     ) != "loaded"
@@ -234,7 +336,7 @@ pub fn push(ctx: &Ctx, name: &str, dry: bool) -> R<String> {
     } else {
         for _ in 1..=20 {
             let after = ssh_capture(
-                &opts,
+                &opts_ssh,
                 &login,
                 &format!(
                     "systemctl show -p ExecMainStartTimestampMonotonic --value {unit}; systemctl is-active nix-daemon.socket"
@@ -251,37 +353,60 @@ pub fn push(ctx: &Ctx, name: &str, dry: bool) -> R<String> {
             proc::sleep_secs(1.0);
         }
     }
-    Ok(jq::compact(&json!({
-        "ok": verified && daemon == "restarted",
-        "name": name, "daemon": daemon, "reachable": verified,
-        "substituters": subs_v, "profiles": profiles,
-    })))
+    Ok(jq::compact(&shown(
+        verified && daemon == "restarted",
+        daemon,
+        verified,
+    )))
 }
 
-pub fn cmd_nix_cache(ctx: &Ctx, args: &[String]) -> R {
+/// `setup nix NAME [--no-cache] [--no-auth] [--auth-host HOST]... [--dry-run]`.
+/// `help_topic` is the help to show on a usage error; `defaults` the parts
+/// that are on before the flags are read (the `nix-cache` alias turns auth off).
+pub fn cmd_setup_nix(ctx: &Ctx, args: &[String], help_topic: &str, defaults: Opts) -> R {
+    let mut opts = defaults;
     let mut name = String::new();
     let mut dry = false;
-    for a in args.iter().take_while(|a| !a.is_empty()) {
-        match a.as_str() {
+    let mut i = 0;
+    while i < args.len() && !args[i].is_empty() {
+        let a = args[i].as_str();
+        match a {
             "--dry-run" | "-n" => dry = true,
+            "--no-cache" => opts.cache = false,
+            "--no-auth" => opts.auth = false,
+            "--auth-host" => {
+                let Some(host) = args.get(i + 1).filter(|h| !h.is_empty()) else {
+                    ctx.err("--auth-host needs a host");
+                    return Err(Fail(2));
+                };
+                opts.auth_hosts.push(host.clone());
+                i += 1;
+            }
             s if s.starts_with('-') => {
                 ctx.err(&format!("Unknown option: {s}"));
-                crate::help::show(ctx, "nix-cache");
+                crate::help::show(ctx, help_topic);
                 return Err(Fail(2));
             }
             s => name = s.to_string(),
         }
+        i += 1;
     }
     if name.is_empty() {
-        crate::help::show(ctx, "nix-cache");
+        crate::help::show(ctx, help_topic);
         return Err(Fail(2));
     }
-    let out = push(ctx, &name, dry).map_err(|_| Fail(1))?;
+    if !opts.cache && !opts.auth {
+        ctx.err("Nothing to do: both --no-cache and --no-auth are set");
+        return Err(Fail(2));
+    }
+    let out = push(ctx, &name, dry, &opts).map_err(|_| Fail(1))?;
     if ctx.json.get() {
         crate::ctx::json_out(ctx, &out);
         return Ok(());
     }
     let v: Value = serde_json::from_str(&out).unwrap_or(Value::Null);
+    let pushes_cache = get(&v, "cache") == &Value::Bool(true);
+    let pushes_auth = get(&v, "auth") == &Value::Bool(true);
     if dry {
         outln(&format!("Would push to {}:", paint::vm(ctx, &name)));
         for s in strings(get(&v, "substituters")) {
@@ -290,18 +415,25 @@ pub fn cmd_nix_cache(ctx: &Ctx, args: &[String]) -> R {
         for p in strings(get(&v, "profiles")) {
             outln(&format!("  profile     {p}"));
         }
-        let n = get(&v, "keys").as_array().map_or(0, Vec::len);
-        outln(&format!("  trusted keys {n}"));
+        if pushes_cache {
+            let n = get(&v, "keys").as_array().map_or(0, Vec::len);
+            outln(&format!("  trusted keys {n}"));
+        }
+        for h in strings(get(&v, "auth_hosts")) {
+            outln(&format!("  access-token for {h}"));
+        }
         return Ok(());
     }
+    let what = match (pushes_cache, pushes_auth) {
+        (true, true) => "substitutes from the S3 cache and fetches private inputs",
+        (true, false) => "substitutes from the S3 cache",
+        _ => "fetches private inputs",
+    };
     match get(&v, "daemon").as_str() {
-        Some("restarted") => paint::ok(
-            ctx,
-            &format!("{} substitutes from the S3 cache", paint::vm(ctx, &name)),
-        ),
+        Some("restarted") => paint::ok(ctx, &format!("{} {what}", paint::vm(ctx, &name))),
         Some("image-too-old") => {
             ctx.err(&format!(
-                "{} {} runs an image from before --nix-cache existed: nothing was pushed (create a new worker)",
+                "{} {} runs an image from before `setup nix` existed: nothing was pushed (create a new worker)",
                 paint::warn_mark(ctx),
                 paint::vm(ctx, &name)
             ));
@@ -314,4 +446,69 @@ pub fn cmd_nix_cache(ctx: &Ctx, args: &[String]) -> R {
         )),
     }
     Ok(())
+}
+
+/// The old `nix-cache NAME [--dry-run]`: the cache part only.
+pub fn cmd_nix_cache(ctx: &Ctx, args: &[String]) -> R {
+    cmd_setup_nix(
+        ctx,
+        args,
+        "nix-cache",
+        Opts {
+            auth: false,
+            ..Opts::default()
+        },
+    )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn cfg() -> Value {
+        json!({
+            "access-tokens": {"value": {
+                "github.com": "ghp_secret",
+                "git.wiit.one": "PAT:glpat_secret",
+                "bad.example": "has space",
+                "hash.example": "tok#en",
+            }},
+            "substituters": {"value": ["https://cache.nixos.org", "s3://b?profile=niks3"]},
+            "trusted-public-keys": {"value": ["k1"]},
+        })
+    }
+
+    #[test]
+    fn tokens_are_sorted_and_unsafe_entries_dropped() {
+        let t = access_tokens(&cfg(), &[]);
+        let hosts: Vec<&str> = t.iter().map(|(h, _)| h.as_str()).collect();
+        assert_eq!(hosts, ["git.wiit.one", "github.com"]);
+    }
+
+    #[test]
+    fn tokens_can_be_limited_to_hosts() {
+        let t = access_tokens(&cfg(), &["github.com".to_string(), "nope".to_string()]);
+        assert_eq!(t, [("github.com".to_string(), "ghp_secret".to_string())]);
+    }
+
+    #[test]
+    fn no_tokens_without_the_setting() {
+        assert!(access_tokens(&json!({}), &[]).is_empty());
+    }
+
+    #[test]
+    fn derived_settings_name_hosts_but_never_carry_a_token() {
+        let d = derive(&cfg());
+        assert_eq!(d["auth_hosts"], json!(["git.wiit.one", "github.com"]));
+        assert_eq!(d["substituters"], json!(["s3://b?profile=niks3"]));
+        assert_eq!(d["profiles"], json!(["niks3"]));
+        let text = d.to_string();
+        assert!(!text.contains("secret"), "{text}");
+    }
+
+    #[test]
+    fn both_parts_are_on_by_default() {
+        let o = Opts::default();
+        assert!(o.cache && o.auth && o.auth_hosts.is_empty());
+    }
 }

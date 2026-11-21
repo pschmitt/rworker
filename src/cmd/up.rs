@@ -186,6 +186,7 @@ pub fn up(ctx: &Ctx, args: &[String], capture: bool) -> R<Option<String>> {
     let mut topic = String::new();
     let mut agent_id = String::new();
     let mut nix_cache: Option<bool> = None;
+    let mut nix_auth: Option<bool> = None;
     let mut quiet_topic_warning = false;
     let mut rest: Vec<String> = Vec::new();
     let mut i = 0;
@@ -194,6 +195,8 @@ pub fn up(ctx: &Ctx, args: &[String], capture: bool) -> R<Option<String>> {
             "--ssh" => login = true,
             "--nix-cache" => nix_cache = Some(true),
             "--no-nix-cache" => nix_cache = Some(false),
+            "--nix-auth" => nix_auth = Some(true),
+            "--no-nix-auth" => nix_auth = Some(false),
             "-l" => {
                 login_user = args.get(i + 1).cloned().unwrap_or_default();
                 if login_user.is_empty() {
@@ -276,43 +279,48 @@ pub fn up(ctx: &Ctx, args: &[String], capture: bool) -> R<Option<String>> {
         }
     }
 
-    let nix_cache = match nix_cache {
-        Some(v) => v,
-        // Default: push when this host's Nix has an s3:// substituter.
-        None => ctx
-            .muted(|| super::nix_cache::settings(ctx))
-            .map(|s| {
-                jq::get(&s, "substituters")
-                    .as_array()
-                    .is_some_and(|a| !a.is_empty())
-            })
-            .unwrap_or(false),
+    // Default: push what this host's Nix has to give: the S3 cache when it
+    // has an s3:// substituter, the access-tokens when it has any.
+    let have = ctx.muted(|| super::nix_cache::settings(ctx)).ok();
+    let has = |key: &str| {
+        have.as_ref()
+            .and_then(|s| jq::get(s, key).as_array().map(|a| !a.is_empty()))
+            .unwrap_or(false)
     };
+    let want_cache = nix_cache.unwrap_or_else(|| has("substituters"));
+    let want_auth = nix_auth.unwrap_or_else(|| has("auth_hosts"));
     let mut info_text = raw_info;
     let mut info = parsed;
-    if nix_cache {
-        // The cache is an optimisation: a failed push leaves a usable
-        // worker. Keep a JSON result the push printed, else make one.
-        let cache_info = super::nix_cache::push(ctx, &name, false)
+    if want_cache || want_auth {
+        // Both are conveniences: a failed push leaves a usable worker. Keep a
+        // JSON result the push printed, else make one.
+        let opts = super::nix_cache::Opts {
+            cache: want_cache,
+            auth: want_auth,
+            auth_hosts: Vec::new(),
+        };
+        let setup_info = super::nix_cache::push(ctx, &name, false, &opts)
             .ok()
             .and_then(|s| serde_json::from_str::<Value>(&s).ok())
             .filter(Value::is_object)
             .unwrap_or_else(|| json!({"ok": false}));
-        if get(&cache_info, "daemon").as_str() == Some("image-too-old") {
+        if get(&setup_info, "daemon").as_str() == Some("image-too-old") {
             ctx.err(&format!(
-                "{} image predates --nix-cache: nothing pushed to {}",
+                "{} image predates `setup nix`: nothing pushed to {}",
                 paint::warn_mark(ctx),
                 paint::vm(ctx, &name)
             ));
-        } else if get(&cache_info, "ok") != &Value::Bool(true) {
+        } else if get(&setup_info, "ok") != &Value::Bool(true) {
             ctx.err(&format!(
-                "{} could not set up the S3 cache on {} (the worker is fine); retry: {} nix-cache {name}",
+                "{} could not set up Nix on {} (the worker is fine); retry: {} setup nix {name}",
                 paint::warn_mark(ctx),
                 paint::vm(ctx, &name),
                 ctx.me
             ));
         }
-        info = jq::merge(&info, &[("nix_cache", cache_info)]);
+        // "nix_cache" keeps its name for existing readers; it now also
+        // carries the auth part ("auth", "auth_hosts").
+        info = jq::merge(&info, &[("nix_cache", setup_info)]);
         info_text = jq::compact(&info);
     }
     warn_niks3_token(ctx, &name, &info);

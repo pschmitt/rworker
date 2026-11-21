@@ -1,5 +1,6 @@
 Usage: __ME__ up [--ttl DURATION] [--flavor FLAVOR] [--disk GIB] [--profile PROFILE] [--scratch] [--ssh]
-          [--nix-cache|--no-nix-cache] [--no-niks3-token] [--topic TEXT] [-l USER]
+          [--nix-cache|--no-nix-cache] [--nix-auth|--no-nix-auth]
+          [--no-niks3-token] [--topic TEXT] [-l USER]
 
 Create an ad-hoc worker, wait until it is reachable (usually 1-4 min) and
 print it as JSON (name, ip, host_key, user, expires_at, builder).
@@ -15,8 +16,10 @@ print it as JSON (name, ip, host_key, user, expires_at, builder).
   --nix-cache      push the S3 cache settings (the default when this host's
                    Nix has an s3:// cache; fails loudly when it has none)
   --no-nix-cache   do not give the worker this host's S3 cache settings and
-                   read-only key (see: __ME__ help nix-cache). Without it they
-                   are pushed whenever this host's Nix has an s3:// cache.
+                   read-only key (see: __ME__ help setup)
+  --nix-auth       push this host's access-tokens (the default when it has
+                   any), so the worker fetches private flake inputs itself
+  --no-nix-auth    keep the tokens off the worker
   --no-niks3-token do not give the worker a niks3 push token. By default it
                    gets its own, valid as long as the worker is (renewed by
                    extend); the `niks3` command on the worker uses it

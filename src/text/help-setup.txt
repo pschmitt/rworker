@@ -1,0 +1,42 @@
+Usage: __ME__ setup TOPIC NAME [OPTIONS]
+
+Get an ad-hoc worker ready for a kind of work, using this host's own
+settings. Everything is on by default; flags switch parts off.
+
+Topics:
+  nix    the Nix side: the S3 cache and the access-tokens (see below)
+
+  __ME__ setup nix NAME [--no-cache] [--no-auth] [--auth-host HOST]... [--dry-run]
+
+Over SSH (pinned host key), never through the OpenStack metadata service and
+never via the control host, `setup nix` pushes into /run/rworker-nix on the
+worker (tmpfs, agent-owned, 0700, gone with the worker):
+  cache  this host's s3:// substituters, the trusted public keys and the AWS
+         profile each s3:// URL names (profile=...), read from
+         $RWORKER_AWS_CREDENTIALS_FILE, $AWS_SHARED_CREDENTIALS_FILE or
+         ~/.aws/credentials. The worker then substitutes from the private
+         cache.
+  auth   this host's `access-tokens` (as `nix config show` reports them), so
+         the worker fetches private flake inputs itself. A build that
+         evaluates on the worker then needs no upload of inputs from here.
+Nothing else of nix.conf is copied (it can hold netrc paths); non-S3 caches
+are not reachable from OpenStack anyway.
+
+  --no-cache       leave out the cache part
+  --no-auth        leave out the access-tokens
+  --auth-host H    push only the token for host H (repeatable), e.g.
+                   github.com; default: every token this host's Nix has
+  --dry-run, -n    show the substituters, profile names and the hosts whose
+                   token would be pushed; push nothing (credentials and
+                   tokens are never printed)
+
+up and exec do both by default, as far as this host has something to give
+(--no-nix-cache, --no-nix-auth to leave one out). `nix-cache NAME` is
+`setup nix --no-auth`.
+
+Use read-only credentials only: anyone with a shell on the worker (the agent
+user) can read what you push, tokens included. Run it again after rotating a
+key or token. A worker whose image predates this (no /run/rworker-nix) gets
+nothing; the command says so and fails. For builds through --builders, also
+set builders-use-substitutes on this host, or this host fetches the inputs
+itself and copies them over instead of letting the worker substitute.

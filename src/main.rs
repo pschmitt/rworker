@@ -46,6 +46,7 @@ pub const ACTIONS: &[&str] = &[
     "sync",
     "builder",
     "nix-cache",
+    "setup",
     "inspect",
     "cp",
     "completions",
@@ -166,6 +167,7 @@ fn resolve_args(ctx: &Ctx, action: &str, args: &[String]) -> R<Vec<String>> {
         "sync",
         "builder",
         "nix-cache",
+        "setup",
         "inspect",
         "prune",
         "ssh",
@@ -213,6 +215,13 @@ fn resolve_args(ctx: &Ctx, action: &str, args: &[String]) -> R<Vec<String>> {
                 }
             }
             "prune" => out[i] = resolve_worker(ctx, &arg)?,
+            // `setup TOPIC NAME`: the topic comes first, the worker second.
+            "setup" => {
+                if pos == 1 {
+                    out[i] = resolve_worker(ctx, &arg)?;
+                }
+                pos += 1;
+            }
             _ => {
                 if pos == 0 {
                     let (user, name) = match arg.split_once('@') {
@@ -265,6 +274,7 @@ fn dispatch(ctx: &Ctx, action: &str, args: &[String]) -> R {
         "sync" => cmd::files::cmd_sync(ctx, args),
         "builder" => cmd::simple::cmd_builder(ctx, args),
         "nix-cache" => cmd::nix_cache::cmd_nix_cache(ctx, args),
+        "setup" => cmd::setup::cmd_setup(ctx, args),
         "inspect" => cmd::inspect::cmd_inspect(ctx, args),
         "cp" => cmd::files::cmd_cp(ctx, args),
         "tui" => tui::cmd_tui(ctx, args),

@@ -11,6 +11,18 @@ The Rust client and controller replace the original Bash client.
   it and it cannot be probed, so it used to be kept for ever ("activity could
   not be ruled out").
 
+### `setup`
+
+- Add `rworker setup TOPIC NAME` to get a worker ready for a kind of work.
+  The first topic, `nix`, pushes this host's S3 cache settings (what
+  `nix-cache` did) and, new, its Nix `access-tokens`, so the worker fetches
+  private flake inputs itself. `--no-cache`, `--no-auth` and `--auth-host`
+  choose the parts; `nix-cache` stays as `setup nix --no-auth`.
+- `up` and `exec` push both by default, as far as this host has something to
+  give; `--no-nix-auth` keeps the tokens off the worker. The result's
+  `nix_cache` object gains `auth` and `auth_hosts` (host names only).
+- MCP: new `setup_nix` tool and `up(nix_auth=...)`.
+
 ### MCP
 
 - Inspect job processes and retained lifecycle events.

@@ -23,7 +23,7 @@ Actions:
                        register an existing log file
   profiles             list available worker profiles
   up [--ttl 2h] [--flavor s1.xlarge] [--disk 150] [--topic TEXT]
-     [--no-nix-cache] [--no-niks3-token] [--ssh [-l USER]]
+     [--no-nix-cache] [--no-nix-auth] [--no-niks3-token] [--ssh [-l USER]]
                        create a worker and wait until it is ready
   image create [--flake FLAKE] [--upload] | image upload --name NAME IMAGE
                        build or upload a worker disk image
@@ -49,8 +49,11 @@ Actions:
   cp [USER@]NAME:REMOTE LOCAL | cp LOCAL [USER@]NAME:REMOTE
                        copy files or directories from/to a worker
   builder NAME         print a Nix builders line for the worker
+  setup nix NAME [--no-cache] [--no-auth] [--auth-host HOST] [--dry-run]
+                       get the worker ready to use this host's Nix: the S3
+                       cache and the access-tokens for private inputs
   nix-cache NAME [--dry-run]
-                       let the worker substitute from this host's S3 cache
+                       the cache part of setup nix
   completions zsh|bash print the shell completion script
   tui [-n SECONDS]     interactive terminal UI: the workers, their jobs and
                        logs, and the actions on them

@@ -1,29 +1,12 @@
 Usage: __ME__ nix-cache NAME [--dry-run]
-       __ME__ up [--no-nix-cache] ... (does this right after creating the worker)
 
-Let an ad-hoc worker substitute from the private S3 Nix cache, using this
-host's own settings. up and exec do it by default when this host's Nix has
-an s3:// substituter; --no-nix-cache keeps the worker free of the key.
+The cache part of `setup nix`: same as `__ME__ setup nix NAME --no-auth`.
+See: __ME__ help setup
 
-Pushed over SSH (pinned host key), never through the OpenStack metadata
-service and never via the control host:
-  - this host's s3:// substituters and the trusted public keys, read with
-    `nix config show`. Nothing else of nix.conf is copied (it can hold
-    access-tokens and netrc paths), and neither are non-S3 substituters.
-  - the AWS profile each s3:// URL names (profile=...) from
-    $RWORKER_AWS_CREDENTIALS_FILE, $AWS_SHARED_CREDENTIALS_FILE or
-    ~/.aws/credentials; no other profile.
-They land in /run/rworker-nix on the worker (tmpfs, agent-owned, 0700), so
-they vanish with the worker. The worker's nix-daemon includes nix.conf from
-there and restarts when it changes. Run it again after rotating the key.
-
-Push a read-only key only: anyone with a shell on the worker (the agent user)
-can read what you push. For builds through --builders, also set
-builders-use-substitutes on this host, or this host fetches the inputs itself
-and copies them over instead of letting the worker substitute.
+Lets an ad-hoc worker substitute from the private S3 Nix cache, using this
+host's s3:// substituters, the trusted public keys and the AWS profile each
+URL names (read-only). up and exec do it by default, together with the
+access-tokens; --no-nix-cache keeps the worker free of the key.
 
   --dry-run   show the substituters, keys and profile names; push nothing
               (credentials are never printed)
-
-A worker whose image predates this feature (no /run/rworker-nix) gets nothing;
-the command says so and fails.

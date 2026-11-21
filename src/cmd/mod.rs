@@ -8,6 +8,7 @@ pub mod jobs;
 pub mod log_cache;
 pub mod ls;
 pub mod nix_cache;
+pub mod setup;
 pub mod simple;
 pub mod up;
 pub mod workers;

@@ -126,7 +126,7 @@ in
       default = null;
       example = "/run/secrets/nix-cache-aws-credentials";
       description = ''
-        AWS credentials file whose profiles `nix-cache` (and `up`, by
+        AWS credentials file whose profiles `setup nix` (and `up`, by
         default) pushes to workers along with the s3:// substituters
         (`RWORKER_AWS_CREDENTIALS_FILE`). Use a read-only key: anyone with
         a shell on the worker can read it. A runtime path such as a

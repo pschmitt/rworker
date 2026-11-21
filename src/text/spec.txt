@@ -25,6 +25,7 @@ action ssh ssh to a worker (pinned host key)
 action sync rsync a directory to a worker
 action builder print a Nix builders line for a worker
 action nix-cache let a worker substitute from this host's S3 cache
+action setup get a worker ready (topic nix: S3 cache and access-tokens)
 action cp copy files from or to a worker (NAME:PATH)
 action inspect show everything known about a worker
 action completions print the zsh or bash completion script
@@ -62,7 +63,11 @@ flag up --ssh log in as soon as it is ready
 flag up --quiet-topic-warning do not warn when no --topic is given
 flag up --nix-cache push this host's S3 cache settings (default when it has any)
 flag up --no-nix-cache keep the S3 cache credentials off the worker
+flag up --nix-auth push this host's access-tokens (default when it has any)
+flag up --no-nix-auth keep the access-tokens off the worker
 flag exec --nix-cache push this host's S3 cache settings (default when it has any)
+flag exec --nix-auth push this host's access-tokens (default when it has any)
+flag exec --no-nix-auth keep the access-tokens off the worker
 flag exec --no-nix-cache keep the S3 cache credentials off the worker
 flag up --no-niks3-token do not give the worker a niks3 push token
 flag exec --no-niks3-token do not give the worker a niks3 push token
@@ -70,6 +75,11 @@ flag extend --no-niks3-token extend without renewing the niks3 token
 flag niks3-token --force reissue the token of someone else's worker
 flag nix-cache --dry-run only show what would be pushed
 flag nix-cache -n short for --dry-run
+flag setup --no-cache leave out the S3 cache part
+flag setup --no-auth leave out the access-tokens
+flag setup --auth-host=host only the token of this host (repeatable)
+flag setup --dry-run only show what would be pushed
+flag setup -n short for --dry-run
 flag up -l=user log in as this user (with --ssh; default agent)
 flag up --topic=topic what the worker is for (none unless given)
 flag up --profile=profile worker profile (standard, browser-daemon or large-builder)

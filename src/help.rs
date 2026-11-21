@@ -43,6 +43,7 @@ pub const HELP: &[(&str, &str)] = &[
     ("cp", include_str!("text/help-cp.txt")),
     ("builder", include_str!("text/help-builder.txt")),
     ("nix-cache", include_str!("text/help-nix-cache.txt")),
+    ("setup", include_str!("text/help-setup.txt")),
     ("completions", include_str!("text/help-completions.txt")),
     ("tui", include_str!("text/help-tui.txt")),
 ];

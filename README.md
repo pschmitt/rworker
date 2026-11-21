@@ -27,8 +27,11 @@ when its time runs out.
   both addresses and uses the one that answers.
 - **Background jobs**: `start`, `jobs`, `logs` (`-f` follows every worker,
   with lifecycle events) and `ps`, through a small job manager on the worker.
-- **Nix builders**: `builder` prints a `--builders` line; `nix-cache` lets a
-  worker substitute from this host's S3 cache over SSH only.
+- **Nix builders**: `builder` prints a `--builders` line; `setup nix` gets a
+  worker ready over SSH only: it substitutes from this host's S3 cache and
+  fetches private flake inputs with this host's access-tokens (`up` and
+  `exec` do it by default; `--no-cache` / `--no-auth` leave one out).
+  `setup` is the place for more of this kind of preparation.
 - **Live list**: `ls --watch` redraws in place and marks new, changed and
   gone workers; `--topic`, `--agent` and `--agent-id` filter by regex.
 - **On-demand Nix builders** lease a worker through a stable SSH endpoint. See [On-demand Nix builders](docs/nix-builders.md).
