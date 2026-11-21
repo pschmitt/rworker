@@ -21,6 +21,7 @@ mod up;
 mod web;
 mod worker_ssh;
 
+use std::collections::HashMap;
 use std::fs::File;
 use std::io::{self, BufReader, Write};
 
@@ -368,7 +369,7 @@ fn profiles(settings: &Value) -> io::Result<Vec<Value>> {
     let mut profiles: Vec<_> = profiles.iter().collect();
     profiles.sort_unstable_by_key(|(name, _)| *name);
     let default = settings.get("defaultProfile").and_then(Value::as_str);
-    profiles
+    let mut rows = profiles
         .into_iter()
         .map(|(name, profile)| {
             if !profile.is_object() {
@@ -392,7 +393,25 @@ fn profiles(settings: &Value) -> io::Result<Vec<Value>> {
                 "image_tags": profile.get("imageTags").cloned().unwrap_or_else(|| json!([])),
             }))
         })
-        .collect()
+        .collect::<io::Result<Vec<_>>>()?;
+    if let Ok(compute) = openstack::OpenStack::from_settings(settings) {
+        let mut flavors = HashMap::new();
+        for profile in &mut rows {
+            let Some(flavor) = profile["flavor"].as_str() else {
+                continue;
+            };
+            // Profiles sharing a flavor also share its lookup, including failures.
+            let size = flavors.entry(flavor.to_owned()).or_insert_with(|| {
+                let result = compute.flavor(flavor).ok()?;
+                Some((result["vcpus"].as_u64()?, result["ram"].as_u64()?))
+            });
+            if let Some((vcpus, ram_mib)) = *size {
+                profile["vcpus"] = json!(vcpus);
+                profile["ram_mib"] = json!(ram_mib);
+            }
+        }
+    }
+    Ok(rows)
 }
 
 fn epoch() -> f64 {

@@ -63,6 +63,11 @@ impl OpenStack {
 }
 
 impl OpenStack {
+    pub(super) fn flavor(&self, name_or_id: &str) -> Result<Value, String> {
+        let output = self.command(&["flavor", "show", "-f", "json", "--", name_or_id])?;
+        serde_json::from_slice(&output).map_err(|_| "Invalid OpenStack flavor".to_string())
+    }
+
     pub(super) fn metadata(&self, id: &str) -> Result<Map<String, Value>, String> {
         let output =
             self.command(&["server", "show", "-f", "json", "-c", "properties", "--", id])?;

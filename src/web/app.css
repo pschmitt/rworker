@@ -172,7 +172,7 @@ dialog footer { justify-content: end; border-top: 1px solid var(--line); }
 .worker-icon { display: grid; place-items: center; flex: 0 0 30px; height: 30px; border-radius: 7px; color: var(--cyan); background: #2a3442; }
 .worker-identity { min-width: 0; }
 .worker-identity .secondary { font-weight: 500; }
-.worker-context { display: none; }
+.worker-context, .profile-context { display: none; }
 
 .event-tone.good { color: var(--green); }
 .event-tone.bad { color: var(--red); }
@@ -205,7 +205,7 @@ th[aria-sort] .sort-arrow { color: var(--cyan); }
   .worker-table th:nth-child(6), .worker-table td:nth-child(6) { display: none; }
   .worker-table th:first-child { width: 100%; }
   .worker-table .sort-heading { min-height: 32px; }
-  .worker-context { display: block; }
+  .worker-context, .profile-context { display: block; }
   .worker-link { gap: 7px; }
   .worker-icon { flex-basis: 24px; height: 24px; }
 }

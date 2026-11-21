@@ -36,9 +36,7 @@ pub(super) fn create(
 ) -> Result<(String, Map<String, Value>), String> {
     let network = setting(cfg, "networkId")?;
     let security = setting(cfg, "securityGroup")?;
-    let flavor_output = compute.command(&["flavor", "show", "-f", "json", "--", request.flavor])?;
-    let flavor: Value =
-        serde_json::from_slice(&flavor_output).map_err(|_| "Invalid OpenStack flavor")?;
+    let flavor = compute.flavor(request.flavor)?;
     let flavor_id = setting(&flavor, "id")?;
     let output = compute.command(&["limits", "show", "--absolute", "-f", "json"])?;
     let limits: Vec<Value> =

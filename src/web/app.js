@@ -259,8 +259,8 @@ const sortFields = {
   ],
   jobs: [(row) => row.job, (row) => row.state],
   events: [(row) => row.kind, (row) => row.target, (row) => timestamp(row.timestamp)],
-  profiles: [(row) => row.name, (row) => row.flavor, (row) => Number(row.disk) || null,
-    (row) => (row.image_tags || []).join(", ")],
+  profiles: [(row) => row.name, (row) => row.vcpus, (row) => row.ram_mib,
+    (row) => Number(row.disk) || null, (row) => row.flavor, (row) => (row.image_tags || []).join(", ")],
 };
 const sortLabels = new Intl.Collator(undefined, { numeric: true, sensitivity: "base" });
 
@@ -428,11 +428,18 @@ function render() {
       }));
       break;
     default:
-      columns = [["Profile"], ["Flavor"], ["Disk"], ["Image tags"]];
-      rows = visible.map((row) => ({
-        cells: [named(row.name, row.default ? "Default" : "", () => form("create", null, row.name)),
-          row.flavor, row.disk ? row.disk + " GiB" : "—", (row.image_tags || []).join(", ") || "—"],
-      }));
+      columns = [["Profile"], ["vCPUs"], ["RAM"], ["Disk"], ["Flavor", true], ["Image tags", true]];
+      rows = visible.map((row) => {
+        const tags = (row.image_tags || []).join(", ");
+        const profile = named(row.name, row.default ? "Default" : "", () => form("create", null, row.name));
+        if (row.flavor) profile.append(element("span", row.flavor, "secondary profile-context"));
+        if (tags) profile.append(element("span", tags, "secondary profile-context"));
+        const ram = row.ram_mib == null ? "—" :
+          row.ram_mib % 1024 === 0 ? row.ram_mib / 1024 + " GiB" : row.ram_mib + " MiB";
+        return {
+          cells: [profile, row.vcpus, ram, row.disk ? row.disk + " GiB" : "—", row.flavor, tags || "—"],
+        };
+      });
   }
   const previous = results.querySelector(`[data-view-table="${state.view}"]`);
   const scrollLeft = previous?.scrollLeft ?? 0;
@@ -832,7 +839,7 @@ $("action-form").addEventListener("submit", async (event) => {
   }
 });
 window.addEventListener("hashchange", navigate);
-setInterval(() => { if (state.authenticated && !document.hidden) refresh(); }, 5000);
+setInterval(() => { if (state.authenticated && !document.hidden && state.view !== "profiles") refresh(); }, 5000);
 setInterval(() => { if (state.authenticated && !document.hidden && state.selected && state.tab === "logs" && state.follow && !logSocket) updateDetail(); }, 2500);
 navigate();
 let savedToken = "";
