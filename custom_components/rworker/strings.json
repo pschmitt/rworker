@@ -1,0 +1,61 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Connect to rworker",
+        "data": {
+          "url": "Controller URL",
+          "token": "Controller access token"
+        }
+      },
+      "reauth_confirm": {
+        "title": "Replace controller access token",
+        "data": {
+          "token": "Controller access token"
+        }
+      }
+    },
+    "error": {
+      "cannot_connect": "Could not receive inventory from the controller",
+      "invalid_auth": "The controller rejected the access token"
+    },
+    "abort": {
+      "already_configured": "This controller is already configured",
+      "reauth_successful": "Access token updated"
+    }
+  },
+  "entity": {
+    "sensor": {
+      "workers": {
+        "name": "Workers"
+      },
+      "ad_hoc_workers": {
+        "name": "Ad hoc workers"
+      },
+      "pool_workers": {
+        "name": "Pool workers"
+      },
+      "active_workers": {
+        "name": "Active workers"
+      },
+      "last_snapshot": {
+        "name": "Last inventory snapshot"
+      }
+    },
+    "binary_sensor": {
+      "connection": {
+        "name": "Inventory connection"
+      }
+    },
+    "event": {
+      "worker_events": {
+        "name": "Worker lifecycle",
+        "state": {
+          "worker_added": "Worker added",
+          "worker_removed": "Worker removed",
+          "worker_status_changed": "Worker status changed"
+        }
+      }
+    }
+  }
+}

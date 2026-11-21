@@ -1,0 +1,177 @@
+create_worker:
+  description: Create a worker and return the controller output.
+  fields:
+    config_entry_id:
+      name: Controller config entry ID
+      required: false
+      selector:
+        text: {}
+    profile:
+      name: Worker profile
+      required: false
+      selector:
+        text: {}
+    ttl:
+      name: Lifetime
+      required: false
+      selector:
+        text: {}
+    topic:
+      name: Topic
+      required: false
+      selector:
+        text: {}
+delete_worker:
+  description: Delete an ad hoc worker.
+  fields:
+    worker:
+      name: Worker name
+      required: true
+      selector:
+        text: {}
+    config_entry_id:
+      name: Controller config entry ID
+      required: false
+      selector:
+        text: {}
+extend_worker:
+  description: Extend the lifetime of a worker.
+  fields:
+    worker:
+      name: Worker name
+      required: true
+      selector:
+        text: {}
+    ttl:
+      name: Lifetime
+      required: true
+      selector:
+        text: {}
+    config_entry_id:
+      name: Controller config entry ID
+      required: false
+      selector:
+        text: {}
+set_topic:
+  description: Update the topic of a worker.
+  fields:
+    worker:
+      name: Worker name
+      required: true
+      selector:
+        text: {}
+    topic:
+      name: Topic
+      required: true
+      selector:
+        text: {}
+    config_entry_id:
+      name: Controller config entry ID
+      required: false
+      selector:
+        text: {}
+claim_worker:
+  description: Claim an ad hoc worker for the controller account.
+  fields:
+    worker:
+      name: Worker name
+      required: true
+      selector:
+        text: {}
+    topic:
+      name: Topic
+      required: true
+      selector:
+        text: {}
+    config_entry_id:
+      name: Controller config entry ID
+      required: false
+      selector:
+        text: {}
+start_job:
+  description: Start a named job on an existing worker.
+  fields:
+    worker:
+      name: Worker name
+      required: true
+      selector:
+        text: {}
+    job:
+      name: Job name
+      required: true
+      selector:
+        text: {}
+    command:
+      name: Shell command
+      required: true
+      selector:
+        text: {}
+    config_entry_id:
+      name: Controller config entry ID
+      required: false
+      selector:
+        text: {}
+register_log:
+  description: Register an existing worker log file.
+  fields:
+    worker:
+      name: Worker name
+      required: true
+      selector:
+        text: {}
+    job:
+      name: Job name
+      required: true
+      selector:
+        text: {}
+    path:
+      name: Absolute log path
+      required: true
+      selector:
+        text: {}
+    config_entry_id:
+      name: Controller config entry ID
+      required: false
+      selector:
+        text: {}
+renew_cache_token:
+  description: Renew a worker's cache upload token.
+  fields:
+    worker:
+      name: Worker name
+      required: true
+      selector:
+        text: {}
+    config_entry_id:
+      name: Controller config entry ID
+      required: false
+      selector:
+        text: {}
+exec:
+  description: Run a command on a temporary worker and return its output.
+  fields:
+    command:
+      name: Shell command
+      required: true
+      selector:
+        text: {}
+    config_entry_id:
+      name: Controller config entry ID
+      required: false
+      selector:
+        text: {}
+    profile:
+      name: Worker profile
+      required: false
+      selector:
+        text: {}
+    ttl:
+      name: Lifetime
+      required: false
+      selector:
+        text: {}
+    topic:
+      name: Topic
+      required: false
+      selector:
+        text: {}

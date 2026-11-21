@@ -655,6 +655,14 @@ in
               proxyPass = "http://unix:${apiSocket}:";
               extraConfig = "proxy_read_timeout 920s;";
             };
+            "= /v1/automation/workers" = {
+              proxyPass = "http://unix:${apiSocket}:";
+              proxyWebsockets = true;
+            };
+            "= /v1/automation/action" = {
+              proxyPass = "http://unix:${apiSocket}:";
+              extraConfig = "proxy_read_timeout 3620s;";
+            };
           };
         };
       };

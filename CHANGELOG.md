@@ -11,6 +11,11 @@ The Rust client and controller replace the original Bash client.
 - Open a worker's only active job directly; use `J` in its logs to show jobs.
 - Toggle log following with Space and clarify the navigation hints.
 
+### Home Assistant
+
+- Add a push integration with worker lifecycle events, fleet counts, diagnostics,
+  and controller actions.
+
 ### Web console
 
 - Cache profile flavor resources on the controller and refresh them daily;

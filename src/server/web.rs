@@ -63,6 +63,11 @@ pub(super) fn routes(router: Router<PathBuf>) -> Router<PathBuf> {
             get(|| async { asset("image/svg+xml", include_str!("../web/favicon.svg")) }),
         )
         .merge(log_stream::routes())
+        .route("/v1/automation/workers", get(automation_workers))
+        .route(
+            "/v1/automation/action",
+            post(automation_action).layer(DefaultBodyLimit::max(32768)),
+        )
         .route("/v1/ui/session", get(session))
         .route("/v1/ui/updates", get(updates))
         .route("/v1/ui/{view}", get(list))
@@ -83,6 +88,39 @@ async fn updates(
         return failure((StatusCode::FORBIDDEN, "Invalid WebSocket origin."));
     }
     super::inventory_api::upgrade_inventory(dir, false, upgrade)
+}
+
+fn automation_auth(headers: &HeaderMap) -> Result<(), Failure> {
+    if headers.contains_key(header::ORIGIN) {
+        return Err((StatusCode::FORBIDDEN, "Use a non-browser API client."));
+    }
+    bearer_authorized(headers)
+}
+
+async fn automation_workers(
+    State(dir): State<PathBuf>,
+    headers: HeaderMap,
+    upgrade: WebSocketUpgrade,
+) -> Response {
+    match automation_auth(&headers) {
+        Ok(()) => super::inventory_api::upgrade_inventory(dir, true, upgrade),
+        Err(error) => failure(error),
+    }
+}
+
+async fn automation_action(headers: HeaderMap, body: Bytes) -> Response {
+    let result = async {
+        automation_auth(&headers)?;
+        let requested: Action = serde_json::from_slice(&body).map_err(|_| BAD_REQUEST)?;
+        let (args, seconds) = requested.command()?;
+        let output = run(args, seconds).await?;
+        Ok(json!({"output": output}))
+    }
+    .await;
+    match result {
+        Ok(output) => reply(StatusCode::OK, output),
+        Err(error) => failure(error),
+    }
 }
 
 fn same_origin(headers: &HeaderMap) -> bool {
@@ -145,6 +183,10 @@ fn authorized(headers: &HeaderMap) -> Result<(), Failure> {
             ))
         };
     }
+    bearer_authorized(headers)
+}
+
+fn bearer_authorized(headers: &HeaderMap) -> Result<(), Failure> {
     let Some(path) = std::env::var_os("RWORKER_WEB_TOKEN_FILE") else {
         return Err((
             StatusCode::SERVICE_UNAVAILABLE,
@@ -417,6 +459,12 @@ enum Action {
         job: String,
         path: String,
     },
+    Exec {
+        profile: String,
+        ttl: String,
+        topic: String,
+        command: String,
+    },
     RenewToken {
         worker: String,
     },
@@ -492,6 +540,29 @@ impl Action {
             {
                 words(&["register", name(worker)?, name(job)?, "--log", path])
             }
+            Self::Exec {
+                profile,
+                ttl: duration,
+                topic: title,
+                command,
+            } if !command.trim().is_empty() && !command.contains('\0') => {
+                return Ok((
+                    words(&[
+                        "exec",
+                        "--no-nix-cache",
+                        "--no-nix-auth",
+                        "--profile",
+                        name(profile)?,
+                        "--ttl",
+                        ttl(duration)?,
+                        "--topic",
+                        topic(title)?,
+                        "--",
+                        command,
+                    ]),
+                    3600,
+                ));
+            }
             Self::RenewToken { worker } => words(&["niks3-token", name(worker)?]),
             _ => return Err(BAD_REQUEST),
         };
@@ -518,6 +589,9 @@ async fn action(headers: HeaderMap, body: Bytes) -> Response {
             return Err(BAD_REQUEST);
         }
         let requested: Action = serde_json::from_slice(&body).map_err(|_| BAD_REQUEST)?;
+        if matches!(requested, Action::Exec { .. }) {
+            return Err(BAD_REQUEST);
+        }
         let (args, seconds) = requested.command()?;
         run(args, seconds).await?;
         Ok(())
