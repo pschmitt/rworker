@@ -136,7 +136,13 @@ impl App {
             Constraint::Length(1),
         ])
         .areas(f.area());
-        self.draw_header(f, head);
+        let plain = matches!(self.stack.last(), Some(Sub::Text(v)) if v.plain);
+        let body = if plain {
+            f.area()
+        } else {
+            self.draw_header(f, head);
+            body
+        };
         self.mouse_table = None;
         self.mouse_text = None;
         self.log_divider = None;
@@ -160,7 +166,9 @@ impl App {
         {
             self.log_drag = None;
         }
-        self.draw_footer(f, foot);
+        if !plain {
+            self.draw_footer(f, foot);
+        }
         if self.help {
             self.draw_help(f);
         }
@@ -349,6 +357,7 @@ impl App {
                 ("J", "worker jobs"),
                 ("/", "filter"),
                 ("w", "wrap"),
+                ("F11", "plain view"),
                 ("c", "clear"),
                 ("esc", "back"),
             ]),
@@ -703,55 +712,70 @@ fn draw_jobs(f: &mut Frame, area: Rect, j: &mut Jobs) {
 }
 
 fn draw_text(f: &mut Frame, area: Rect, v: &mut TextView, tick: u64) {
-    let mut title = vec![Span::styled(format!(" {} ", v.title), Style::new().bold())];
-    match &v.exit {
-        None => title.push(Span::styled(
-            format!("{} ", SPINNER[tick as usize % SPINNER.len()]),
-            Style::new().fg(Color::Green),
-        )),
-        Some(Some(0)) => {}
-        Some(Some(c)) => title.push(Span::styled(
-            format!("[exit {c}] "),
-            Style::new().fg(Color::Red),
-        )),
-        Some(None) => title.push(Span::styled("[ended] ", dim())),
-    }
-    if !v.filter.is_empty() {
-        title.push(Span::styled(
-            format!("[/{}] ", v.filter),
-            Style::new().fg(Color::Yellow),
-        ));
-    }
-    let mut flags = Vec::new();
-    if !v.follow {
-        flags.push("paused");
-    }
-    if v.wrap {
-        flags.push("wrap");
-    }
-    let block = Block::bordered()
-        .border_type(BorderType::Rounded)
-        .border_style(dim())
-        .title(Line::from(title))
-        .title_bottom(Line::styled(
-            if flags.is_empty() {
-                String::new()
-            } else {
-                format!(" {} ", flags.join(" · "))
-            },
-            Style::new().fg(Color::Yellow),
-        ));
-    let inner = block.inner(area);
-    f.render_widget(block, area);
+    let inner = if v.plain {
+        area
+    } else {
+        let mut title = vec![Span::styled(format!(" {} ", v.title), Style::new().bold())];
+        match &v.exit {
+            None => title.push(Span::styled(
+                format!("{} ", SPINNER[tick as usize % SPINNER.len()]),
+                Style::new().fg(Color::Green),
+            )),
+            Some(Some(0)) => {}
+            Some(Some(c)) => title.push(Span::styled(
+                format!("[exit {c}] "),
+                Style::new().fg(Color::Red),
+            )),
+            Some(None) => title.push(Span::styled("[ended] ", dim())),
+        }
+        if !v.filter.is_empty() {
+            title.push(Span::styled(
+                format!("[/{}] ", v.filter),
+                Style::new().fg(Color::Yellow),
+            ));
+        }
+        let mut flags = Vec::new();
+        if !v.follow {
+            flags.push("paused");
+        }
+        if v.wrap {
+            flags.push("wrap");
+        }
+        let block = Block::bordered()
+            .border_type(BorderType::Rounded)
+            .border_style(dim())
+            .title(Line::from(title))
+            .title_bottom(Line::styled(
+                if flags.is_empty() {
+                    String::new()
+                } else {
+                    format!(" {} ", flags.join(" · "))
+                },
+                Style::new().fg(Color::Yellow),
+            ));
+        let inner = block.inner(area);
+        f.render_widget(block, area);
+        inner
+    };
     let height = inner.height as usize;
     v.height = height;
     let needle = v.filter.to_lowercase();
-    let shown: Vec<&(String, bool)> = v
+    let shown: Vec<_> = v
         .lines
         .iter()
+        .map(|(line, err)| {
+            let line = match &v.trim {
+                Some((re, rep)) if !v.plain => re.replace(line, *rep),
+                _ => std::borrow::Cow::Borrowed(line.as_str()),
+            };
+            (line, *err)
+        })
         .filter(|(l, _)| needle.is_empty() || ansi::strip(l).to_lowercase().contains(&needle))
         .collect();
     if shown.is_empty() {
+        if v.plain {
+            return;
+        }
         let msg = if v.no_jobs && v.filter.is_empty() {
             "⚠ No jobs on this worker yet"
         } else if v.exit.is_none() {

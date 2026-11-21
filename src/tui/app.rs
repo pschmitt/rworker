@@ -159,6 +159,7 @@ pub struct TextView {
     pub follow: bool,
     pub top: usize,
     pub wrap: bool,
+    pub plain: bool,
     pub filter: String,
     pub no_jobs: bool,
     jobs_loading: bool,
@@ -167,7 +168,7 @@ pub struct TextView {
     /// The `WORKER/` (or `WORKER/JOB `) prefix of job log lines, which
     /// says nothing in a view of one worker (or job): pattern and
     /// replacement.
-    trim: Option<(regex::Regex, &'static str)>,
+    pub(super) trim: Option<(regex::Regex, &'static str)>,
     seeded: bool,
     has_live_output: bool,
 }
@@ -370,6 +371,7 @@ impl App {
             follow: true,
             top: 0,
             wrap: false,
+            plain: false,
             filter: String::new(),
             no_jobs: false,
             jobs_loading: false,
@@ -636,10 +638,6 @@ impl App {
                         }
                         v.has_live_output = true;
                     }
-                    let text = match &v.trim {
-                        Some((re, rep)) => re.replace(&text, *rep).into_owned(),
-                        None => text,
-                    };
                     v.lines.push_back((text, err));
                     if v.lines.len() > MAX_LINES {
                         v.lines.pop_front();
@@ -1189,6 +1187,7 @@ impl App {
                 }
             }
             KeyCode::Char('w') => v.wrap = !v.wrap,
+            KeyCode::F(11) => v.plain = !v.plain,
             KeyCode::Char('c') => {
                 v.lines.clear();
                 v.top = 0;
