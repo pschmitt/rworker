@@ -78,3 +78,66 @@ impl Policy {
         }
     }
 }
+
+/// With `reapProtectInUse` a worker is deleted only after it was positively
+/// seen idle. That cannot apply to one that never became ready: it has no
+/// host key, so no client can hold a pinned session on it and it cannot be
+/// probed either. Counting it as "could be in use" would keep it forever.
+// The reaper-parity example includes this file and only needs the policy.
+#[allow(dead_code)]
+pub(super) fn protected(
+    decision: &BeforeProbe,
+    protect_in_use: bool,
+    active: Option<bool>,
+) -> bool {
+    protect_in_use && *decision != BeforeProbe::DeleteUnready && active != Some(false)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const POLICY: Policy = Policy {
+        boot_timeout: 900.0,
+        grace_period: 3600.0,
+        max_ttl: 86400.0,
+    };
+
+    fn worker(host_key_present: bool, created: f64, expires: f64) -> Worker {
+        Worker {
+            created_at: Some(created),
+            expires_at: expires,
+            max_lifetime: Some(86400.0),
+            host_key_present,
+            last_active: 0.0,
+            token_expires_at: 0.0,
+        }
+    }
+
+    #[test]
+    fn a_worker_without_host_key_is_unready_after_the_boot_timeout() {
+        let w = worker(false, 1000.0, 8200.0);
+        assert_eq!(POLICY.before_probe(&w, 1500.0), BeforeProbe::Keep);
+        assert_eq!(POLICY.before_probe(&w, 2000.0), BeforeProbe::DeleteUnready);
+    }
+
+    #[test]
+    fn protect_in_use_never_keeps_an_unready_worker() {
+        // No host key: activity is unknowable, yet nobody can be using it.
+        assert!(!protected(&BeforeProbe::DeleteUnready, true, None));
+    }
+
+    #[test]
+    fn protect_in_use_still_needs_proof_of_idleness_for_the_rest() {
+        assert!(protected(&BeforeProbe::Probe, true, None));
+        assert!(protected(&BeforeProbe::Probe, true, Some(true)));
+        assert!(!protected(&BeforeProbe::Probe, true, Some(false)));
+        assert!(protected(&BeforeProbe::DeleteAtMaximumLifetime, true, None));
+    }
+
+    #[test]
+    fn without_protect_in_use_nothing_is_protected() {
+        assert!(!protected(&BeforeProbe::Probe, false, None));
+        assert!(!protected(&BeforeProbe::DeleteUnready, false, None));
+    }
+}

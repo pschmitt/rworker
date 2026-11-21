@@ -4,6 +4,13 @@
 
 The Rust client and controller replace the original Bash client.
 
+### Reaper
+
+- Delete a worker that never became ready (no host key after the boot
+  timeout) even with `reapProtectInUse`. Nobody can hold a pinned session on
+  it and it cannot be probed, so it used to be kept for ever ("activity could
+  not be ruled out").
+
 ### MCP
 
 - Inspect job processes and retained lifecycle events.

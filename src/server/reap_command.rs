@@ -110,7 +110,7 @@ pub(super) fn reap(cfg: &serde_json::Value, dry_run: bool) -> Result<(), String>
                 }
             },
         };
-        if protect_in_use && active != Some(false) {
+        if super::reaper::protected(&decision, protect_in_use, active) {
             let activity = if active == Some(true) {
                 "worker is active"
             } else {
