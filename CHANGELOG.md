@@ -6,6 +6,7 @@ The Rust client and controller replace the original Bash client.
 
 ### TUI
 
+- Explain when the worker log preview is empty because it has no jobs.
 - Open a worker's only active job directly; use `J` in its logs to show jobs.
 - Toggle log following with Space and clarify the navigation hints.
 

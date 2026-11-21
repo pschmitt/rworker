@@ -752,12 +752,19 @@ fn draw_text(f: &mut Frame, area: Rect, v: &mut TextView, tick: u64) {
         .filter(|(l, _)| needle.is_empty() || ansi::strip(l).to_lowercase().contains(&needle))
         .collect();
     if shown.is_empty() {
-        let msg = if v.exit.is_none() {
+        let msg = if v.no_jobs && v.filter.is_empty() {
+            "⚠ No jobs on this worker yet"
+        } else if v.exit.is_none() {
             "waiting for output…"
         } else {
             "no output"
         };
-        f.render_widget(Paragraph::new(Line::styled(msg, dim())), inner);
+        let style = if v.no_jobs && v.filter.is_empty() {
+            Style::new().fg(Color::Yellow)
+        } else {
+            dim()
+        };
+        f.render_widget(Paragraph::new(Line::styled(msg, style)), inner);
         return;
     }
     let width = inner.width.max(1) as usize;

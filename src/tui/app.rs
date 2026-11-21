@@ -160,6 +160,8 @@ pub struct TextView {
     pub top: usize,
     pub wrap: bool,
     pub filter: String,
+    pub no_jobs: bool,
+    jobs_loading: bool,
     /// Rows of the last draw, for paging.
     pub height: usize,
     /// The `WORKER/` (or `WORKER/JOB `) prefix of job log lines, which
@@ -217,6 +219,7 @@ enum Pending {
     JobList,
     History,
     LogPreview(u64),
+    PreviewJobs(u64),
 }
 
 pub struct Flash {
@@ -368,6 +371,8 @@ impl App {
             top: 0,
             wrap: false,
             filter: String::new(),
+            no_jobs: false,
+            jobs_loading: false,
             height: 20,
             trim: log_prefix(&args),
             seeded: false,
@@ -476,7 +481,25 @@ impl App {
                 );
             }
             self.preview = Some((worker, view));
+            if !retired {
+                self.refresh_preview_jobs();
+            }
         }
+    }
+
+    fn refresh_preview_jobs(&mut self) {
+        let Some((worker, view)) = &mut self.preview else {
+            return;
+        };
+        if view.jobs_loading || view.title.starts_with("cached logs") {
+            return;
+        }
+        view.jobs_loading = true;
+        let worker = worker.clone();
+        let view_id = view.id;
+        let id = self.id();
+        self.pending.insert(id, Pending::PreviewJobs(view_id));
+        proc::action(id, vec!["jobs".into(), worker], self.tx.clone());
     }
 
     fn text_view(&mut self, id: u64) -> Option<&mut TextView> {
@@ -664,6 +687,12 @@ impl App {
                         );
                         view.lines.make_contiguous().reverse();
                         view.seeded = true;
+                    }
+                }
+                Some(Pending::PreviewJobs(view_id)) => {
+                    if let Some(view) = self.text_view(view_id) {
+                        view.jobs_loading = false;
+                        view.no_jobs = ok && out.trim().is_empty();
                     }
                 }
                 Some(Pending::History) => {
@@ -1526,6 +1555,8 @@ pub fn run(ctx: &Ctx, interval: Duration) -> std::io::Result<()> {
             if last_jobs_refresh.elapsed() >= interval {
                 if matches!(app.stack.last(), Some(Sub::Jobs(_))) {
                     app.reload_jobs();
+                } else if app.stack.is_empty() {
+                    app.refresh_preview_jobs();
                 }
                 last_jobs_refresh = Instant::now();
             }
