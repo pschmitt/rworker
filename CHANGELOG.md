@@ -8,6 +8,7 @@ The Rust client and controller replace the original Bash client.
 
 - Show profile vCPU counts and RAM from the configured OpenStack flavors,
   alongside disk sizes and image tags.
+- Move the search icon inside the right edge of the filter field.
 
 - Filter worker inventory directly from the live, pool, expiring and retired
   counts. The console keeps connection status in the header and makes worker
