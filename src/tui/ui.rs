@@ -357,7 +357,7 @@ impl App {
                 ("J", "worker jobs"),
                 ("/", "filter"),
                 ("w", "wrap"),
-                ("F11", "plain view"),
+                ("n", "plain view"),
                 ("c", "clear"),
                 ("esc", "back"),
             ]),

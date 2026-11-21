@@ -1187,7 +1187,7 @@ impl App {
                 }
             }
             KeyCode::Char('w') => v.wrap = !v.wrap,
-            KeyCode::F(11) => v.plain = !v.plain,
+            KeyCode::Char('n') => v.plain = !v.plain,
             KeyCode::Char('c') => {
                 v.lines.clear();
                 v.top = 0;
