@@ -20,7 +20,7 @@ def compare(oracle, binary, root):
         "adhocPrefix": "example-", "adhocFlavor": "small", "adhocVolumeSize": 16,
         "adhocMaxTtl": 3600, "adhocMax": 4, "adhocDefaultTtl": 60,
         "bootTimeout": 10, "netbirdAdhocGroup": "workers",
-        "profiles": {"standard": {"imageTags": ["worker"]}},
+        "profiles": {"standard": {"imageTags": ["worker"], "imageNamePattern": "^rworker-[0-9a-f]{12}$"}},
         "openstackSecretFile": str(root / "secret"), "openstackSecretName": "fake",
         "netbirdTokenFile": str(root / "token"), "netbirdApi": "https://overlay.example.invalid",
         "networkId": "test-network", "securityGroup": "test-group",
@@ -48,10 +48,17 @@ match args[:2]:
             max_total_cores=10, total_cores_used=0, max_total_ram_size=4096,
             total_ram_used=0, max_total_instances=10, total_instances_used=0
         ).items()]
-    case ["image", "list"]: data = [{"ID": "image"}]
-    case ["image", "show"]: data = {"name": "image", "created_at": "2026-01-01"}
+    case ["image", "list"]: data = [{"ID": "image"}, {"ID": "other-family"}]
+    case ["image", "show"]:
+        data = (
+            {"name": "rworker-abcdef123456", "created_at": "2026-01-01"}
+            if args[-1] == "image"
+            else {"name": "rworker-circus-abcdef123457", "created_at": "2026-01-02"}
+        )
     case ["server", "create"]:
-        assert "boot_index=0,delete_on_termination=true" in args[args.index("--block-device")+1]
+        boot_device = args[args.index("--block-device") + 1]
+        assert "boot_index=0,delete_on_termination=true" in boot_device
+        assert "uuid=image," in boot_device, boot_device
         document = json.loads(Path(args[args.index("--user-data")+1]).read_text())
         record(["create", document])
         Path(os.environ["FAKE_NAME"]).write_text(args[-1])

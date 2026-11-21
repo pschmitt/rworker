@@ -14,6 +14,11 @@ The Rust client and controller replace the original Bash client.
   counts. The console keeps connection status in the header and makes worker
   links easier to scan and open.
 
+### Worker provisioning
+
+- Profiles can match image names in addition to Glance tags, so multiple
+  image families can safely share a tag.
+
 ### Reaper
 
 - Delete a worker that never became ready (no host key after the boot

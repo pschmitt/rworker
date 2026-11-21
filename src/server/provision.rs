@@ -70,10 +70,20 @@ pub(super) fn create(
         }
     }
 
-    let tags = cfg["profiles"][request.profile]["imageTags"]
+    let profile = &cfg["profiles"][request.profile];
+    let tags = profile["imageTags"]
         .as_array()
         .filter(|tags| !tags.is_empty())
         .ok_or_else(|| format!("unknown worker profile: {}", request.profile))?;
+    let image_name_pattern = profile
+        .get("imageNamePattern")
+        .map(|pattern| {
+            let pattern = pattern
+                .as_str()
+                .ok_or("Expected imageNamePattern to be a string")?;
+            regex::Regex::new(pattern).map_err(|error| format!("Invalid imageNamePattern: {error}"))
+        })
+        .transpose()?;
     let mut newest = None;
     for tag in tags {
         let tag = tag.as_str().ok_or("Invalid image tag")?;
@@ -95,12 +105,19 @@ pub(super) fn create(
             let output = compute.command(&["image", "show", "-f", "json", "--", id])?;
             let detail: Value =
                 serde_json::from_slice(&output).map_err(|_| "Invalid image detail")?;
+            let name = setting(&detail, "name")?;
+            if image_name_pattern
+                .as_ref()
+                .is_some_and(|pattern| !pattern.is_match(name))
+            {
+                continue;
+            }
             let created = setting(&detail, "created_at")?;
             if newest
                 .as_ref()
                 .is_none_or(|(date, _, _): &(String, String, String)| created > date.as_str())
             {
-                newest = Some((created.into(), id.into(), setting(&detail, "name")?.into()));
+                newest = Some((created.into(), id.into(), name.into()));
             }
         }
     }
