@@ -15,6 +15,27 @@ pub(super) fn directory() -> Option<PathBuf> {
     std::env::var_os("RWORKER_INVENTORY_DIRECTORY").map(PathBuf::from)
 }
 
+pub(super) fn read_profiles(dir: &Path) -> Option<Value> {
+    let file = File::open(dir.join("profiles.json")).ok()?;
+    let rows: Value = serde_json::from_reader(file).ok()?;
+    rows.is_array().then_some(rows)
+}
+
+fn refresh_profiles(config: &str, dir: &Path) -> io::Result<()> {
+    let settings = serde_json::from_reader(BufReader::new(File::open(config)?))?;
+    let rows = super::profiles(&settings)?;
+    // Do not replace a useful snapshot when a provider lookup failed.
+    if rows
+        .iter()
+        .any(|row| row.get("vcpus").is_none() || row.get("ram_mib").is_none())
+    {
+        return Err(io::Error::other("Profile flavor lookup failed"));
+    }
+    replace(dir, "profiles.json", |file| {
+        serde_json::to_writer(file, &rows).map_err(io::Error::other)
+    })
+}
+
 fn generation(dir: &Path, marker: &str) -> io::Result<String> {
     match fs::read_to_string(dir.join(marker)) {
         Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(String::new()),
@@ -142,6 +163,23 @@ pub(super) fn list(dir: &Path, fresh: bool) -> Result<Value, String> {
 }
 
 pub(super) fn refresh_forever(config: &str, dir: &Path) -> Result<(), Box<dyn std::error::Error>> {
+    let profile_config = config.to_owned();
+    let profile_dir = dir.to_owned();
+    thread::spawn(move || {
+        loop {
+            let age = fs::metadata(profile_dir.join("profiles.json"))
+                .and_then(|metadata| metadata.modified())
+                .and_then(|modified| modified.elapsed().map_err(io::Error::other));
+            if (age.is_err() || age.is_ok_and(|age| age >= Duration::from_secs(86400)))
+                && let Err(error) = refresh_profiles(&profile_config, &profile_dir)
+            {
+                eprintln!("Refresh profiles: {error}");
+                thread::sleep(Duration::from_secs(60));
+                continue;
+            }
+            thread::sleep(Duration::from_secs(60));
+        }
+    });
     let binary = std::env::current_exe()?;
     loop {
         let mutation = generation(dir, "mutation")?;
@@ -187,6 +225,21 @@ pub(super) fn refresh_forever(config: &str, dir: &Path) -> Result<(), Box<dyn st
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn profile_snapshot_rejects_invalid_data() -> io::Result<()> {
+        let dir = std::env::temp_dir().join(format!("rworker-profiles-{}", std::process::id()));
+        fs::create_dir(&dir)?;
+        assert!(read_profiles(&dir).is_none());
+        fs::write(dir.join("profiles.json"), b"{}")?;
+        assert!(read_profiles(&dir).is_none());
+        fs::write(
+            dir.join("profiles.json"),
+            br#"[{"name":"standard","vcpus":4}]"#,
+        )?;
+        assert_eq!(read_profiles(&dir).unwrap()[0]["vcpus"], 4);
+        fs::remove_dir_all(dir)
+    }
 
     #[test]
     fn stream_only_emits_current_changed_inventory() -> io::Result<()> {

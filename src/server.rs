@@ -186,7 +186,13 @@ pub fn run(ctx: &crate::ctx::Ctx, args: &[String]) -> R {
             if action == "ls" {
                 inventory::list(&settings)?
             } else {
-                Value::Array(profiles(&settings)?)
+                match cache
+                    .as_ref()
+                    .and_then(|dir| inventory_cache::read_profiles(dir))
+                {
+                    Some(rows) => rows,
+                    None => Value::Array(profiles(&settings)?),
+                }
             }
         };
         let mut stdout = io::stdout().lock();

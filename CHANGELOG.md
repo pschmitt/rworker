@@ -6,6 +6,8 @@ The Rust client and controller replace the original Bash client.
 
 ### Web console
 
+- Cache profile flavor resources on the controller and refresh them daily;
+  show CPU and memory in the CLI and TUI profile list too.
 - Show profile vCPU counts and RAM from the configured OpenStack flavors,
   alongside disk sizes and image tags.
 - Move the search icon inside the right edge of the filter field.

@@ -230,7 +230,7 @@ pub fn cmd_profiles(ctx: &Ctx, args: &[String]) -> R {
         crate::ctx::json_out(ctx, &jq::pretty(&Value::Array(list)));
         return Ok(());
     }
-    let mut rows = vec!["PROFILE\tFLAVOR\tDISK (GiB)\tIMAGE TAGS".to_string()];
+    let mut rows = vec!["PROFILE\tFLAVOR\tVCPU\tRAM (MiB)\tDISK (GiB)\tIMAGE TAGS".to_string()];
     for p in &list {
         let star = if jq::truthy(get(p, "default")) {
             "*"
@@ -245,6 +245,12 @@ pub fn cmd_profiles(ctx: &Ctx, args: &[String]) -> R {
             [
                 jq::tsv(&json!(format!("{}{star}", jq::raw(get(p, "name"))))),
                 jq::tsv(get(p, "flavor")),
+                jq::tsv(&json!(
+                    p.get("vcpus").map_or_else(|| "-".to_string(), jq::raw)
+                )),
+                jq::tsv(&json!(
+                    p.get("ram_mib").map_or_else(|| "-".to_string(), jq::raw)
+                )),
                 jq::raw(get(p, "disk")),
                 jq::tsv(&json!(tags.join(", "))),
             ]
