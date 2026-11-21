@@ -299,6 +299,42 @@ in
         description = "Description of the autoscaler unit.";
       };
     };
+    autoscalers = lib.mkOption {
+      type = lib.types.attrsOf (
+        lib.types.submodule (
+          { name, ... }:
+          {
+            options = {
+              settingsFile = lib.mkOption {
+                type = lib.types.str;
+                description = "Runtime JSON settings path for this autoscaler.";
+              };
+              user = lib.mkOption {
+                type = lib.types.str;
+                default = "rworker";
+                description = "Existing account running this autoscaler.";
+              };
+              group = lib.mkOption {
+                type = lib.types.str;
+                default = "rworker";
+                description = "Existing group running this autoscaler.";
+              };
+              description = lib.mkOption {
+                type = lib.types.str;
+                default = "Autoscale the ${name} worker pool";
+                description = "Systemd unit description.";
+              };
+            };
+          }
+        )
+      );
+      default = { };
+      description = ''
+        Additional named autoscaler services. Attribute names are systemd
+        unit names; the legacy `autoscaler` option remains available for a
+        single existing pool.
+      '';
+    };
     package = lib.mkOption {
       type = lib.types.package;
       description = "The rworker package providing both client and server.";
@@ -321,6 +357,14 @@ in
   };
 
   config = lib.mkMerge [
+    {
+      assertions = [
+        {
+          assertion = !cfg.autoscaler.enable || !(builtins.hasAttr cfg.autoscaler.unitName cfg.autoscalers);
+          message = "The legacy rworker autoscaler unitName must not collide with a named autoscaler.";
+        }
+      ];
+    }
     (lib.mkIf cfg.web.enable {
       assertions = [
         {
@@ -722,6 +766,28 @@ in
           Restart = "on-failure";
         };
       };
+    })
+    (lib.mkIf (cfg.autoscalers != { }) {
+      systemd.services = lib.mapAttrs' (
+        unitName: autoscaler:
+        lib.nameValuePair unitName {
+          inherit (autoscaler) description;
+          wantedBy = [ "multi-user.target" ];
+          after = [ "network-online.target" ];
+          wants = [ "network-online.target" ];
+          path = runtimeTools ++ [ pkgs.postgresql ];
+          serviceConfig = {
+            User = autoscaler.user;
+            Group = autoscaler.group;
+            ExecStart = command [
+              "server"
+              autoscaler.settingsFile
+              "autoscale"
+            ];
+            Restart = "on-failure";
+          };
+        }
+      ) cfg.autoscalers;
     })
   ];
 }
