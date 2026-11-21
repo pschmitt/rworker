@@ -723,10 +723,9 @@ impl Pool<'_> {
     }
 }
 
-/// Classification settings for this autoscaler: its `namePrefix` is the
-/// legacy fallback for its own pool (no ad-hoc prefix: never ours).
+/// Retain other pools' more specific prefixes when classifying legacy workers.
 fn legacy_prefixes(cfg: &Value) -> Value {
-    let mut prefixes = serde_json::Map::new();
+    let mut prefixes = cfg["poolPrefixes"].as_object().cloned().unwrap_or_default();
     if let Some(prefix) = cfg["namePrefix"].as_str() {
         prefixes.insert(prefix.into(), json!(pools::own_pool(cfg)));
     }
@@ -778,6 +777,22 @@ pub(super) fn user_data(cfg: &Value) -> Result<serde_json::Map<String, Value>, S
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn regular_circus_pool_does_not_adopt_legacy_qemu_workers() {
+        let cfg = json!({
+            "namePrefix": "circus-",
+            "poolName": "circus",
+            "poolPrefixes": {"circus-qemu-": "circus-qemu"}
+        });
+        let settings = legacy_prefixes(&cfg);
+        let classifier = pools::Pools::from_settings(&settings).unwrap();
+        let metadata = serde_json::Map::new();
+        assert_eq!(
+            classifier.classify("circus-qemu-1234", &metadata),
+            Some(pools::Kind::Pool("circus-qemu".into()))
+        );
+    }
 
     #[test]
     fn circus_queue_counts_only_the_pool_system() {
