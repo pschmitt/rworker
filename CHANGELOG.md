@@ -10,6 +10,8 @@ The Rust client and controller replace the original Bash client.
 - Read logs across workers or from retained snapshots, with optional secret
   redaction, and request fresh inventory or include retired workers.
 
+- Show the Circus tent icon in the agent column on the CLI, TUI, and web.
+
 ### Web console
 
 - Open worker details and logs on a full-width, linkable worker page.

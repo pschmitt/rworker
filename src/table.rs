@@ -15,6 +15,7 @@ pub(crate) fn glyph(agent: &str) -> &'static str {
         "nixbot" | "nix build" => "\u{f313}",
         "copilot" => "\u{ec1e}",
         "gemini" | "agy" | "antigravity" => "\u{ec10}",
+        "circus" => "\u{f0508}",
         "browser-daemon" => "\u{f02a0}",
         _ => "",
     }

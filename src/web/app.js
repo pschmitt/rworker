@@ -125,6 +125,7 @@ const agentIcons = new Map([
   ["claude", ["\uec82", "claude"]], ["codex", ["\uec81", "codex"]],
   ["shell", ["\uea85", ""]], ["nixbot", ["\uf313", "nix"]], ["nix build", ["\uf313", "nix"]],
   ["copilot", ["\uec1e", ""]], ["gemini", ["\uec10", ""]], ["agy", ["\uec10", ""]],
+  ["circus", ["\u{f0508}", ""]],
   ["antigravity", ["\uec10", ""]], ["browser-daemon", ["\u{f02a0}", ""]],
 ]);
 
