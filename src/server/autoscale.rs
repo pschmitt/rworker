@@ -123,19 +123,30 @@ impl Demand {
         parse_circus_queue(
             &output.stdout,
             demand["system"].as_str().unwrap_or("x86_64-linux"),
+            demand["qemuOverflow"].as_bool().unwrap_or(false),
         )
     }
 }
 
 /// `GET /api/v1/operator/queue` answers `[{"system": ..., "count": ...}]`:
 /// pending builds per system, which is all the pool needs.
-pub(super) fn parse_circus_queue(body: &[u8], system: &str) -> Result<Demand, String> {
+pub(super) fn parse_circus_queue(
+    body: &[u8],
+    system: &str,
+    qemu_overflow: bool,
+) -> Result<Demand, String> {
     let queue: Vec<Value> =
         serde_json::from_slice(body).map_err(|_| "Invalid Circus queue response")?;
     let pending = queue
         .iter()
         .filter(|entry| entry["system"] == system)
-        .map(|entry| entry["count"].as_u64().unwrap_or(0))
+        .map(|entry| {
+            if qemu_overflow {
+                entry["qemu_overflow_count"].as_u64().unwrap_or(0)
+            } else {
+                entry["count"].as_u64().unwrap_or(0)
+            }
+        })
         .sum();
     Ok(Demand {
         pending,
@@ -770,18 +781,30 @@ mod tests {
 
     #[test]
     fn circus_queue_counts_only_the_pool_system() {
-        let body = br#"[{"system":"x86_64-linux","count":7},{"system":"aarch64-linux","count":3}]"#;
-        let demand = parse_circus_queue(body, "x86_64-linux").unwrap();
+        let body = br#"[{"system":"x86_64-linux","count":7},{"system":"aarch64-linux","count":3,"qemu_overflow_count":1}]"#;
+        let demand = parse_circus_queue(body, "x86_64-linux", false).unwrap();
         assert_eq!(demand.pending, 7);
         assert_eq!(demand.building, 0);
         assert_eq!(demand.queued(16), 7);
+
+        let overflow = parse_circus_queue(body, "aarch64-linux", true).unwrap();
+        assert_eq!(overflow.pending, 1);
+        assert_eq!(overflow.queued(16), 1);
+
+        let stale_or_unconfigured = parse_circus_queue(
+            br#"[{"system":"aarch64-linux","count":8}]"#,
+            "aarch64-linux",
+            true,
+        )
+        .unwrap();
+        assert_eq!(stale_or_unconfigured.pending, 0);
     }
 
     #[test]
     fn circus_queue_without_the_system_is_idle() {
-        let demand = parse_circus_queue(b"[]", "x86_64-linux").unwrap();
+        let demand = parse_circus_queue(b"[]", "x86_64-linux", false).unwrap();
         assert_eq!(demand.pending, 0);
-        assert!(parse_circus_queue(b"{}", "x86_64-linux").is_err());
+        assert!(parse_circus_queue(b"{}", "x86_64-linux", false).is_err());
     }
 
     #[test]
