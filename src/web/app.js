@@ -1,15 +1,10 @@
 "use strict";
 
 const $ = (id) => document.getElementById(id);
-const views = {
-  workers: ["Workers", "Manage worker leases and inspect build output."],
-  jobs: ["Jobs", "Follow registered jobs across your workers."],
-  events: ["Events", "Review the controller’s lifecycle history."],
-  profiles: ["Profiles", "See the resources available for new workers."],
-};
+const views = { workers: "Workers", jobs: "Jobs", events: "Events", profiles: "Profiles" };
 const state = {
   token: "", authenticated: false, view: "workers", rows: {}, sort: {}, selected: null, job: null, tab: "logs",
-  showRetired: false, showFinished: false, redact: true, follow: true, limit: 200,
+  workerFilter: "live", showFinished: false, redact: true, follow: true, limit: 200,
 };
 let stream;
 let logSocket;
@@ -40,7 +35,7 @@ function notice(message, error = false) {
 }
 
 function connection(label, kind = "") {
-  $("connection").textContent = label;
+  if ($("connection").textContent !== label) $("connection").textContent = label;
   $("signal").className = "signal" + (kind ? " " + kind : "");
 }
 
@@ -96,19 +91,14 @@ function navigate() {
   state.selected = null;
   state.limit = 200;
   $("search").value = "";
-  $("heading").textContent = views[state.view][0];
-  $("subtitle").textContent = views[state.view][1];
-  document.title = views[state.view][0] + " · rworker";
   document.querySelectorAll("[data-view]").forEach((link) => {
     if (link.dataset.view === state.view) link.setAttribute("aria-current", "page");
     else link.removeAttribute("aria-current");
   });
   $("search").placeholder = "Filter " + state.view;
   $("create").hidden = !state.authenticated;
-  const isWorkers = state.view === "workers";
-  $("extra-toggle").hidden = !isWorkers && state.view !== "jobs";
-  $("extra-label").textContent = isWorkers ? "Show retired" : "Show finished";
-  $("extra").checked = isWorkers ? state.showRetired : state.showFinished;
+  $("extra-toggle").hidden = state.view !== "jobs";
+  $("extra").checked = state.showFinished;
   detailPanel();
   render();
   if (state.authenticated && requested === "workers" && worker) {
@@ -147,11 +137,17 @@ function workerGlyph(row) {
 }
 
 function workerName(row) {
-  const node = named(row.name, row.label || (isPool(row) ? row.kind + " pool" : ""), () => selected(row));
+  const link = element("a", null, "worker-link");
+  link.href = workerHash(row);
   const glyph = element("span", workerGlyph(row), "agent-icon worker-icon");
   glyph.setAttribute("aria-hidden", "true");
-  node.prepend(glyph);
-  return node;
+  const identity = element("span", row.name, "worker-identity");
+  const label = row.label || (isPool(row) ? row.kind + " pool" : "");
+  if (label) identity.append(element("span", label, "secondary"));
+  const context = [row.topic, row.agent].filter(Boolean).join(" · ");
+  if (context) identity.append(element("span", context, "secondary worker-context"));
+  link.append(glyph, identity);
+  return link;
 }
 
 function agentLabel(agent) {
@@ -242,7 +238,7 @@ function workerExpiry(row, now) {
     const remaining = row.expires_at - now;
     label = duration(remaining);
     if (remaining < 0) tone = " urgent";
-    else if (remaining < 900) tone = " soon";
+    else if (remaining < leaseWarningSeconds) tone = " soon";
   }
   return element("span", label, "worker-expiry" + tone);
 }
@@ -320,8 +316,12 @@ function named(title, secondary, click) {
   return node;
 }
 
-function selected(row, job = null) {
-  location.hash = "workers/" + encodeURIComponent(row.name) + (job ? "/" + encodeURIComponent(job) : "");
+function workerHash(row, job) {
+  return "#workers/" + encodeURIComponent(row.name) + (job ? "/" + encodeURIComponent(job) : "");
+}
+
+function selected(row, job) {
+  location.hash = workerHash(row, job);
 }
 
 function openWorker(row, job) {
@@ -342,28 +342,39 @@ function workerFor(name) {
   return sourceWorker(name) || { name };
 }
 
+const leaseWarningSeconds = 15 * 60;
+const workerFilters = {
+  live: (row) => !row.retired,
+  pool: (row) => !row.retired && isPool(row),
+  expiring: (row, now) => !row.retired && !(isPool(row) && row.pool_state) &&
+    (row.grace_until > now || (row.expires_at > 0 && row.expires_at - now < leaseWarningSeconds)),
+  retired: (row) => Boolean(row.retired),
+};
+const filterButtons = [...document.querySelectorAll("[data-worker-filter]")];
+
+function renderWorkerFilters(source, now) {
+  for (const control of filterButtons) {
+    const key = control.dataset.workerFilter;
+    const count = state.rows.workers ? source.filter((row) => workerFilters[key](row, now)).length : "—";
+    control.querySelector("strong").textContent = count;
+    control.setAttribute("aria-pressed", String(key === state.workerFilter));
+  }
+}
+
 function render() {
   const source = state.rows[state.view] || [];
   const results = $("results");
   const search = $("search").value.trim().toLowerCase();
   let visible = source.filter((row) => !search || JSON.stringify(row).toLowerCase().includes(search));
-  const summary = $("summary");
-  summary.replaceChildren();
+  const now = Date.now() / 1000;
   if (state.view === "workers") {
-    const live = source.filter((row) => !row.retired);
-    const ready = live.filter((row) => ["ACTIVE", "READY"].includes(row.status)).length;
-    for (const [label, value] of [["Live workers", live.length], ["Ready", ready], ["Retired", source.length - live.length]]) {
-      const cell = element("div");
-      cell.append(element("strong", value), element("small", label));
-      summary.append(cell);
-    }
-    if (!state.showRetired) visible = visible.filter((row) => !row.retired);
+    renderWorkerFilters(source, now);
+    visible = visible.filter((row) => workerFilters[state.workerFilter](row, now));
   }
   if (state.view === "jobs" && !state.showFinished) {
     visible = visible.filter((row) => row.state !== "archived" && !String(row.state).startsWith("exit "));
   }
-  if (state.view === "events") visible = [...visible].reverse();
-  const now = Date.now() / 1000;
+  if (state.view === "events") visible.reverse();
   const sort = state.sort[state.view];
   if (sort) {
     const value = sortFields[state.view][sort.index];
@@ -372,9 +383,19 @@ function render() {
   const count = visible.length;
   visible = visible.slice(0, state.limit);
 
+  const counter = $("results-count");
+  counter.hidden = !visible.length;
+  counter.textContent = count > visible.length ? `Showing ${visible.length} of ${count}` : `${count} ${count === 1 ? "result" : "results"}`;
   if (!visible.length) {
+    const workerEmpty = {
+      live: "No live workers.",
+      pool: "No live pool workers.",
+      expiring: "No leases expiring in the next 15 minutes or overdue.",
+      retired: "No retired workers.",
+    };
     const message = !state.rows[state.view] ? "Loading " + state.view + "…" :
-      search ? "No results match your filter." :
+      search ? "No results match your search in this view." :
+        state.view === "workers" ? workerEmpty[state.workerFilter] :
         state.view === "jobs" && !state.showFinished && source.length ? "No active jobs. Show finished jobs to see earlier runs." :
           "No " + state.view + " to display.";
     results.replaceChildren(element("div", message, "empty"));
@@ -384,7 +405,7 @@ function render() {
   let rows;
   switch (state.view) {
     case "workers": {
-      columns = [["Name"], ["Status"], ["Agent"], ["Topic"], ["Expires"], ["Age"]];
+      columns = [["Name"], ["Status"], ["Agent"], ["Topic"], ["Lease / pool"], ["Age"]];
       rows = visible.map((row) => ({
         selected: state.selected?.name === row.name,
         cells: [workerName(row), badge(row.retired ? "Retired" : row.status),
@@ -415,13 +436,18 @@ function render() {
   }
   const previous = results.querySelector(`[data-view-table="${state.view}"]`);
   const scrollLeft = previous?.scrollLeft ?? 0;
-  const focusedSort = previous?.contains(document.activeElement) ? document.activeElement.dataset.sort : undefined;
+  const focused = previous?.contains(document.activeElement) ? document.activeElement : null;
+  const focusedSort = focused?.dataset.sort;
+  const focusedWorker = focused?.classList.contains("worker-link") ? focused.hash : null;
   const scroller = element("div", null, state.view === "workers" ? "table-scroll worker-table" : "table-scroll");
   scroller.dataset.viewTable = state.view;
   scroller.append(table(columns, rows, state.view));
   results.replaceChildren(scroller);
   scroller.scrollLeft = scrollLeft;
   if (focusedSort !== undefined) scroller.querySelector(`[data-sort="${focusedSort}"]`)?.focus({preventScroll: true});
+  if (focusedWorker) {
+    [...scroller.querySelectorAll(".worker-link")].find((link) => link.hash === focusedWorker)?.focus({ preventScroll: true });
+  }
   if (count > visible.length) {
     const more = element("div", null, "more");
     more.append(button("Show more", () => { state.limit += 200; render(); }));
@@ -441,7 +467,8 @@ async function refresh(manual = false) {
     if (view !== "workers" && !state.rows.workers) {
       state.rows.workers = await request("workers");
     }
-    connection(state.inventoryStale && view === "workers" ? "Cached inventory" : "Connected", "online");
+    const stale = state.inventoryStale && view === "workers";
+    connection(stale ? "Cached inventory" : "Connected", stale ? "stale" : "online");
     if (view === state.view) {
       if (state.selected && view === "workers") {
         const current = sourceWorker(state.selected.name);
@@ -468,10 +495,9 @@ function detailPanel() {
   const row = state.selected;
   $("detail").hidden = !row;
   $("inventory").hidden = Boolean(row);
-  $("summary").hidden = Boolean(row);
+  $("summary").hidden = Boolean(row) || state.view !== "workers";
   $("create").hidden = Boolean(row) || !state.authenticated;
-  $("heading").textContent = row?.name || views[state.view][0];
-  $("subtitle").textContent = row ? "" : views[state.view][1];
+  $("heading").textContent = row?.name || views[state.view];
   document.title = $("heading").textContent + " · rworker";
   if (!row) {
     closeLogStream();
@@ -771,10 +797,17 @@ $("lock").addEventListener("click", () => { lock(); notice(""); });
 $("create").addEventListener("click", () => form("create"));
 $("search").addEventListener("input", () => { state.limit = 200; render(); });
 $("extra").addEventListener("change", () => {
-  if (state.view === "workers") state.showRetired = $("extra").checked;
-  if (state.view === "jobs") state.showFinished = $("extra").checked;
+  state.showFinished = $("extra").checked;
+  state.limit = 200;
   render();
 });
+for (const control of filterButtons) {
+  control.addEventListener("click", () => {
+    state.workerFilter = control.dataset.workerFilter;
+    state.limit = 200;
+    render();
+  });
+}
 $("refresh").addEventListener("click", () => refresh(true));
 $("cancel").addEventListener("click", () => $("dialog").close());
 $("dismiss").addEventListener("click", () => $("dialog").close());

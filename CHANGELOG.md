@@ -4,6 +4,12 @@
 
 The Rust client and controller replace the original Bash client.
 
+### Web console
+
+- Filter worker inventory directly from the live, pool, expiring and retired
+  counts. The console keeps connection status in the header and makes worker
+  links easier to scan and open.
+
 ### Reaper
 
 - Delete a worker that never became ready (no host key after the boot
