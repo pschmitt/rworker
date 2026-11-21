@@ -4,6 +4,11 @@
 
 The Rust client and controller replace the original Bash client.
 
+### TUI
+
+- Open a worker's only active job directly; use `J` in its logs to show jobs.
+- Toggle log following with Space and clarify the navigation hints.
+
 ### Web console
 
 - Cache profile flavor resources on the controller and refresh them daily;

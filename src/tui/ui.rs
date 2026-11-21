@@ -344,7 +344,9 @@ impl App {
             ]),
             Some(Sub::Text(_)) => key_hints(&[
                 ("↑↓", "scroll"),
-                ("G", "follow"),
+                ("g/G", "top / resume"),
+                ("space", "pause / resume"),
+                ("J", "worker jobs"),
                 ("/", "filter"),
                 ("w", "wrap"),
                 ("c", "clear"),
@@ -593,8 +595,10 @@ impl App {
             row("r", "reload"),
             Line::default(),
             section("Logs and output"),
-            row("↑↓ PgUp PgDn", "scroll (pauses)"),
-            row("G / f", "follow / toggle"),
+            row("↑↓ PgUp PgDn", "scroll"),
+            row("g / G", "top and pause / bottom and resume"),
+            row("space / f", "pause / resume following"),
+            row("J", "show worker jobs"),
             row("/", "filter lines"),
             row("w  c", "wrap · clear"),
             Line::default(),
@@ -774,9 +778,10 @@ fn draw_text(f: &mut Frame, area: Rect, v: &mut TextView, tick: u64) {
         }
         i.min(shown.len() - 1)
     };
-    if v.follow || v.top >= max_top {
+    if v.follow {
         v.top = max_top;
-        v.follow = true;
+    } else {
+        v.top = v.top.min(max_top);
     }
     let lines: Vec<Line> = shown[v.top..]
         .iter()

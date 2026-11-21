@@ -140,6 +140,7 @@ impl Worker {
 
 pub struct Jobs {
     pub worker: Option<String>,
+    pub open_single: bool,
     pub show_finished: bool,
     pub rows: Vec<[String; 4]>,
     pub state: TableState,
@@ -149,6 +150,7 @@ pub struct Jobs {
 
 pub struct TextView {
     pub title: String,
+    pub worker: Option<String>,
     pub id: u64,
     pub lines: VecDeque<(String, bool)>,
     pub stream: Option<Stream>,
@@ -355,6 +357,9 @@ impl App {
         let id = self.id();
         let mut view = TextView {
             title: title.into(),
+            worker: (args.first().is_some_and(|arg| arg == "logs"))
+                .then(|| args.get(1).filter(|arg| !arg.starts_with('-')).cloned())
+                .flatten(),
             id,
             lines: VecDeque::new(),
             stream: None,
@@ -382,6 +387,7 @@ impl App {
     fn open_jobs(&mut self, worker: Option<String>) {
         self.stack.push(Sub::Jobs(Jobs {
             worker,
+            open_single: false,
             show_finished: false,
             rows: Vec::new(),
             state: TableState::default(),
@@ -685,6 +691,7 @@ impl App {
                     }
                 }
                 Some(Pending::JobList) => {
+                    let mut single = None;
                     for sub in &mut self.stack {
                         if let Sub::Jobs(j) = sub
                             && j.loading == Some(id)
@@ -736,8 +743,25 @@ impl App {
                                         j.state.selected().unwrap_or(0).min(n.saturating_sub(1))
                                     });
                                 j.state.select((n > 0).then_some(sel));
+                                if j.open_single && n == 1 {
+                                    single = Some((j.rows[0][0].clone(), j.rows[0][1].clone()));
+                                }
+                                j.open_single = false;
                             }
                         }
+                    }
+                    if let Some((worker, job)) = single {
+                        self.open_text(
+                            format!("logs · {worker}/{job}"),
+                            vec![
+                                "logs".into(),
+                                worker,
+                                job,
+                                "--follow".into(),
+                                "--lines".into(),
+                                "1000".into(),
+                            ],
+                        );
                     }
                 }
                 None => {}
@@ -904,6 +928,9 @@ impl App {
             KeyCode::Enter | KeyCode::Char('o') => {
                 if let Some(w) = need(self) {
                     self.open_jobs(Some(w));
+                    if let Some(Sub::Jobs(j)) = self.stack.last_mut() {
+                        j.open_single = true;
+                    }
                 }
             }
             KeyCode::Char('l') => {
@@ -1120,13 +1147,18 @@ impl App {
             }
             KeyCode::Down | KeyCode::Char('j') => down(v, 1),
             KeyCode::Up | KeyCode::Char('k') => up(v, 1),
-            KeyCode::PageDown | KeyCode::Char(' ') => down(v, page),
+            KeyCode::PageDown => down(v, page),
             KeyCode::PageUp => up(v, page),
             KeyCode::Char('d') if ctrl => down(v, page / 2),
             KeyCode::Char('u') if ctrl => up(v, page / 2),
             KeyCode::Home | KeyCode::Char('g') => up(v, usize::MAX),
             KeyCode::End | KeyCode::Char('G') => v.follow = true,
-            KeyCode::Char('f') => v.follow = !v.follow,
+            KeyCode::Char('f' | ' ') => v.follow = !v.follow,
+            KeyCode::Char('J') => {
+                if let Some(worker) = v.worker.clone() {
+                    self.open_jobs(Some(worker));
+                }
+            }
             KeyCode::Char('w') => v.wrap = !v.wrap,
             KeyCode::Char('c') => {
                 v.lines.clear();
