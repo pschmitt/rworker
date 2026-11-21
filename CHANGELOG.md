@@ -20,7 +20,8 @@ The Rust client and controller replace the original Bash client.
   choose the parts; `nix-cache` stays as `setup nix --no-auth`.
 - `up` and `exec` push both by default, as far as this host has something to
   give; `--no-nix-auth` keeps the tokens off the worker. The result's
-  `nix_cache` object gains `auth` and `auth_hosts` (host names only).
+  `nix_cache` object gains `auth` and `auth_hosts` (host names only). When
+  the S3 profile is missing, `setup nix` and `up` still push the tokens.
 - MCP: new `setup_nix` tool and `up(nix_auth=...)`.
 
 ### MCP

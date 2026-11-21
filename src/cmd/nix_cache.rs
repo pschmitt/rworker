@@ -150,6 +150,21 @@ fn aws_profile_section(file: &str, profile: &str) -> String {
     proc::trim_nl(&out.join("\n"))
 }
 
+/// The sections of `profiles` in an AWS credentials file, one after the other,
+/// or the name of the first profile that is missing.
+fn aws_sections(file: &str, profiles: &[String]) -> Result<String, String> {
+    let mut out = String::new();
+    for profile in profiles {
+        let section = aws_profile_section(file, profile);
+        if section.is_empty() {
+            return Err(profile.clone());
+        }
+        out.push_str(&section);
+        out.push('\n');
+    }
+    Ok(out)
+}
+
 fn ssh_capture(opts: &[String], login: &str, script: &str) -> String {
     Command::new("ssh")
         .args(opts)
@@ -171,7 +186,7 @@ pub fn push(ctx: &Ctx, name: &str, dry: bool, opts: &Opts) -> R<String> {
     } else {
         Vec::new()
     };
-    let do_cache = opts.cache && !subs.is_empty();
+    let mut do_cache = opts.cache && !subs.is_empty();
     let do_auth = !tokens.is_empty();
     if !do_cache && !do_auth {
         match (opts.cache, opts.auth) {
@@ -197,16 +212,20 @@ pub fn push(ctx: &Ctx, name: &str, dry: bool, opts: &Opts) -> R<String> {
     );
     let mut creds = String::new();
     if do_cache {
-        for profile in strings(get(&settings, "profiles")) {
-            let section = aws_profile_section(&creds_file, &profile);
-            if section.is_empty() {
-                ctx.err(&format!(
+        match aws_sections(&creds_file, &strings(get(&settings, "profiles"))) {
+            Ok(text) => creds = text,
+            Err(profile) => {
+                let msg = format!(
                     "No [{profile}] profile in {creds_file} (named by an s3:// substituter)"
-                ));
-                return Err(Fail(1));
+                );
+                if !do_auth {
+                    ctx.err(&msg);
+                    return Err(Fail(1));
+                }
+                // The tokens are worth pushing without the cache.
+                ctx.err(&format!("{msg}; pushing the access-tokens only"));
+                do_cache = false;
             }
-            creds.push_str(&section);
-            creds.push('\n');
         }
     }
     let mut conf = format!(
@@ -504,6 +523,30 @@ mod tests {
         assert_eq!(d["profiles"], json!(["niks3"]));
         let text = d.to_string();
         assert!(!text.contains("secret"), "{text}");
+    }
+
+    #[test]
+    fn aws_sections_return_the_named_profiles_or_the_missing_one() {
+        let dir = std::env::temp_dir().join(format!("rworker-aws-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let file = dir.join("credentials");
+        std::fs::write(
+            &file,
+            "[other]\nk = 1\n[niks3]\naws_access_key_id = a\naws_secret_access_key = b\n",
+        )
+        .unwrap();
+        let f = file.to_str().unwrap();
+        let ok = aws_sections(f, &["niks3".to_string()]).unwrap();
+        assert!(ok.starts_with("[niks3]\n") && !ok.contains("other"), "{ok}");
+        assert_eq!(
+            aws_sections(f, &["niks3".to_string(), "gone".to_string()]),
+            Err("gone".to_string())
+        );
+        assert_eq!(
+            aws_sections("/nonexistent/credentials", &["niks3".to_string()]),
+            Err("niks3".to_string())
+        );
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
