@@ -28,7 +28,7 @@ class NoRedirect(urllib.request.HTTPRedirectHandler):
 HTTP = urllib.request.build_opener(NoRedirect())
 
 
-def request(url, token, payload=None):
+def request(url, token, payload=None, *, timeout=15):
     if urllib.parse.urlsplit(url).scheme != "https":
         raise ValueError("Agent endpoints must use HTTPS")
     data = None if payload is None else json.dumps(payload).encode()
@@ -38,8 +38,27 @@ def request(url, token, payload=None):
             data=data,
             headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"},
         ),
-        timeout=15,
+        timeout=timeout,
     )
+
+
+def update_lease(url, token, payload, expires_at):
+    deadline = min(expires_at, time.time() + 60)
+    while (remaining := deadline - time.time()) > 0:
+        try:
+            with request(url, token, payload, timeout=min(15, remaining)):
+                return True
+        except urllib.error.HTTPError as error:
+            if error.code == 403 and error.headers.get("X-Rworker-Lease") == "closed":
+                return False
+            if error.code not in (403, 429, 500, 502, 503, 504):
+                raise
+        except (urllib.error.URLError, TimeoutError):
+            pass
+        time.sleep(max(0, min(5, deadline - time.time())))
+    if time.time() >= expires_at:
+        return False
+    raise RuntimeError("Lost contact with the rworker controller")
 
 
 def oidc_token():
@@ -155,19 +174,11 @@ Subsystem sftp internal-sftp
                 ).strip()
                 if sshd.poll() is not None:
                     raise RuntimeError("Runner SSH server stopped")
-                with request(
-                    f"{url}/ready", token,
-                    {"port": int(port), "host_key": host_key.with_suffix(".pub").read_text().strip()},
-                ):
-                    pass
-                while time.time() < assignment["expires_at"]:
-                    try:
-                        with request(f"{url}/heartbeat", token, {}):
-                            pass
-                    except urllib.error.HTTPError as error:
-                        if error.code == 403:
-                            break
-                        raise
+                expires_at = assignment["expires_at"]
+                endpoint = {"port": int(port), "host_key": host_key.with_suffix(".pub").read_text().strip()}
+                if not update_lease(f"{url}/ready", token, endpoint, expires_at):
+                    return
+                while update_lease(f"{url}/heartbeat", token, {}, expires_at):
                     time.sleep(5)
                     if sshd.poll() is not None:
                         raise RuntimeError("Runner SSH server stopped")

@@ -99,9 +99,9 @@ async fn ready(
     Path(id): Path<String>,
     headers: HeaderMap,
     body: Bytes,
-) -> StatusCode {
+) -> Response {
     let Ok(endpoint) = serde_json::from_slice(&body) else {
-        return StatusCode::BAD_REQUEST;
+        return StatusCode::BAD_REQUEST.into_response();
     };
     update(settings, id, headers, Some(endpoint)).await
 }
@@ -110,7 +110,7 @@ async fn heartbeat(
     State(settings): State<Arc<Value>>,
     Path(id): Path<String>,
     headers: HeaderMap,
-) -> StatusCode {
+) -> Response {
     update(settings, id, headers, None).await
 }
 
@@ -119,13 +119,13 @@ async fn update(
     id: String,
     headers: HeaderMap,
     endpoint: Option<Endpoint>,
-) -> StatusCode {
+) -> Response {
     let Some(token) = bearer(&headers) else {
-        return StatusCode::UNAUTHORIZED;
+        return StatusCode::UNAUTHORIZED.into_response();
     };
     static UPDATES: tokio::sync::Semaphore = tokio::sync::Semaphore::const_new(16);
     let Ok(permit) = UPDATES.try_acquire() else {
-        return StatusCode::SERVICE_UNAVAILABLE;
+        return StatusCode::SERVICE_UNAVAILABLE.into_response();
     };
     let token = token.to_owned();
     match tokio::task::spawn_blocking(move || {
@@ -134,8 +134,8 @@ async fn update(
     })
     .await
     {
-        Ok(Ok(())) => StatusCode::NO_CONTENT,
-        Ok(Err(_)) => StatusCode::FORBIDDEN,
-        Err(_) => StatusCode::INTERNAL_SERVER_ERROR,
+        Ok(Ok(())) => StatusCode::NO_CONTENT.into_response(),
+        Ok(Err(_)) => (StatusCode::FORBIDDEN, [("x-rworker-lease", "closed")]).into_response(),
+        Err(_) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
     }
 }
