@@ -855,7 +855,7 @@ async function form(action, worker, profile) {
   $("form-error").hidden = true;
   $("form-fields").replaceChildren();
   const fields = $("form-fields");
-  const field = (label, name, initial = "", kind = "input", choices = []) => {
+  const field = (label, name, initial = "", kind = "input", choices = [], parent = fields) => {
     const wrap = element("div", null, "form-field");
     const node = element(kind);
     node.id = "field-" + name;
@@ -875,8 +875,10 @@ async function form(action, worker, profile) {
     const caption = element("label", label);
     caption.htmlFor = node.id;
     wrap.append(caption, node);
-    fields.append(wrap);
+    parent.append(wrap);
+    return node;
   };
+  let profileInput;
   if (action === "create") {
     let profiles = state.rows.profiles;
     if (!profiles) {
@@ -885,12 +887,46 @@ async function form(action, worker, profile) {
     }
     if (!state.authenticated) return;
     const initial = profile || profiles.find((item) => item.default)?.name || profiles[0]?.name || "standard";
-    if (profiles.length) field("Profile", "profile", initial, "select", profiles);
-    else field("Profile", "profile", initial);
+    profileInput = profiles.length ? field("Profile", "profile", initial, "select", profiles) :
+      field("Profile", "profile", initial);
     field("Lifetime", "ttl", "2h");
   }
   if (action === "extend") field("Lifetime", "ttl", "2h");
   if (["create", "topic", "claim"].includes(action)) field("Topic", "topic", worker?.topic || "");
+  if (profileInput) {
+    const options = element("details", null, "create-options");
+    options.append(element("summary", "More options"));
+    const overrides = element("fieldset");
+    overrides.append(element("legend", "OpenStack"));
+    const flavor = field("Flavor override", "flavor", "", "input", [], overrides);
+    const disk = field("Disk override (GiB)", "disk", "", "input", [], overrides);
+    disk.type = "number";
+    disk.min = "1";
+    disk.max = "4294967295";
+    disk.step = "1";
+    const agent = field("Agent ID", "agent_id", "", "input", [], overrides);
+    agent.maxLength = 128;
+    agent.pattern = "[A-Za-z0-9._:][A-Za-z0-9._:\\-]*";
+    for (const node of [flavor, disk, agent]) node.required = false;
+    const toggle = (title, name) => {
+      const label = checkbox(title, false, () => {});
+      label.querySelector("input").name = name;
+      return label;
+    };
+    overrides.append(toggle("Scratch worker (up to 7 days)", "scratch"),
+      toggle("Skip niks3 push token", "no_niks3_token"));
+    options.append(overrides, toggle("Open SSH after creation", "open_ssh"));
+    fields.append(options);
+    const updateProvider = () => {
+      const profile = state.rows.profiles?.find((row) => row.name === profileInput.value);
+      const github = profile?.provider === "github" || /^gh-(aarch64|x86_64)$/.test(profileInput.value);
+      overrides.hidden = overrides.disabled = github;
+      flavor.placeholder = github ? "" : profile?.flavor || "Use profile default";
+      disk.placeholder = github || !profile?.disk ? "Use profile default" : String(profile.disk);
+    };
+    profileInput.addEventListener("input", updateProvider);
+    updateProvider();
+  }
   if (["start", "register"].includes(action)) field("Job name", "job");
   if (action === "start") field("Command", "command", "", "textarea");
   if (action === "register") field("Absolute log path on the worker", "path");
@@ -967,13 +1003,23 @@ $("dismiss").addEventListener("click", () => $("dialog").close());
 $("action-form").addEventListener("submit", async (event) => {
   event.preventDefault();
   const action = { ...currentAction, ...Object.fromEntries(new FormData(event.target)) };
+  const openSsh = action.open_ssh === "on";
+  if (action.action === "create") {
+    delete action.open_ssh;
+    for (const key of ["flavor", "disk", "agent_id"]) {
+      if (!action[key]?.trim()) delete action[key];
+    }
+    if (action.disk) action.disk = Number(action.disk);
+    for (const key of ["scratch", "no_niks3_token"]) action[key] = action[key] === "on";
+  }
   $("confirm").disabled = true;
   $("form-error").hidden = true;
   try {
-    await request("action", action);
+    const result = await request("action", action);
     $("dialog").close();
     notice(action.action === "create" ? "Worker is ready." : "Action completed.");
     if (action.action === "delete") location.hash = "workers";
+    if (openSsh && result?.worker) openTerminal({ name: result.worker });
     await refresh(true);
     if (state.selected && !logSocket && action.action !== "delete") updateDetail();
   } catch (error) {

@@ -21,6 +21,9 @@ The Rust client and controller replace the original Bash client.
 
 - Select a profile in the TUI and press Enter to see its details.
 
+- Expose OpenStack overrides and an option to open SSH after creation in the
+  web console's New worker dialog.
+
 - Add `rworker ssh --create --rm` to delete the new worker when SSH exits.
 
 ### GitHub Actions

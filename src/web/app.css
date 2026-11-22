@@ -167,6 +167,10 @@ dialog footer { justify-content: end; border-top: 1px solid var(--line); }
 .form-field + .form-field { margin-top: 11px; }
 .form-field input, .form-field select, .form-field textarea { width: 100%; }
 .form-field textarea { min-height: 105px; resize: vertical; }
+.create-options { margin-top: 12px; }
+.create-options summary { cursor: pointer; }
+.create-options fieldset { margin: 10px 0; min-width: 0; border: 1px solid var(--line); border-radius: 8px; }
+.create-options .toggle { display: flex; margin-top: 8px; }
 @media (max-width: 700px) {
   .site-header { display: grid; grid-template-columns: 1fr auto; padding: 9px 12px 0; gap: 4px 10px; }
   .session-status { grid-area: 1 / 2; }

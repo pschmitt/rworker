@@ -464,6 +464,16 @@ enum Action {
         profile: String,
         ttl: String,
         topic: String,
+        #[serde(default)]
+        flavor: Option<String>,
+        #[serde(default)]
+        disk: Option<u32>,
+        #[serde(default)]
+        scratch: bool,
+        #[serde(default)]
+        no_niks3_token: bool,
+        #[serde(default)]
+        agent_id: Option<String>,
     },
     Extend {
         worker: String,
@@ -530,21 +540,62 @@ impl Action {
                 profile,
                 ttl: duration,
                 topic: title,
+                flavor,
+                disk,
+                scratch,
+                no_niks3_token,
+                agent_id,
             } => {
-                return Ok((
-                    words(&[
-                        "up",
-                        "--no-nix-cache",
-                        "--profile",
-                        name(profile)?,
-                        "--ttl",
-                        ttl(duration)?,
-                        "--topic",
-                        topic(title)?,
-                        "--json",
-                    ]),
-                    900,
-                ));
+                let github = crate::github_profiles::from_name(profile).is_some();
+                if github
+                    && (flavor.is_some()
+                        || disk.is_some()
+                        || *scratch
+                        || *no_niks3_token
+                        || agent_id.is_some())
+                {
+                    return Err(BAD_REQUEST);
+                }
+                let mut args = words(&[
+                    "up",
+                    "--no-nix-cache",
+                    "--no-nix-auth",
+                    "--profile",
+                    name(profile)?,
+                    "--ttl",
+                    ttl(duration)?,
+                    "--topic",
+                    topic(title)?,
+                    "--json",
+                ]);
+                if let Some(flavor) = flavor {
+                    args.extend(words(&["--flavor", name(flavor)?]));
+                }
+                if let Some(disk) = disk {
+                    if *disk == 0 {
+                        return Err(BAD_REQUEST);
+                    }
+                    args.extend(["--disk".into(), disk.to_string()]);
+                }
+                if *scratch {
+                    args.push("--scratch".into());
+                }
+                if *no_niks3_token {
+                    args.push("--no-niks3-token".into());
+                }
+                if let Some(id) = agent_id {
+                    if id.is_empty()
+                        || id.len() > 128
+                        || !id
+                            .bytes()
+                            .all(|b| b.is_ascii_alphanumeric() || b"._:-".contains(&b))
+                        || id.starts_with('-')
+                    {
+                        return Err(BAD_REQUEST);
+                    }
+                    args.extend(words(&["--agent-id", id]));
+                }
+                return Ok((args, 900));
             }
             Self::Extend {
                 worker,
@@ -624,12 +675,22 @@ async fn action(headers: HeaderMap, body: Bytes) -> Response {
             return Err(BAD_REQUEST);
         }
         let (args, seconds) = requested.command()?;
-        run(args, seconds).await?;
-        Ok(())
+        let output = run(args, seconds).await?;
+        let data = if matches!(requested, Action::Create { .. }) {
+            let created: Value = serde_json::from_str(&output)
+                .map_err(|_| (StatusCode::BAD_GATEWAY, "Invalid controller response."))?;
+            let worker = created["name"]
+                .as_str()
+                .ok_or((StatusCode::BAD_GATEWAY, "Missing worker name."))?;
+            json!({"worker": name(worker)?})
+        } else {
+            Value::Null
+        };
+        Ok(data)
     }
     .await;
     match result {
-        Ok(()) => reply(StatusCode::OK, json!({"ok": true})),
+        Ok(data) => reply(StatusCode::OK, json!({"ok": true, "data": data})),
         Err(error) => failure(error),
     }
 }
@@ -637,6 +698,67 @@ async fn action(headers: HeaderMap, body: Bytes) -> Response {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn create_accepts_openstack_overrides_and_keeps_controller_credentials_local() {
+        let input = json!({
+            "action": "create", "profile": "standard", "ttl": "2h", "topic": "test",
+            "flavor": "s1.large", "disk": 250, "scratch": true,
+            "no_niks3_token": true, "agent_id": "codex:fixture",
+        });
+        let args = serde_json::from_value::<Action>(input.clone())
+            .unwrap()
+            .command()
+            .unwrap()
+            .0;
+        assert_eq!(
+            args,
+            [
+                "up",
+                "--no-nix-cache",
+                "--no-nix-auth",
+                "--profile",
+                "standard",
+                "--ttl",
+                "2h",
+                "--topic",
+                "test",
+                "--json",
+                "--flavor",
+                "s1.large",
+                "--disk",
+                "250",
+                "--scratch",
+                "--no-niks3-token",
+                "--agent-id",
+                "codex:fixture",
+            ]
+        );
+        for (field, bad) in [
+            ("profile", json!("gh-aarch64")),
+            ("flavor", json!("--ssh")),
+            ("disk", json!(0)),
+            ("agent_id", json!("--json")),
+        ] {
+            let mut copy = input.clone();
+            copy[field] = bad;
+            assert!(
+                serde_json::from_value::<Action>(copy)
+                    .unwrap()
+                    .command()
+                    .is_err()
+            );
+        }
+        let minimal = json!({
+            "action": "create", "profile": "gh-aarch64", "ttl": "2h", "topic": "",
+        });
+        assert!(
+            serde_json::from_value::<Action>(minimal)
+                .unwrap()
+                .command()
+                .is_ok()
+        );
+    }
 
     #[test]
     fn validates_control_fields_and_preserves_job_command() {
