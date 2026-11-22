@@ -14,7 +14,7 @@ web = ["tokio/io-util", "tokio/process"]
 
 [dependencies]
 axum = { version = "0.8", default-features = false, features = ["http1", "tokio", "ws"] }
-base64 = "0.22"
+base64 = "0.23"
 futures-util = { version = "0.3", default-features = false, features = ["std"] }
 jiff = "1.0"
 libc = "0.2"
