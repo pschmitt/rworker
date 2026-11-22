@@ -15,8 +15,35 @@ use crate::ctx::{Ctx, Fail, R};
 use std::io::IsTerminal;
 use std::time::Duration;
 
+#[derive(Clone, Copy)]
+enum View {
+    Workers,
+    Jobs,
+    Profiles,
+    Events,
+    Logs,
+}
+
+impl View {
+    fn from_prefix(prefix: &str) -> Option<Self> {
+        if prefix.is_empty() {
+            return None;
+        }
+        [
+            ("workers", Self::Workers),
+            ("jobs", Self::Jobs),
+            ("profiles", Self::Profiles),
+            ("events", Self::Events),
+            ("logs", Self::Logs),
+        ]
+        .into_iter()
+        .find_map(|(name, view)| name.starts_with(prefix).then_some(view))
+    }
+}
+
 pub fn cmd_tui(ctx: &Ctx, args: &[String]) -> R {
     let mut interval = 5u64;
+    let mut view = None;
     let mut i = 0;
     while i < args.len() {
         match args[i].as_str() {
@@ -31,8 +58,17 @@ pub fn cmd_tui(ctx: &Ctx, args: &[String]) -> R {
                     }
                 }
             }
+            a if view.is_none() && View::from_prefix(a).is_some() => {
+                view = View::from_prefix(a);
+            }
             a => {
-                ctx.err(&format!("Unknown option: {a}"));
+                if a.starts_with('-') {
+                    ctx.err(&format!("Unknown option: {a}"));
+                } else if view.is_some() {
+                    ctx.err("Specify only one TUI view");
+                } else {
+                    ctx.err(&format!("Unknown TUI view: {a}"));
+                }
                 crate::help::show(ctx, "tui");
                 return Err(Fail(2));
             }
@@ -43,7 +79,12 @@ pub fn cmd_tui(ctx: &Ctx, args: &[String]) -> R {
         ctx.err("tui needs a terminal");
         return Err(Fail(2));
     }
-    app::run(ctx, Duration::from_secs(interval)).map_err(|e| {
+    app::run(
+        ctx,
+        Duration::from_secs(interval),
+        view.unwrap_or(View::Workers),
+    )
+    .map_err(|e| {
         ctx.err(&format!("{}: tui: {e}", ctx.me));
         Fail(1)
     })

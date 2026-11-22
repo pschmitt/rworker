@@ -80,6 +80,22 @@ _rworker() {
       words+=" $(sed -n 's/^global \([^ ]*\) .*/\1/p' <<< "$spec")"
     fi
   fi
+  if [[ "$action" == tui && "$cur" != -* ]]
+  then
+    local i=2
+    while ((i < COMP_CWORD))
+    do
+      case "${COMP_WORDS[i]}" in
+        -n|--interval) ((i += 2)) ;;
+        -*) ((i += 1)) ;;
+        *) break ;;
+      esac
+    done
+    if ((i == COMP_CWORD))
+    then
+      words+=" $(sed -n 's/^values tui-view //p' <<< "$spec")"
+    fi
+  fi
   if [[ "$action" == logs && $COMP_CWORD -ge 3 ]]
   then
     # logs [FLAGS] [WORKER [JOB]]: the worker is the first word that is neither

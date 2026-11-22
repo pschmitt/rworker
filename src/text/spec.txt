@@ -133,6 +133,7 @@ flag prune -n short for --dry-run
 flag prune --dry-run only show what would be deleted
 flag tui --interval=seconds refresh interval of the worker list
 flag tui -n=interval short for --interval
+values tui-view workers jobs profiles events logs
 values duration 30m 1h 2h 4h 8h 24h
 values flavor s1.large s1.xlarge s1.2xlarge
 values profile standard browser-daemon large-builder gh-aarch64 gh-x86_64

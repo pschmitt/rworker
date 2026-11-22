@@ -231,6 +231,11 @@ _rworker() {
   then
     flags+=('*:worker:_rworker_workers')
   fi
+  if [[ "$action" == tui ]]
+  then
+    values=$(printf '%s\n' "${_rworker_spec_cache[@]}" | sed -n 's/^values tui-view //p')
+    flags+=("1::view:(${values})")
+  fi
   _arguments -s "${flags[@]}"
 }
 

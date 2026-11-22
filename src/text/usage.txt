@@ -55,7 +55,8 @@ Actions:
   nix-cache NAME [--dry-run]
                        the cache part of setup nix
   completions zsh|bash print the shell completion script
-  tui [-n SECONDS]     interactive terminal UI: the workers, their jobs and
+  tui [VIEW] [-n SECONDS]
+                       interactive terminal UI: the workers, their jobs and
                        logs, and the actions on them
 
 Workers this host did not create (nixbot's pool, other hosts' ad-hoc

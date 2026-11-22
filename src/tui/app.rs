@@ -2,6 +2,7 @@
 //! text views (logs, events, inspect, ps, command output) stack on it and
 //! Esc goes back.
 
+use super::View;
 use super::create::{self, After, CreateWorker};
 use super::proc::{self, Msg, Stream};
 use crate::ctx::Ctx;
@@ -428,6 +429,16 @@ impl App {
             }
         }
         view
+    }
+
+    fn open_view(&mut self, view: View) {
+        match view {
+            View::Workers => {}
+            View::Jobs => self.open_jobs(None),
+            View::Profiles => self.open_text("profiles", s(&["profiles"])),
+            View::Events => self.open_text("events", s(&["events", "--watch"])),
+            View::Logs => self.open_text("logs · all workers", s(&["logs", "--follow"])),
+        }
     }
 
     fn open_jobs(&mut self, worker: Option<String>) {
@@ -1034,7 +1045,7 @@ impl App {
                     self.reselect(name.clone());
                 }
             }
-            KeyCode::Char('J') => self.open_jobs(None),
+            KeyCode::Char('J') => self.open_view(View::Jobs),
             KeyCode::Char('h') => self.toggle_history(),
             KeyCode::Down | KeyCode::Char('j') if n > 0 => {
                 self.table.select(Some((sel + 1).min(n - 1)))
@@ -1067,9 +1078,9 @@ impl App {
                 }
                 let _ = self.refresh.send(());
             }
-            KeyCode::Char('L') => self.open_text("logs · all workers", s(&["logs", "--follow"])),
-            KeyCode::Char('E') => self.open_text("events", s(&["events", "--watch"])),
-            KeyCode::Char('P') => self.open_text("profiles", s(&["profiles"])),
+            KeyCode::Char('L') => self.open_view(View::Logs),
+            KeyCode::Char('E') => self.open_view(View::Events),
+            KeyCode::Char('P') => self.open_view(View::Profiles),
             KeyCode::Char('c') => {
                 let id = self.id();
                 self.create_worker = Some(CreateWorker::new(id));
@@ -1577,7 +1588,7 @@ fn cached(ctx: &Ctx) -> Option<Vec<Value>> {
     }
 }
 
-pub fn run(ctx: &Ctx, interval: Duration) -> std::io::Result<()> {
+pub(super) fn run(ctx: &Ctx, interval: Duration, view: View) -> std::io::Result<()> {
     let (tx, rx): (Sender<Msg>, Receiver<Msg>) = mpsc::channel();
     let (refresh_tx, refresh_rx) = mpsc::channel();
     let paused = Arc::new(AtomicBool::new(false));
@@ -1627,6 +1638,7 @@ pub fn run(ctx: &Ctx, interval: Duration) -> std::io::Result<()> {
         app.stale = true;
     }
     proc::refresher(tx.clone(), interval, refresh_rx);
+    app.open_view(view);
     proc::input(tx, paused.clone(), parked.clone());
 
     // A closed terminal or a kill ends the TUI cleanly, stopping its

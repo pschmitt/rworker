@@ -12,6 +12,8 @@ The Rust client and controller replace the original Bash client.
 
 - Show profile RAM and disk in decimal GB across providers in the CLI.
 
+- Open any standalone TUI view by name or prefix, such as `rworker tui prof`.
+
 - Add `rworker ssh --create --rm` to delete the new worker when SSH exits.
 
 ### GitHub Actions
