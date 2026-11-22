@@ -33,6 +33,7 @@
               serverModule = self.nixosModules.default;
             };
             rworker-mcp = rworker.mcp;
+            client-image = pkgs.callPackage ./nix/client-image.nix { inherit rworker; };
           };
 
           apps.default = {

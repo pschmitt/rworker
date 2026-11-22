@@ -1,0 +1,38 @@
+name: Client image
+on:
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/client-image.yaml
+      - Cargo.lock
+      - Cargo.toml
+      - flake.lock
+      - flake.nix
+      - nix/client-image.nix
+      - nix/package.nix
+      - src/**
+      - tests/client-image.sh
+  pull_request:
+    paths:
+      - .github/workflows/client-image.yaml
+      - Cargo.lock
+      - Cargo.toml
+      - flake.lock
+      - flake.nix
+      - nix/client-image.nix
+      - nix/package.nix
+      - src/**
+      - tests/client-image.sh
+  workflow_dispatch: {}
+jobs:
+  image:
+    permissions:
+      contents: read
+      packages: write
+    uses: pschmitt/ci-workflows/.github/workflows/nix-image.yaml@main
+    with:
+      image-name: ghcr.io/pschmitt/rworker
+      package: .#client-image
+      platforms: linux/amd64,linux/arm64
+      test-script: tests/client-image.sh
+      publish: ${{ github.event_name != 'pull_request' && github.ref == 'refs/heads/main' }}

@@ -4,6 +4,8 @@
 
 The Rust client and controller replace the original Bash client.
 
+- Publish a Nix-built rworker client image to GHCR for amd64 and arm64.
+
 - Link to GitHub Actions worker setup from the README and document hosted
   runner profile selection and lease expiry in the usage guide.
 

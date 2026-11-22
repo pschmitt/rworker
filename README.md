@@ -84,6 +84,7 @@ rworker down "$w"                                    # delete it
 | --- | --- |
 | [Usage](docs/usage.md) | Actions, worker names, environment variables |
 | [GitHub Actions workers](docs/github-actions.md) | Controller setup, hosted runner profiles, and SSH leases |
+| [OCI client image](docs/oci-client.md) | Run the rworker client from a CI job |
 | [Nix](docs/nix.md) | Flake outputs, overlay options, the web console and MCP server |
 | [On-demand Nix builders](docs/nix-builders.md) | Gateway, machines entry and worker leases |
 | [Worker images](docs/images.md) | Building, uploading and booting worker images |
