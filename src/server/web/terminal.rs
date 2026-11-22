@@ -184,7 +184,7 @@ async fn send(socket: &mut WebSocket, frame: Message) -> io::Result<()> {
 }
 
 async fn session(socket: &mut WebSocket, worker: &str, size: Size) -> io::Result<()> {
-    let (pty, _child) = spawn(worker, size)?;
+    let (pty, mut child) = spawn(worker, size)?;
     send(socket, Message::Text("SSH session opened.".into())).await?;
     let mut ping = tokio::time::interval(Duration::from_secs(20));
     let mut output = [0; 8192];
@@ -194,10 +194,22 @@ async fn session(socket: &mut WebSocket, worker: &str, size: Size) -> io::Result
         tokio::select! {
             result = pty.async_io(Interest::READABLE, |mut file| file.read(&mut output)) => {
                 let count = match result {
-                    Ok(0) => break,
-                    Err(error) if error.raw_os_error() == Some(libc::EIO) => break,
+                    Ok(0) => 0,
+                    Err(error) if error.raw_os_error() == Some(libc::EIO) => 0,
                     result => result?,
                 };
+                if count == 0 {
+                    if let Ok(Ok(status)) = timeout(Duration::from_secs(1), child.0.wait()).await
+                        && !status.success()
+                    {
+                        let message = status.code().map_or_else(
+                            || "SSH process was terminated.".to_owned(),
+                            |code| format!("SSH exited with status {code}."),
+                        );
+                        send(socket, Message::Text(message.into())).await?;
+                    }
+                    break;
+                }
                 send(socket, Message::Binary(output[..count].to_vec().into())).await?;
             }
             result = pty.async_io(Interest::WRITABLE, |mut file| file.write(&input)), if !input.is_empty() => {
