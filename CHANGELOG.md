@@ -4,6 +4,8 @@
 
 The Rust client and controller replace the original Bash client.
 
+- Add `rworker ssh --create --rm` to delete the new worker when SSH exits.
+
 ### GitHub Actions
 
 - Keep SSH sessions alive across brief controller API interruptions.

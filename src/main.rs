@@ -263,15 +263,7 @@ fn dispatch(ctx: &Ctx, action: &str, args: &[String]) -> R {
         "topic" => cmd::simple::cmd_topic(ctx, args),
         "claim" => cmd::simple::cmd_claim(ctx, args),
         "niks3-token" => cmd::simple::cmd_niks3_token(ctx, args),
-        "ssh" => {
-            if args.first().map(String::as_str) == Some("--create") {
-                let mut a = args[1..].to_vec();
-                a.push("--ssh".into());
-                cmd::up::up(ctx, &a, false).map(|_| ())
-            } else {
-                cmd::files::cmd_ssh(ctx, args)
-            }
-        }
+        "ssh" => cmd::files::cmd_ssh(ctx, args),
         "sync" => cmd::files::cmd_sync(ctx, args),
         "builder" => cmd::simple::cmd_builder(ctx, args),
         "nix-cache" => cmd::nix_cache::cmd_nix_cache(ctx, args),
@@ -305,6 +297,7 @@ struct Options {
     args: Vec<String>,
     json: bool,
     help: bool,
+    remove_after_ssh: bool,
 }
 
 fn normalize_options(action: &str, args: &[String]) -> Options {
@@ -322,6 +315,7 @@ fn normalize_options(action: &str, args: &[String]) -> Options {
         args: Vec::with_capacity(args.len()),
         json: false,
         help: false,
+        remove_after_ssh: false,
     };
     let mut remaining = args.iter();
     while let Some(arg) = remaining.next() {
@@ -370,6 +364,7 @@ fn normalize_options(action: &str, args: &[String]) -> Options {
             match name.as_str() {
                 "-h" | "--help" => options.help = true,
                 "-j" | "--json" => options.json = true,
+                "--rm" if action == "ssh" => options.remove_after_ssh = true,
                 _ => options.args.push(name),
             }
             if takes_value {
@@ -466,6 +461,7 @@ fn run(ctx: &Ctx, argv: &[String]) -> R {
         mut args,
         json,
         help: show_help,
+        remove_after_ssh,
     } = normalize_options(action, &argv[1..]);
     if json {
         ctx.json.set(true);
@@ -474,9 +470,14 @@ fn run(ctx: &Ctx, argv: &[String]) -> R {
         ctx::out(&help::painted(ctx, action));
         return Ok(());
     }
-    if action != "ssh" || args.first().map(String::as_str) != Some("--create") {
-        args = resolve_args(ctx, action, &args)?;
+    if action == "ssh" && args.first().is_some_and(|arg| arg == "--create") {
+        return cmd::up::ssh_create(ctx, &args[1..], remove_after_ssh);
     }
+    if remove_after_ssh {
+        ctx.err("--rm requires ssh --create");
+        return Err(Fail(2));
+    }
+    args = resolve_args(ctx, action, &args)?;
     dispatch(ctx, action, &args)
 }
 
@@ -601,6 +602,17 @@ mod tests {
             options("ssh", &["--create", "--profile=standard", "-lagent"]).args,
             ["--create", "--profile", "standard", "-l", "agent"],
         );
+        let create = options(
+            "ssh",
+            &["--create", "--rm", "--topic=--rm", "--profile=gh-aarch64"],
+        );
+        assert!(create.remove_after_ssh);
+        assert_eq!(
+            create.args,
+            ["--create", "--topic", "--rm", "--profile", "gh-aarch64"]
+        );
+        assert!(!options("ssh", &["--create", "--topic=--rm"]).remove_after_ssh);
+        assert!(!options("ssh", &["worker", "echo", "--rm"]).remove_after_ssh);
         assert_eq!(
             options("exec", &["command", "--json", "-h"]).args,
             ["command", "--json", "-h"],

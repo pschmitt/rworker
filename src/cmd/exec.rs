@@ -12,10 +12,16 @@ use serde_json::{Value, json};
 use std::process::{Command, Stdio};
 
 /// Deletes the worker when dropped, unless it is to be kept.
-struct Cleanup<'a> {
+pub(super) struct Cleanup<'a> {
     ctx: &'a Ctx,
     name: String,
     keep: bool,
+}
+
+impl<'a> Cleanup<'a> {
+    pub(super) fn new(ctx: &'a Ctx, name: String, keep: bool) -> Self {
+        Self { ctx, name, keep }
+    }
 }
 
 impl Drop for Cleanup<'_> {
@@ -135,11 +141,7 @@ pub fn cmd_exec(ctx: &Ctx, args: &[String]) -> R {
     let opts = state::ssh_opts(ctx, &name);
     // Delete the worker however we leave (also Ctrl-C), unless asked not to.
     signals::trap();
-    let mut cleanup = Cleanup {
-        ctx,
-        name: name.clone(),
-        keep,
-    };
+    let mut cleanup = Cleanup::new(ctx, name.clone(), keep);
 
     for item in &syncs {
         let (src, dest) = match item.split_once(':') {

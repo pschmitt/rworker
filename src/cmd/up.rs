@@ -310,6 +310,27 @@ fn github_up(
 }
 
 pub fn up(ctx: &Ctx, args: &[String], capture: bool) -> R<Option<String>> {
+    up_inner(ctx, args, capture, false)
+}
+
+pub fn ssh_create(ctx: &Ctx, args: &[String], remove_after_ssh: bool) -> R {
+    let mut args = args.to_vec();
+    args.push("--ssh".into());
+    up_inner(ctx, &args, false, remove_after_ssh).map(|_| ())
+}
+
+fn up_inner(
+    ctx: &Ctx,
+    args: &[String],
+    capture: bool,
+    remove_after_ssh: bool,
+) -> R<Option<String>> {
+    let cleanup = |name: &str| {
+        remove_after_ssh.then(|| {
+            crate::signals::trap();
+            super::exec::Cleanup::new(ctx, name.to_owned(), false)
+        })
+    };
     let key_file = ctx.key_file();
     let mut login = false;
     let mut login_user = String::new();
@@ -389,6 +410,7 @@ pub fn up(ctx: &Ctx, args: &[String], capture: bool) -> R<Option<String>> {
             return Ok(Some(jq::compact(&output)));
         }
         let name = need(&output, "name")?;
+        let _cleanup = cleanup(&name);
         if ctx.json.get() {
             crate::ctx::json_out(ctx, &jq::compact(&output));
         } else {
@@ -473,6 +495,7 @@ pub fn up(ctx: &Ctx, args: &[String], capture: bool) -> R<Option<String>> {
     let raw_info = proc::trim_nl(&String::from_utf8_lossy(&out));
     let parsed: Value = serde_json::from_str(&raw_info).map_err(|_| Fail(1))?;
     let name = need(&parsed, "name")?;
+    let _cleanup = cleanup(&name);
     let ip = need(&parsed, "ip")?;
     state::remember_created(ctx, &name, &parsed)?;
     if parsed["archive_logs"] == true {
@@ -618,6 +641,9 @@ pub fn connect(ctx: &Ctx, name: &str, user: &str) -> R {
     let opts = state::ssh_opts(ctx, name);
     let login = format!("{user}@{ip}");
     for i in 1..=10 {
+        if let Some(signal) = crate::signals::pending() {
+            return Err(Fail(128 + signal));
+        }
         if probe(&opts, &login) {
             break;
         }
@@ -625,7 +651,10 @@ pub fn connect(ctx: &Ctx, name: &str, user: &str) -> R {
             "Waiting for {} to accept SSH ({i})...",
             paint::vm(ctx, name)
         ));
-        proc::sleep_secs(3.0);
+        crate::signals::sleep(3.0);
+    }
+    if let Some(signal) = crate::signals::pending() {
+        return Err(Fail(128 + signal));
     }
     let code = proc::run(ctx, &mut state::worker_ssh(&opts, &login))?;
     crate::ctx::status(code)

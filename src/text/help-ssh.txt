@@ -1,5 +1,5 @@
 Usage: __ME__ ssh [-l USER | USER@]NAME [SSH_ARGS...]
-       __ME__ ssh --create [-l USER] [UP_OPTIONS]
+       __ME__ ssh --create [--rm] [-l USER] [UP_OPTIONS]
 
 SSH to a worker over NetBird with its pinned host key. Everything after the
 name goes to ssh, so options and a command both work.
@@ -10,11 +10,12 @@ looked up on the control host.
 
 --create makes a new worker and logs in, like `up --ssh`; up's options
 (--ttl, --flavor, --disk, --profile, --scratch, --topic) follow it. -l USER picks the
-login user, as with ssh (agent by default on a new worker).
+login user, as with ssh (agent by default on a new worker). --rm deletes the
+new worker when SSH exits, including after an unsuccessful login.
 
 Examples:
   __ME__ ssh --create --ttl 4h
-  __ME__ ssh --create --profile gh-aarch64
+  __ME__ ssh --create --rm --profile gh-aarch64
   __ME__ ssh adhoc-1234abcd
   __ME__ ssh pschmitt@adhoc-1234abcd sudo journalctl -b
   __ME__ ssh --create -l pschmitt
