@@ -290,14 +290,12 @@ pub fn cmd_profiles(ctx: &Ctx, args: &[String]) -> R {
                         .strip_suffix('*')
                         .map_or((text, ""), |name| (name, "*"));
                     let (icon, name) = match name.split_once(' ') {
-                        Some((glyph @ crate::pool_icon::GITHUB, name)) if ctx.icons.get() => (
-                            paint::paint(ctx, "38;2;0;0;0;48;2;255;255;255", glyph),
-                            name,
-                        ),
-                        Some((glyph @ crate::pool_icon::OPENSTACK, name)) if ctx.icons.get() => (
-                            paint::paint(ctx, "38;2;218;26;50;48;2;255;255;255", glyph),
-                            name,
-                        ),
+                        Some((glyph @ crate::pool_icon::GITHUB, name)) if ctx.icons.get() => {
+                            (paint::paint(ctx, "38;2;0;0;0", glyph), name)
+                        }
+                        Some((glyph @ crate::pool_icon::OPENSTACK, name)) if ctx.icons.get() => {
+                            (paint::paint(ctx, "38;2;218;26;50", glyph), name)
+                        }
                         _ => (String::new(), name),
                     };
                     let gap = if icon.is_empty() { "" } else { " " };
