@@ -41,24 +41,39 @@ def benchmark_nix(revision):
         name = "rworker-bench-data";
         system = currentSystem;
         builder = "/bin/sh";
-        args = [ "-c" "/bin/dd if=/dev/zero of=$out bs=1M count=64 status=none" ];
+        args = [ "-c" ''
+          block=0
+          n=0
+          while [ "$n" -lt 20 ]; do
+            block="$block$block"
+            n=$((n + 1))
+          done
+          n=0
+          while [ "$n" -lt 64 ]; do
+            printf '%s' "$block"
+            n=$((n + 1))
+          done > "$out"
+        '' ];
       };
     in derivation {
       name = "rworker-bench-readback";
       system = currentSystem;
       builder = "/bin/sh";
-      args = [ "-c" "/bin/sha256sum < ${data} > $out" ];
+      args = [ "-c" "printf '%s' '${data}' > \"$out\"" ];
     }
     """
     nix = ["nix", "build", "--impure", "--no-link", "--print-out-paths"]
     started = monotonic()
     output = subprocess.check_output([*nix, "--offline", "--expr", expression], text=True)
     elapsed = monotonic() - started
-    digest = sha256()
-    block = bytes(1024**2)
+    data = Path(Path(output.strip()).read_text())
+    expected, actual = sha256(), sha256()
+    with data.open("rb") as handle:
+        for block in iter(lambda: handle.read(1024**2), b""):
+            actual.update(block)
     for _ in range(64):
-        digest.update(block)
-    if Path(output.strip()).read_text().split()[0] != digest.hexdigest():
+        expected.update(b"0" * 1024**2)
+    if expected.digest() != actual.digest():
         raise RuntimeError("Nix build output checksum mismatch")
     print(f"rworker benchmark local_nix_s={elapsed:.3f}", flush=True)
     elapsed = timed([*nix, "--rebuild", f"github:NixOS/nixpkgs/{revision}#hello"])
