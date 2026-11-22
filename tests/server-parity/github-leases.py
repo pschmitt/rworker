@@ -70,7 +70,12 @@ else:
     sys.exit(22)
 """)
     fake.chmod(0o700)
-    environment = dict(os.environ, PATH=f"{root}:{os.environ['PATH']}", RWORKER_GITHUB_FIXTURE=str(root))
+    console_key = "ssh-ed25519 " + base64.b64encode(bytes([1]) * 32).decode()
+    (root / "rworker-web-worker-public-key").write_text(console_key + "\n")
+    environment = dict(
+        os.environ, PATH=f"{root}:{os.environ['PATH']}", RWORKER_GITHUB_FIXTURE=str(root),
+        CREDENTIALS_DIRECTORY=str(root), RWORKER_WEB_WORKER_OWNER="operator",
+    )
     command = [binary, "server", config]
 
     def control(*args):
@@ -85,7 +90,7 @@ else:
         (root / "private").touch()
 
     public_key = "ssh-ed25519 " + base64.b64encode(bytes(32)).decode()
-    lease = control("github-up", "linux-arm64", "2m", public_key, "operator", "fixture")
+    lease = control("github-up", "linux-arm64", "2m", public_key, "operator@fixture", "fixture")
     assert lease["run_id"] == 42 and lease["state"] == "queued"
     ident = lease["id"]
     assert control("github-status", ident)["workflow"]["status"] == "queued"
@@ -137,7 +142,11 @@ else:
             details["disk"] = disk
             assert post("claim", jwt(41), details)[0] == 403
             status, result = post("claim", jwt(42), details)
-            assert status == 200 and result["public_key"] == public_key
+            assert status == 200
+            assert result["public_key"].splitlines() == [
+                public_key,
+                "no-agent-forwarding,no-port-forwarding,no-X11-forwarding,no-user-rc " + console_key,
+            ]
             profiles = {profile["name"]: profile for profile in control("profiles")}
             assert profiles["gh-aarch64"]["disk_total_bytes"] == disk["total_bytes"]
             assert "disk_total_bytes" not in profiles["gh-x86_64"]
@@ -149,7 +158,7 @@ else:
             ready = control("github-status", ident)
             assert ready["state"] == "ready" and ready["endpoint"] == endpoint and ready["kvm"]
             assert "token_hash" not in ready
-            assert control("github-down", ident, "operator")["state"] == "cancelling"
+            assert control("github-down", ident, "operator@fixture")["state"] == "cancelling"
             assert post("heartbeat", bearer, {})[0] == 403
             ended = control("github-status", ident)
             assert ended["state"] == "ended" and ended["workflow"]["conclusion"] == "cancelled"

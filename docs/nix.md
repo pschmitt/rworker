@@ -108,8 +108,10 @@ of the identity provider. If you configure your own reverse proxy, enable
 WebSocket upgrades on `/v1/ui/follow/` and `/v1/ui/updates` for live logs and
 inventory notifications. The interactive SSH terminal also uses the
 `/v1/ui/follow/` WebSocket location.
-Set `web.identityFile` and `web.publicKeyFile` to the matching SSH key pair when
-the operator needs a dedicated identity.
+Set `web.identityFile` and `web.publicKeyFile` to the controller’s SSH key pair.
+New OpenStack and GitHub workers owned by the configured `web.operator` receive
+the console public key alongside the caller’s key, including when created from
+the CLI. The console key added this way disables SSH forwarding and user RC files.
 
 Standard builds include the console through the default Cargo feature `web`.
 To omit it, build with `cargo build --no-default-features` or use the Nix package

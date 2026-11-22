@@ -92,9 +92,15 @@ pub(super) fn run(settings: &Value, action: &str, args: &[String]) -> Result<Val
             let ttl = super::duration_seconds(ttl)
                 .filter(|seconds| (1..=MAX_LEASE_SECONDS).contains(seconds))
                 .ok_or("GitHub Actions lease must be between 1 second and 2 hours")?;
-            if !valid_key(public_key) {
+            if !super::worker_ssh::valid_public_key(public_key) {
                 return Err("Expected an Ed25519 or RSA SSH public key".into());
             }
+            // The runner writes this string as authorized_keys. A second
+            // line works with existing runner agents and stored leases.
+            let keys = match super::worker_ssh::web_worker_key(owner, &[public_key])? {
+                Some(key) => format!("{public_key}\n{key}"),
+                None => public_key.clone(),
+            };
             create(
                 root,
                 &github,
@@ -107,7 +113,7 @@ pub(super) fn run(settings: &Value, action: &str, args: &[String]) -> Result<Val
                     run_id: None,
                     state: LeaseState::Dispatching,
                     token_hash: None,
-                    public_key: public_key.into(),
+                    public_key: keys,
                     endpoint: None,
                     kvm: false,
                     owner: owner.into(),
@@ -303,17 +309,6 @@ fn directories(root: &Path) -> Result<Vec<PathBuf>, String> {
     }
 }
 
-fn valid_key(key: &str) -> bool {
-    if key.len() > 4096 || key.contains(['\r', '\n']) {
-        return false;
-    }
-    let mut fields = key.split_ascii_whitespace();
-    matches!(fields.next(), Some("ssh-ed25519" | "ssh-rsa"))
-        && fields
-            .next()
-            .is_some_and(|encoded| STANDARD.decode(encoded).is_ok_and(|key| !key.is_empty()))
-}
-
 pub(super) fn agent_update(
     settings: &Value,
     id: &str,
@@ -350,7 +345,7 @@ pub(super) fn agent_update(
     }
     if let Some(endpoint) = endpoint {
         if endpoint.port < 1024
-            || !valid_key(&endpoint.host_key)
+            || !super::worker_ssh::valid_public_key(&endpoint.host_key)
             || !endpoint.host_key.starts_with("ssh-ed25519 ")
         {
             return Err("Invalid SSH endpoint".into());

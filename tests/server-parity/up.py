@@ -110,7 +110,10 @@ def record(event):
 """ + script)
         path.chmod(0o700)
 
+    console_key = "ssh-ed25519 " + base64.b64encode(bytes([1]) * 32).decode()
+    (root / "rworker-web-worker-public-key").write_text(console_key + "\n")
     for status, token in [("ERROR", False), ("ACTIVE", False), ("ACTIVE", True)]:
+        owner = "operator@fixture" if token else "other@fixture"
         cloud = Mock()
         cloud.servers.return_value = {}
         server = SimpleNamespace(id="server", metadata={})
@@ -128,7 +131,7 @@ def record(event):
             try:
                 up(cfg, cloud, SimpleNamespace(
                     profile=None, flavor=None, disk=None, scratch=False, ttl=60,
-                    ssh_key=["fake-ssh"], no_niks3_token=not token, owner=None, meta=[],
+                    ssh_key=["fake-ssh"], no_niks3_token=not token, owner=owner, meta=[],
                 ))
             except SystemExit as result:
                 assert not success
@@ -137,15 +140,21 @@ def record(event):
         trace = root / "trace"
         trace.write_text("")
         result = subprocess.run(
-            [str(binary), "server", str(root / "cfg"), "up", "--ssh-key=fake-ssh",
+            [str(binary), "server", str(root / "cfg"), "up", "--ssh-key=fake-ssh", f"--owner={owner}",
              *([] if token else ["--no-niks3-token"])],
             capture_output=True, text=True, timeout=20, env={
                 **os.environ, "PATH": f"{root}:{os.environ['PATH']}", "FAKE_TRACE": str(trace),
+                "CREDENTIALS_DIRECTORY": str(root), "RWORKER_WEB_WORKER_OWNER": "operator",
                 "FAKE_STATUS": status, "FAKE_JWT": str(root / "jwt"), "FAKE_NAME": str(root / "name"),
             },
         )
         assert stderr.getvalue() in result.stderr, result
         expected = [["create", {"netbird_setup_key": "fake-key", **cloud.create.call_args.args[5]}]]
+        if token:
+            expected[0][1]["agent_authorized_keys"] = [
+                "fake-ssh",
+                "no-agent-forwarding,no-port-forwarding,no-X11-forwarding,no-user-rc " + console_key,
+            ]
         if success:
             cloud.netbird.delete_key.assert_called_once_with("key")
             cloud.os.compute.set_server_metadata.assert_called_once_with(server, host_key="fake-host-key")
@@ -190,4 +199,4 @@ def record(event):
 if __name__ == "__main__":
     with tempfile.TemporaryDirectory(prefix="rworker-up-") as directory:
         compare(*(Path(arg).resolve(strict=True) for arg in sys.argv[1:]), Path(directory))
-    print("Rust vs Python up: 3 boot cases compared, 0 differences")
+    print("OpenStack boot parity passed and console key provisioning was scoped to the operator")

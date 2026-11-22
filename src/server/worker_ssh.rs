@@ -6,9 +6,59 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Output, Stdio};
 use std::time::Duration;
 
+use base64::{Engine, engine::general_purpose::STANDARD};
 use serde_json::Value;
 
 use super::{niks3::token_id, openstack::setting};
+
+const WEB_WORKER_KEY: &str = "rworker-web-worker-public-key";
+
+pub(super) fn valid_public_key(key: &str) -> bool {
+    if key.len() > 4096 || key.contains(['\r', '\n']) {
+        return false;
+    }
+    let mut fields = key.split_ascii_whitespace();
+    matches!(fields.next(), Some("ssh-ed25519" | "ssh-rsa"))
+        && fields
+            .next()
+            .is_some_and(|encoded| STANDARD.decode(encoded).is_ok_and(|key| !key.is_empty()))
+}
+
+fn restrict_web_key(key: &str, existing: &[&str]) -> Result<Option<String>, String> {
+    let key = key.trim();
+    if !valid_public_key(key) {
+        return Err("Invalid web console SSH public key".into());
+    }
+    let mut fields = key.split_ascii_whitespace();
+    let kind = fields.next().expect("validated key type");
+    let blob = fields.next().expect("validated key blob");
+    if existing
+        .iter()
+        .any(|key| key.split_ascii_whitespace().take(2).eq([kind, blob]))
+    {
+        return Ok(None);
+    }
+    Ok(Some(format!(
+        "no-agent-forwarding,no-port-forwarding,no-X11-forwarding,no-user-rc {kind} {blob}"
+    )))
+}
+
+/// Add the configured console identity only to workers owned by its operator.
+pub(super) fn web_worker_key(owner: &str, existing: &[&str]) -> Result<Option<String>, String> {
+    let mut owner = owner.split('@');
+    let operator = std::env::var("RWORKER_WEB_WORKER_OWNER").ok();
+    let (Some(user), Some(host), None) = (owner.next(), owner.next(), owner.next()) else {
+        return Ok(None);
+    };
+    if operator.as_deref() != Some(user) || user.is_empty() || host.is_empty() {
+        return Ok(None);
+    }
+    let directory = std::env::var_os("CREDENTIALS_DIRECTORY")
+        .ok_or("Missing systemd credentials directory for web worker access")?;
+    let key = fs::read_to_string(Path::new(&directory).join(WEB_WORKER_KEY))
+        .map_err(|error| format!("Read web console SSH public key: {error}"))?;
+    restrict_web_key(&key, existing)
+}
 
 struct KnownHosts(PathBuf);
 
@@ -227,4 +277,28 @@ fn active(settings: &Value, ip: IpAddr, host_key: &str, workloads_only: bool) ->
     let builds = fields.next()?.parse::<i64>().ok()?;
     let load = fields.next()?.parse::<f64>().ok()?;
     Some(processes > 0 || builds > 0 || load > 1.0)
+}
+
+#[cfg(test)]
+mod web_key_tests {
+    use super::*;
+
+    #[test]
+    fn restricts_the_console_key_and_ignores_comments_for_deduplication() {
+        let key = "ssh-ed25519 Zml4dHVyZQ== console";
+        let restricted = restrict_web_key(key, &[]).unwrap().unwrap();
+        assert!(
+            restricted.starts_with(
+                "no-agent-forwarding,no-port-forwarding,no-X11-forwarding,no-user-rc "
+            )
+        );
+        assert!(restricted.ends_with("ssh-ed25519 Zml4dHVyZQ=="));
+        assert_eq!(
+            restrict_web_key(key, &["ssh-ed25519 Zml4dHVyZQ== another comment"]).unwrap(),
+            None
+        );
+        assert!(
+            restrict_web_key("ssh-ed25519 Zml4dHVyZQ==\nssh-ed25519 Zml4dHVyZQ==", &[]).is_err()
+        );
+    }
 }

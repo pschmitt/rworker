@@ -70,6 +70,8 @@ The Rust client and controller replace the original Bash client.
 
 ### Web console
 
+- Authorize the controller’s console key when provisioning workers owned by the web operator.
+
 - Keep the console running when a browser SSH terminal opens or closes.
 
 - Open an interactive SSH terminal from a live worker’s detail view.

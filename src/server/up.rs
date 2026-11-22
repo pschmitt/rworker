@@ -149,7 +149,9 @@ pub(super) fn up(cfg: &Value, args: Args<'_>) -> Result<Value, String> {
     .map(|(key, value)| (key.into(), Value::String(value)))
     .collect();
     metadata.extend(metadata::creator_metadata(&args.pairs)?);
-    let mut user_data = Map::from_iter([("agent_authorized_keys".into(), json!(args.keys))]);
+    let web_key = super::worker_ssh::web_worker_key(owner, &args.keys)?;
+    let keys: Vec<_> = args.keys.into_iter().chain(web_key.as_deref()).collect();
+    let mut user_data = Map::from_iter([("agent_authorized_keys".into(), json!(keys))]);
     if let Some(path) = cfg["logCollectorPublicKeyFile"].as_str()
         && let Some((owner, _)) = owner.split_once('@')
         && cfg["logCollectorOperator"].as_str() == Some(owner)

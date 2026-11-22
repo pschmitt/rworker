@@ -30,6 +30,11 @@ let
       "https://${cfg.api.https.serverName}"
     else
       null;
+  webWorkerAccess =
+    cfg.web.enable
+    && cfg.web.operator != null
+    && cfg.web.identityFile != null
+    && cfg.web.publicKeyFile != null;
   apiSocket = "/run/rworker-inventory-api/http.sock";
   apiGroup = if cfg.api.https == null then cfg.group else "rworker-inventory-api";
   githubAccount = "rworker-github-relay";
@@ -142,7 +147,7 @@ in
       publicKeyFile = lib.mkOption {
         type = lib.types.nullOr lib.types.str;
         default = null;
-        description = "Operator SSH public key used when creating a worker. Defaults to the CLI's usual key.";
+        description = "Console SSH public key. With identityFile set, provisioning also authorizes it on the console operator’s workers.";
       };
     };
     api.https = lib.mkOption {
@@ -503,6 +508,9 @@ in
               // {
                 RWORKER_INVENTORY_DIRECTORY = inventoryDirectory;
               }
+              // lib.optionalAttrs webWorkerAccess {
+                RWORKER_WEB_WORKER_OWNER = cfg.web.operator;
+              }
               // lib.optionalAttrs cfg.builderGateway.enable {
                 RWORKER_BUILDER_ARCHIVE_DIRECTORY = builderState;
               };
@@ -510,6 +518,7 @@ in
             serviceConfig = {
               User = cfg.user;
               Group = cfg.group;
+              LoadCredential = lib.optional webWorkerAccess "rworker-web-worker-public-key:${cfg.web.publicKeyFile}";
               ExecStart = command [
                 "__serve-control-socket"
                 cfg.settingsFile
