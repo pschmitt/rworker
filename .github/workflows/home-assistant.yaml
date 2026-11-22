@@ -1,0 +1,32 @@
+name: Home Assistant
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'custom_components/**'
+      - '.github/workflows/home-assistant.yaml'
+      - 'hacs.json'
+      - 'ruff.toml'
+      - '.ruff.toml'
+      - 'pyproject.toml'
+  pull_request:
+    paths:
+      - 'custom_components/**'
+      - '.github/workflows/home-assistant.yaml'
+      - 'hacs.json'
+      - 'ruff.toml'
+      - '.ruff.toml'
+      - 'pyproject.toml'
+  schedule:
+    - cron: '0 5 * * 1'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    uses: pschmitt/ci-workflows/.github/workflows/home-assistant.yaml@main
+    with:
+      lint-path: custom_components/rworker

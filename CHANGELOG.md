@@ -17,6 +17,8 @@ The Rust client and controller replace the original Bash client.
 
 ### Home Assistant
 
+- Add icons to worker counts, inventory diagnostics and worker lifecycle events.
+
 - Add a push integration with worker lifecycle events, fleet counts, diagnostics,
   and controller actions.
 
