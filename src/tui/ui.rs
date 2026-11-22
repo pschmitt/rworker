@@ -310,17 +310,20 @@ impl App {
             ));
         }
         let tasks = self.pending_actions();
+        let spinner = SPINNER[self.tick as usize % SPINNER.len()];
         if tasks > 0 {
             left.push(Span::styled("  ·  ", dim()));
             left.push(Span::styled(
-                format!(
-                    "{} {tasks} running",
-                    SPINNER[self.tick as usize % SPINNER.len()]
-                ),
+                format!("{spinner} {tasks} running"),
                 Style::new().fg(Color::Yellow),
             ));
         }
-        let right = if let Some(flash) = self.flash_live() {
+        let right = if self.provisioning_ssh() {
+            Span::styled(
+                format!("{spinner} provisioning for SSH "),
+                Style::new().fg(Color::Yellow),
+            )
+        } else if let Some(flash) = self.flash_live() {
             let color = if flash.error {
                 Color::Red
             } else {

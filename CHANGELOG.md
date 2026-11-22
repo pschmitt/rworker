@@ -41,6 +41,8 @@ The Rust client and controller replace the original Bash client.
 
 ### TUI
 
+- Provision SSH workers in the background with a status spinner, then open SSH when ready.
+
 - Keep worker status under the table when logs are shown alongside it.
 
 - Move status to the bottom and show shortcuts in help for the current view.

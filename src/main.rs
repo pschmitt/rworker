@@ -400,6 +400,25 @@ fn run(ctx: &Ctx, argv: &[String]) -> R {
             return Err(Fail(2));
         }
         "server" => return server::run(ctx, &argv[1..]),
+        "__tui-provision-ssh" => {
+            let args = &argv[1..];
+            let remove = args.first().is_some_and(|arg| arg == "--rm");
+            let options = normalize_options("up", &args[usize::from(remove)..]);
+            if options.help {
+                ctx.err("Use rworker up --help for worker creation options");
+                return Err(Fail(2));
+            }
+            return cmd::up::provision_for_ssh(ctx, &options.args, remove);
+        }
+        "__connect-created" => {
+            return match argv {
+                [_, name, user] => cmd::up::connect_created(ctx, name, user, false),
+                [_, name, user, flag] if flag == "--rm" => {
+                    cmd::up::connect_created(ctx, name, user, true)
+                }
+                _ => Err(Fail(2)),
+            };
+        }
         "__builder-gateway" => return server::builder_gateway::run(ctx, &argv[1..]),
         "__action" => {
             let action = resolve_action(&second).map_err(|_| Fail(2))?;

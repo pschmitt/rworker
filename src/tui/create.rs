@@ -83,7 +83,18 @@ pub(super) fn edit(text: &mut String, cursor: &mut usize, key: KeyEvent) {
     }
 }
 
-const MODES: [&str; 3] = ["Create only", "Open SSH", "Open SSH and delete on exit"];
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum After {
+    Create,
+    Ssh,
+    SshAndDelete,
+}
+
+const MODES: [(After, &str); 3] = [
+    (After::Create, "Create only"),
+    (After::Ssh, "Open SSH"),
+    (After::SshAndDelete, "Open SSH and delete on exit"),
+];
 
 pub(super) struct CreateWorker {
     pub(super) request: u64,
@@ -179,7 +190,7 @@ impl CreateWorker {
 
     pub(super) fn choice(&self, field: Field) -> String {
         if field == AfterCreate {
-            return format!("‹ {} ›", MODES[self.mode]);
+            return format!("‹ {} ›", MODES[self.mode].1);
         }
         let Some(profile) = self.profile() else {
             return "Controller default".into();
@@ -265,14 +276,28 @@ impl CreateWorker {
         }
     }
 
-    pub(super) fn submission(&self) -> Result<(Vec<String>, bool), String> {
+    pub(super) fn submission(&self) -> Result<(Vec<String>, After), String> {
         let extra = split_words(self.extra.text.trim())?;
-        let ssh = self.mode != 0 || extra.iter().any(|arg| arg == "--ssh");
-        let mut args: Vec<String> = match self.mode {
-            2 => ["ssh", "--create", "--rm"].map(String::from).into(),
-            1 => ["up", "--ssh"].map(String::from).into(),
-            _ => vec!["up".into()],
-        };
+        let mut after = MODES[self.mode].0;
+        if after == After::Create {
+            let mut flags = extra.iter();
+            while let Some(flag) = flags.next() {
+                match flag.as_str() {
+                    "--" => break,
+                    "--ssh" => {
+                        after = After::Ssh;
+                        break;
+                    }
+                    _ if crate::help::flags("up")
+                        .any(|(name, takes_value)| name == flag && takes_value) =>
+                    {
+                        flags.next();
+                    }
+                    _ => {}
+                }
+            }
+        }
+        let mut args = vec!["up".into()];
         args.extend(extra);
         let disk = if self.github() {
             ""
@@ -304,7 +329,7 @@ impl CreateWorker {
             }
         }
         args.push("--quiet-topic-warning".into());
-        Ok((args, ssh))
+        Ok((args, after))
     }
 }
 
@@ -327,14 +352,12 @@ mod tests {
         assert!(!form.fields().any(|field| field == Flavor || field == Disk));
         form.focus = AfterCreate;
         form.key(KeyEvent::from(KeyCode::Left));
-        let (args, ssh) = form.submission().unwrap();
-        assert!(ssh);
+        let (args, after) = form.submission().unwrap();
+        assert_eq!(after, After::SshAndDelete);
         assert_eq!(
             args,
             [
-                "ssh",
-                "--create",
-                "--rm",
+                "up",
                 "--topic",
                 "build the ARM image",
                 "--profile",

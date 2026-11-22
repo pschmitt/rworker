@@ -398,7 +398,7 @@ fn up_inner(
             .last()
             .unwrap_or("30m");
         let started = crate::time::now();
-        let output = std::thread::scope(|scope| {
+        let mut output = std::thread::scope(|scope| {
             let (tx, rx) = mpsc::channel();
             let no_color = ctx.no_color;
             scope.spawn(move || render_progress_lines(rx, no_color));
@@ -407,6 +407,9 @@ fn up_inner(
             result
         })?;
         if capture {
+            if !login_user.is_empty() {
+                output["ssh_user"] = json!(login_user);
+            }
             return Ok(Some(jq::compact(&output)));
         }
         let name = need(&output, "name")?;
@@ -554,6 +557,10 @@ fn up_inner(
     }
     warn_niks3_token(ctx, &name, &info);
     if capture {
+        if !login_user.is_empty() {
+            info["ssh_user"] = json!(login_user);
+            info_text = jq::compact(&info);
+        }
         return Ok(Some(info_text));
     }
     if ctx.json.get() {
@@ -634,18 +641,61 @@ fn print_summary(ctx: &Ctx, name: &str, started: i64, rows: &[(&str, String)]) {
     }
 }
 
+/// Provision in the background and wait for SSH before handing back the terminal.
+pub fn provision_for_ssh(ctx: &Ctx, args: &[String], remove: bool) -> R {
+    let info = up(ctx, args, true)?.ok_or(Fail(1))?;
+    let metadata: Value = serde_json::from_str(&info).map_err(|_| Fail(1))?;
+    let name = need(&metadata, "name")?;
+    let user = metadata["ssh_user"]
+        .as_str()
+        .or(metadata["user"].as_str())
+        .unwrap_or("agent");
+    if remove {
+        crate::signals::trap();
+    }
+    let ready = ssh_target(ctx, &name, user)
+        .and_then(|(opts, login)| wait_for_ssh(ctx, &name, &opts, &login));
+    if !matches!(ready, Ok(true)) {
+        if remove {
+            drop(super::exec::Cleanup::new(ctx, name.clone(), false));
+        }
+        ctx.err(&format!("{name} did not become reachable over SSH"));
+        return Err(ready.err().unwrap_or(Fail(1)));
+    }
+    outln(&jq::compact(&json!({"name": name, "user": user})));
+    Ok(())
+}
+
+/// Enter a newly provisioned worker from the TUI's interactive phase.
+pub fn connect_created(ctx: &Ctx, name: &str, user: &str, remove: bool) -> R {
+    let _cleanup = remove.then(|| {
+        crate::signals::trap();
+        super::exec::Cleanup::new(ctx, name.to_owned(), false)
+    });
+    let (opts, login) = ssh_target(ctx, name, user)?;
+    crate::ctx::status(proc::run(ctx, &mut state::worker_ssh(&opts, &login))?)
+}
+
+fn ssh_target(ctx: &Ctx, name: &str, user: &str) -> R<(Vec<String>, String)> {
+    let ip = state::worker_ip(ctx, name)?;
+    Ok((state::ssh_opts(ctx, name), format!("{user}@{ip}")))
+}
+
 /// Log in right after `up`: NetBird may still be setting up the route to
 /// the fresh peer, so retry the connection for a little while.
 pub fn connect(ctx: &Ctx, name: &str, user: &str) -> R {
-    let ip = state::worker_ip(ctx, name)?;
-    let opts = state::ssh_opts(ctx, name);
-    let login = format!("{user}@{ip}");
+    let (opts, login) = ssh_target(ctx, name, user)?;
+    wait_for_ssh(ctx, name, &opts, &login)?;
+    crate::ctx::status(proc::run(ctx, &mut state::worker_ssh(&opts, &login))?)
+}
+
+fn wait_for_ssh(ctx: &Ctx, name: &str, opts: &[String], login: &str) -> R<bool> {
     for i in 1..=10 {
         if let Some(signal) = crate::signals::pending() {
             return Err(Fail(128 + signal));
         }
-        if probe(&opts, &login) {
-            break;
+        if probe(opts, login) {
+            return Ok(true);
         }
         ctx.err(&format!(
             "Waiting for {} to accept SSH ({i})...",
@@ -656,8 +706,7 @@ pub fn connect(ctx: &Ctx, name: &str, user: &str) -> R {
     if let Some(signal) = crate::signals::pending() {
         return Err(Fail(128 + signal));
     }
-    let code = proc::run(ctx, &mut state::worker_ssh(&opts, &login))?;
-    crate::ctx::status(code)
+    Ok(false)
 }
 
 /// `ssh OPTS -o ConnectTimeout=5 LOGIN true 2>/dev/null`.

@@ -2,7 +2,7 @@
 //! text views (logs, events, inspect, ps, command output) stack on it and
 //! Esc goes back.
 
-use super::create::{self, CreateWorker};
+use super::create::{self, After, CreateWorker};
 use super::proc::{self, Msg, Stream};
 use crate::ctx::Ctx;
 use crate::jq::{self, get};
@@ -222,6 +222,9 @@ enum Pending {
     JobList,
     History,
     Profiles,
+    ProvisionSsh {
+        remove: bool,
+    },
     LogPreview(u64),
     PreviewJobs(u64),
 }
@@ -275,6 +278,7 @@ pub struct App {
     tx: Sender<Msg>,
     refresh: Sender<()>,
     suspend: Option<Vec<String>>,
+    ready_ssh: Option<Vec<String>>,
     quit: bool,
 }
 
@@ -307,6 +311,12 @@ impl App {
             .values()
             .filter(|p| matches!(p, Pending::Status { .. }))
             .count()
+    }
+
+    pub(super) fn provisioning_ssh(&self) -> bool {
+        self.pending
+            .values()
+            .any(|action| matches!(action, Pending::ProvisionSsh { .. }))
     }
 
     pub fn flash_live(&self) -> Option<&Flash> {
@@ -720,6 +730,35 @@ impl App {
                         view.no_jobs = ok && out.trim().is_empty();
                     }
                 }
+                Some(Pending::ProvisionSsh { remove }) => {
+                    let ready = serde_json::from_str::<Value>(&out)
+                        .ok()
+                        .filter(|_| ok)
+                        .and_then(|info| {
+                            Some((
+                                info["name"].as_str()?.to_owned(),
+                                info["user"].as_str()?.to_owned(),
+                            ))
+                        });
+                    if let Some((name, user)) = ready {
+                        let mut args = s(&["__connect-created", &name, &user]);
+                        if remove {
+                            args.push("--rm".into());
+                        }
+                        self.ready_ssh = Some(args);
+                    } else {
+                        let error = proc::last_line(&err);
+                        self.say(
+                            if error.is_empty() {
+                                "Worker provisioning failed".to_owned()
+                            } else {
+                                error
+                            },
+                            true,
+                        );
+                    }
+                    let _ = self.refresh.send(());
+                }
                 Some(Pending::Profiles) => {
                     if let Some(form) = self
                         .create_worker
@@ -870,17 +909,28 @@ impl App {
             self.help_top = 0;
             return;
         }
+        let ssh_busy = self.provisioning_ssh() || self.ready_ssh.is_some();
         if let Some(form) = &mut self.create_worker {
             match k.code {
                 KeyCode::Esc => self.create_worker = None,
                 KeyCode::Enter => match form.submission() {
-                    Ok((args, ssh)) => {
+                    Ok((args, After::Create)) => {
                         self.create_worker = None;
-                        if ssh {
-                            self.suspend = Some(args);
-                        } else {
-                            self.act(args, "new worker");
+                        self.act(args, "new worker");
+                    }
+                    Ok((_, _)) if ssh_busy => {
+                        form.error = Some("An SSH worker is already provisioning.".into());
+                    }
+                    Ok((mut args, after)) => {
+                        self.create_worker = None;
+                        let id = self.id();
+                        let remove = after == After::SshAndDelete;
+                        self.pending.insert(id, Pending::ProvisionSsh { remove });
+                        args[0] = "__tui-provision-ssh".into();
+                        if remove {
+                            args.insert(1, "--rm".into());
                         }
+                        proc::action(id, args, self.tx.clone());
                     }
                     Err(error) => form.error = Some(error),
                 },
@@ -1549,6 +1599,7 @@ pub fn run(ctx: &Ctx, interval: Duration) -> std::io::Result<()> {
         tx: tx.clone(),
         refresh: refresh_tx,
         suspend: None,
+        ready_ssh: None,
         quit: false,
     };
     if let Some(list) = cached(ctx) {
@@ -1603,7 +1654,7 @@ pub fn run(ctx: &Ctx, interval: Duration) -> std::io::Result<()> {
             if app.quit || stop.load(Ordering::SeqCst) {
                 return Ok(());
             }
-            if let Some(args) = app.suspend.take() {
+            if let Some(args) = app.suspend.take().or_else(|| app.ready_ssh.take()) {
                 paused.store(true, Ordering::SeqCst);
                 let t0 = Instant::now();
                 while !parked.load(Ordering::SeqCst) && t0.elapsed() < Duration::from_secs(1) {
@@ -1618,7 +1669,11 @@ pub fn run(ctx: &Ctx, interval: Duration) -> std::io::Result<()> {
                     let _ = write!(
                         out,
                         "\n[rworker {} ended: {}] press Enter to return ",
-                        args.join(" "),
+                        if args.first().is_some_and(|arg| arg == "__connect-created") {
+                            format!("ssh {}", args[1])
+                        } else {
+                            args.join(" ")
+                        },
                         match &status {
                             Ok(Some(c)) => format!("exit {c}"),
                             Ok(None) => "killed".into(),
