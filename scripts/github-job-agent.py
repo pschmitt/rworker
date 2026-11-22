@@ -8,6 +8,7 @@ import platform
 import pwd
 import re
 import shlex
+import shutil
 import socket
 import subprocess
 import sys
@@ -17,6 +18,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 from pathlib import Path
+from uuid import uuid4
 
 GITLAB_PROFILES = {"gl-linux-x64", "gl-linux-x64-lease"}
 ARCHITECTURES = {"linux-arm64": "aarch64", "linux-x64": "x86_64"}
@@ -272,6 +274,37 @@ def build_disk():
     }
 
 
+@contextmanager
+def encrypted_volume(parent, size):
+    with tempfile.TemporaryDirectory(prefix="rworker-volume-", dir=parent) as directory:
+        paths = Path(directory)
+        backing = paths / "disk"
+        with backing.open("wb") as disk:
+            disk.truncate(size)
+        mountpoint = paths / "data"
+        mountpoint.mkdir()
+        name = f"rworker-{uuid4().hex}"
+        device = f"/dev/mapper/{name}"
+        key = os.urandom(64)
+        options = ["--batch-mode", "--type", "luks2", "--key-file", "-"]
+        subprocess.run(
+            privileged("cryptsetup", "luksFormat", *options, backing), input=key, check=True,
+        )
+        subprocess.run(
+            privileged("cryptsetup", "open", *options, backing, name), input=key, check=True,
+        )
+        del key
+        try:
+            subprocess.run(privileged("mkfs.ext4", "-q", device), check=True)
+            subprocess.run(privileged("mount", "-o", "nodev,nosuid", device, mountpoint), check=True)
+            try:
+                yield mountpoint
+            finally:
+                subprocess.run(privileged("umount", mountpoint), check=True)
+        finally:
+            subprocess.run(privileged("cryptsetup", "close", name), check=True)
+
+
 def check_runtime(profile):
     status = Path("/proc/self/status").read_text().splitlines()
     capabilities = next(line.split()[1] for line in status if line.startswith("CapEff:"))
@@ -288,6 +321,13 @@ def check_runtime(profile):
         ["stat", "-f", "-c", "Storage probe %n: %T", ".", "/nix", "/dev/shm"],
         check=False,
     )
+    if shutil.which("cryptsetup"):
+        with encrypted_volume(Path.cwd(), 128 * 1024**2) as volume:
+            marker = volume / "storage-probe"
+            marker.write_text("ready")
+            if marker.read_text() != "ready":
+                raise RuntimeError("Encrypted volume readback failed")
+        print("Storage probe LUKS2: mount, write, read and close passed", flush=True)
     with build_environment(profile), tempfile.TemporaryDirectory() as directory:
         paths = Path(directory)
         key = paths / "client"

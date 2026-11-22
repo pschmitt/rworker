@@ -43,6 +43,10 @@ rworker-lease:
       then
         apt-get update
         DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends ca-certificates git nix-bin openssh-client openssh-server procps python3 rsync sudo
+        if [ -z "$RWORKER_JOB_ID" ]
+        then
+          DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends cryptsetup-bin e2fsprogs
+        fi
       fi
       if [ -z "$RWORKER_JOB_ID" ]
       then
