@@ -14,14 +14,24 @@ keeps what it learns in `$XDG_STATE_HOME/rworker` (default
 
 ## Worker lifecycle
 
+Use `rworker profiles` to list the configured profiles. Select one with
+`--profile` on `up`, `exec`, or `ssh --create`.
+
 - `up` creates an ad-hoc worker and waits until it answers (usually 1-4
   minutes); `--ssh` logs in right away, `--json` prints it for scripts.
 - `extend NAME --ttl 2h` moves the expiry; `down NAME` deletes it; `prune`
   deletes several (by default your own).
-- A worker still in use when it expires stays until it has been idle for an
-  hour, up to its maximum lifetime.
+- An ad-hoc OpenStack worker still in use when it expires stays until it
+  has been idle for an hour, up to its maximum lifetime.
 - Always pass `--topic` (what it is for) and `--agent-id` when you create
   one; `claim NAME` takes a worker over when you reuse it.
+
+[GitHub Actions workers](github-actions.md) use the `gh-aarch64` and
+`gh-x86_64` profiles. Their default lease is 30 minutes, including time
+spent in the GitHub Actions queue. At expiry the controller closes the
+lease and cancels the workflow run. GitHub Actions workers skip the
+automatic Nix cache credentials and private input tokens copied to
+OpenStack workers.
 
 ## Worker names
 

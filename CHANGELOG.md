@@ -4,6 +4,9 @@
 
 The Rust client and controller replace the original Bash client.
 
+- Link to GitHub Actions worker setup from the README and document hosted
+  runner profile selection and lease expiry in the usage guide.
+
 - Show GitHub and OpenStack profile glyphs in the CLI, TUI and web console.
 
 - Use GitHub black and OpenStack red for profile icons in the web console.

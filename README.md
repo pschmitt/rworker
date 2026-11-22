@@ -8,17 +8,18 @@
     <a href="https://my.home-assistant.io/redirect/marketplace_repository/?owner=pschmitt&amp;repository=rworker&amp;category=integration"><img src="https://my.home-assistant.io/badges/marketplace_repository.svg" alt="Install the Home Assistant integration"></a>
   </p>
   <h1 align="center">rworker</h1>
-  <p align="center">Disposable, encrypted build VMs on request: create one, build on it, throw it away.</p>
+  <p align="center">Disposable build workers on OpenStack and GitHub Actions.</p>
 </div>
 
 Heavy compiles (Rust, Android, large Nix builds) do not belong on a laptop.
-rworker asks a control host for an ad-hoc OpenStack worker, pins its SSH host
-key on creation, and wraps everything you do with it afterwards: shells,
-file copies, background jobs and Nix remote builds. A worker deletes itself
-when its time runs out.
+rworker asks a control host for a time-limited worker and pins its SSH host
+key on creation. Use it for shells, file copies, background jobs, and Nix
+remote builds.
 
 ## Features
 
+- **GitHub Actions workers** offer native Linux ARM64 and x86-64 with
+  interactive SSH and Nix. See [GitHub Actions workers](docs/github-actions.md).
 - **One-shot builds**: `exec` creates a worker, copies directories to it,
   runs the command, copies results back and deletes the worker, also on
   errors and Ctrl-C.
@@ -82,6 +83,7 @@ rworker down "$w"                                    # delete it
 | Topic | |
 | --- | --- |
 | [Usage](docs/usage.md) | Actions, worker names, environment variables |
+| [GitHub Actions workers](docs/github-actions.md) | Controller setup, hosted runner profiles, and SSH leases |
 | [Nix](docs/nix.md) | Flake outputs, overlay options, the web console and MCP server |
 | [On-demand Nix builders](docs/nix-builders.md) | Gateway, machines entry and worker leases |
 | [Worker images](docs/images.md) | Building, uploading and booting worker images |
