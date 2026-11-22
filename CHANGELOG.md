@@ -4,6 +4,8 @@
 
 The Rust client and controller replace the original Bash client.
 
+- Report storage device access and filesystem types in GitLab runtime checks.
+
 - Keep CI run and job identifiers in worker metadata for GitHub and GitLab.
 
 - Use eight-character suffixes for new GitHub and GitLab worker names.

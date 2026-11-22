@@ -273,6 +273,21 @@ def build_disk():
 
 
 def check_runtime(profile):
+    status = Path("/proc/self/status").read_text().splitlines()
+    capabilities = next(line.split()[1] for line in status if line.startswith("CapEff:"))
+    print(f"Storage probe CAP_SYS_ADMIN: {bool(int(capabilities, 16) & (1 << 21))}", flush=True)
+    for device in ("/dev/loop-control", "/dev/mapper/control", "/dev/fuse", "/dev/kvm"):
+        try:
+            fd = os.open(device, os.O_RDWR | os.O_CLOEXEC)
+        except OSError as error:
+            print(f"Storage probe {device}: {error.strerror}", flush=True)
+        else:
+            os.close(fd)
+            print(f"Storage probe {device}: accessible", flush=True)
+    subprocess.run(
+        ["stat", "-f", "-c", "Storage probe %n: %T", ".", "/nix", "/dev/shm"],
+        check=False,
+    )
     with build_environment(profile), tempfile.TemporaryDirectory() as directory:
         paths = Path(directory)
         key = paths / "client"
