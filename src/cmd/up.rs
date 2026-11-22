@@ -179,23 +179,32 @@ fn need(info: &Value, field: &str) -> R<String> {
 
 /// Create a worker. With `capture` (exec), the JSON is returned instead of
 /// printed, as `JSON=1 cmd_up` in a command substitution.
-fn github_up(ctx: &Ctx, profile: &str, ttl: &str, key_file: &str, topic: &str) -> R<Value> {
+fn github_up(
+    ctx: &Ctx,
+    profile: &crate::github_profiles::Profile,
+    ttl: &str,
+    key_file: &str,
+    topic: &str,
+) -> R<Value> {
     let key = std::fs::read_to_string(key_file).map_err(|error| {
         ctx.err(&format!("Read SSH public key {key_file}: {error}"));
         Fail(2)
     })?;
     let owner = ctx.owner();
-    let raw = state::remote(ctx, &["github-up", profile, ttl, key.trim(), &owner, topic])?;
+    let raw = state::remote(
+        ctx,
+        &["github-up", profile.runner, ttl, key.trim(), &owner, topic],
+    )?;
     let initial: Value = serde_json::from_str(&raw).map_err(|_| Fail(1))?;
     let id = need(&initial, "id")?;
     let name = format!("gha-{id}");
     ctx.err(&format!("Waiting for GitHub worker {name}"));
-    if let (Some(repository), Some(run)) =
-        (initial["repository"].as_str(), initial["run_id"].as_u64())
-    {
-        ctx.err(&format!(
-            "https://github.com/{repository}/actions/runs/{run}"
-        ));
+    let run_url = initial["repository"]
+        .as_str()
+        .zip(initial["run_id"].as_u64())
+        .map(|(repository, run)| format!("https://github.com/{repository}/actions/runs/{run}"));
+    if let Some(url) = &run_url {
+        ctx.err(url);
     }
     let expires = epoch(&initial["expires_at"]);
 
@@ -211,7 +220,11 @@ fn github_up(ctx: &Ctx, profile: &str, ttl: &str, key_file: &str, topic: &str) -
                         "user": "rworker-build",
                         "kind": "adhoc",
                         "provider": "github",
-                        "profile": format!("github-{}", profile.trim_start_matches("linux-")),
+                        "profile": profile.name,
+                        "flavor": profile.label,
+                        "system": profile.system,
+                        "image_tags": ["github-actions"],
+                        "run_url": run_url,
                         "expires_at": expires,
                         "created_at": lease["created_at"],
                         "topic": lease["topic"],
@@ -288,11 +301,7 @@ pub fn up(ctx: &Ctx, args: &[String], capture: bool) -> R<Option<String>> {
         .map(|pair| pair[1].as_str())
         .chain(rest.iter().filter_map(|arg| arg.strip_prefix("--profile=")))
         .last()
-        .and_then(|profile| match profile {
-            "github-arm64" => Some("linux-arm64"),
-            "github-x64" => Some("linux-x64"),
-            _ => None,
-        });
+        .and_then(crate::github_profiles::from_name);
     if let Some(profile) = github_profile {
         if nix_cache == Some(true) || nix_auth == Some(true) {
             ctx.err("GitHub workers do not accept Nix cache credentials");
@@ -305,6 +314,7 @@ pub fn up(ctx: &Ctx, args: &[String], capture: bool) -> R<Option<String>> {
             .chain(rest.iter().filter_map(|arg| arg.strip_prefix("--ttl=")))
             .last()
             .unwrap_or("30m");
+        let started = crate::time::now();
         let output = github_up(ctx, profile, ttl, &key_file, &topic)?;
         if capture {
             return Ok(Some(jq::compact(&output)));
@@ -313,15 +323,38 @@ pub fn up(ctx: &Ctx, args: &[String], capture: bool) -> R<Option<String>> {
         if ctx.json.get() {
             crate::ctx::json_out(ctx, &jq::compact(&output));
         } else {
-            paint::ok(ctx, &format!("{name} is READY"));
+            let user = jq::raw(&output["user"]);
+            let kvm = if output["kvm"] == true {
+                "available"
+            } else {
+                "unavailable"
+            };
+            print_summary(
+                ctx,
+                &name,
+                started,
+                &[
+                    ("Provider", "GitHub Actions".to_owned()),
+                    ("User", user),
+                    ("Profile", profile.name.to_owned()),
+                    ("Flavor", paint::flavor(ctx, profile.label)),
+                    ("KVM", kvm.to_owned()),
+                    (
+                        "Expires",
+                        paint(ctx, "33", &fmt_expiry(epoch(&output["expires_at"]))),
+                    ),
+                    ("SSH", ssh_hint(ctx, &name)),
+                    ("Workflow", jq::or(&output["run_url"], "-")),
+                ],
+            );
         }
         if login {
-            let target = if login_user.is_empty() {
-                name
+            let user = if login_user.is_empty() {
+                need(&output, "user")?
             } else {
-                format!("{login_user}@{name}")
+                login_user
             };
-            super::files::cmd_ssh(ctx, &[target])?;
+            connect(ctx, &name, &user)?;
         }
         return Ok(None);
     }
@@ -433,15 +466,6 @@ pub fn up(ctx: &Ctx, args: &[String], capture: bool) -> R<Option<String>> {
         return Ok(None);
     }
     let me = &ctx.me;
-    paint::ok(
-        ctx,
-        &format!(
-            "{} is {} {}",
-            paint::vm(ctx, &name),
-            paint(ctx, "1;32", "READY"),
-            paint(ctx, "2", &format!("({}s)", crate::time::now() - started))
-        ),
-    );
     let rows = [
         (
             "IP",
@@ -457,14 +481,7 @@ pub fn up(ctx: &Ctx, args: &[String], capture: bool) -> R<Option<String>> {
             "Expires",
             paint(ctx, "33", &fmt_expiry(epoch(get(&info, "expires_at")))),
         ),
-        (
-            "SSH",
-            format!(
-                "{} {}",
-                paint(ctx, "32", &format!("{me} ssh")),
-                paint::vm(ctx, &name)
-            ),
-        ),
+        ("SSH", ssh_hint(ctx, &name)),
         (
             "Builder",
             format!(
@@ -476,12 +493,7 @@ pub fn up(ctx: &Ctx, args: &[String], capture: bool) -> R<Option<String>> {
             ),
         ),
     ];
-    for (label, value) in rows {
-        outln(&format!(
-            "  {} {value}",
-            paint(ctx, "1", &format!("{label:<8}"))
-        ));
-    }
+    print_summary(ctx, &name, started, &rows);
     if login {
         let user = if login_user.is_empty() {
             "agent"
@@ -491,6 +503,32 @@ pub fn up(ctx: &Ctx, args: &[String], capture: bool) -> R<Option<String>> {
         connect(ctx, &name, user)?;
     }
     Ok(None)
+}
+
+fn ssh_hint(ctx: &Ctx, name: &str) -> String {
+    format!(
+        "{} {}",
+        paint(ctx, "32", &format!("{} ssh", ctx.me)),
+        paint::vm(ctx, name),
+    )
+}
+
+fn print_summary(ctx: &Ctx, name: &str, started: i64, rows: &[(&str, String)]) {
+    paint::ok(
+        ctx,
+        &format!(
+            "{} is {} {}",
+            paint::vm(ctx, name),
+            paint(ctx, "1;32", "READY"),
+            paint(ctx, "2", &format!("({}s)", crate::time::now() - started))
+        ),
+    );
+    for (label, value) in rows {
+        outln(&format!(
+            "  {} {value}",
+            paint(ctx, "1", &format!("{label:<8}"))
+        ));
+    }
 }
 
 /// Log in right after `up`: NetBird may still be setting up the route to

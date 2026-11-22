@@ -79,7 +79,10 @@ if the controller is unreachable. A runner is ready only after the agent has
 registered its SSH endpoint and the controller can reach it.
 
 
-For an interactive ARM worker, use `rworker up --profile github-arm64 --ssh`.
+For an interactive ARM worker, use `rworker up --profile gh-aarch64 --ssh`.
 For a one-shot build from the current checkout, run
-`rworker exec --profile github-arm64 --sync .:src -- 'cd src && cargo test'`.
-Use `github-x64` for a native x86-64 runner.
+`rworker exec --profile gh-aarch64 --sync .:src -- 'cd src && cargo test'`.
+Use `gh-x86_64` for a native x86-64 runner.
+
+Both profiles carry the `github-actions` tag. `gh` is shorthand for
+`gh-x86_64`. Existing scripts may still use `github-arm64` or `github-x64`.

@@ -74,10 +74,11 @@ else:
 
     for resource_spec in ((4, 16), (2, 8)):
         profiles = control("profiles")
-        assert {profile["name"] for profile in profiles} == {"github-arm64", "github-x64"}
+        assert {profile["name"] for profile in profiles} == {"gh-aarch64", "gh-x86_64"}
         for profile in profiles:
             assert (profile["vcpus"], profile["ram_gb"]) == resource_spec
             assert profile["disk_gb"] == 14
+            assert profile["image_tags"] == ["github-actions"]
         (root / "private").touch()
 
     public_key = "ssh-ed25519 " + base64.b64encode(bytes(32)).decode()

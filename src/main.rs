@@ -7,6 +7,7 @@ mod cmd;
 mod creator;
 mod ctx;
 mod event_history;
+mod github_profiles;
 mod help;
 mod inventory_feed;
 mod jq;

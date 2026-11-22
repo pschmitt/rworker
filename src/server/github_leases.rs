@@ -77,7 +77,7 @@ pub(super) fn run(settings: &Value, action: &str, args: &[String]) -> Result<Val
 
     match (action, args) {
         ("github-up", [profile, ttl, public_key, owner, topic]) => {
-            if !matches!(profile.as_str(), "linux-arm64" | "linux-x64") {
+            if crate::github_profiles::from_runner(profile).is_none() {
                 return Err("Unknown GitHub Actions runner profile".into());
             }
             let ttl = super::duration_seconds(ttl)
@@ -214,7 +214,7 @@ pub(super) fn inventory(settings: &Value) -> Result<Vec<Value>, String> {
                 "ip": ready.then_some(&name),
                 "provider": "github",
                 "kind": "adhoc",
-                "profile": format!("github-{}", lease.profile.trim_start_matches("linux-")),
+                "profile": crate::github_profiles::from_runner(&lease.profile).map(|profile| profile.name),
                 "status": match lease.state {
                     LeaseState::Ready => "ACTIVE",
                     LeaseState::Cancelling => "DELETING",

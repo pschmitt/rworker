@@ -449,24 +449,19 @@ fn profiles(settings: &Value) -> io::Result<Vec<Value>> {
             })
             // GitHub's standard public and private Ubuntu runner specifications.
             .map(|public| if public { (4, 16) } else { (2, 8) });
-        rows.extend(
-            [
-                ("github-arm64", "aarch64-linux", "ubuntu-24.04-arm"),
-                ("github-x64", "x86_64-linux", "ubuntu-24.04"),
-            ]
-            .map(|(profile, system, runner)| {
-                json!({
-                    "name": profile,
-                    "provider": "github",
-                    "system": system,
-                    "flavor": runner,
-                    "vcpus": specs.map(|(cpus, _)| cpus),
-                    "ram_gb": specs.map(|(_, ram)| ram),
-                    "disk_gb": 14,
-                    "default": false,
-                })
-            }),
-        );
+        rows.extend(crate::github_profiles::PROFILES.iter().map(|profile| {
+            json!({
+                "name": profile.name,
+                "provider": "github",
+                "system": profile.system,
+                "flavor": profile.label,
+                "vcpus": specs.map(|(cpus, _)| cpus),
+                "ram_gb": specs.map(|(_, ram)| ram),
+                "disk_gb": 14,
+                "image_tags": ["github-actions"],
+                "default": false,
+            })
+        }));
     }
     Ok(rows)
 }

@@ -6,6 +6,9 @@ The Rust client and controller replace the original Bash client.
 
 ### GitHub Actions
 
+- List `gh-aarch64` and `gh-x86_64` with the `github-actions` tag and show the
+  standard worker summary when a GitHub lease is ready.
+
 - Complete the GitHub runner profiles in shell commands.
 
 - Show GitHub’s published CPU, RAM, and disk allocations in the worker profile list.
