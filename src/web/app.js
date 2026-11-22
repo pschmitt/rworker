@@ -144,8 +144,9 @@ function profileGlyph(row) {
   return row.provider === "github" ? githubGlyph : openstackGlyph;
 }
 
-function profileIcon(row, className = "agent-icon profile-icon") {
-  const icon = element("span", profileGlyph(row), className);
+function profileIcon(row, className = "agent-icon") {
+  const providerClass = row.provider === "github" ? "profile-icon-github" : "profile-icon-openstack";
+  const icon = element("span", profileGlyph(row), `${className} ${providerClass}`);
   icon.setAttribute("aria-hidden", "true");
   return icon;
 }
