@@ -98,3 +98,12 @@ JSON
 The `rworker bootstrap` line measures setup and the runtime check inside
 the container. Compare the GitLab job duration for the full job, including
 image preparation. Queue time and image cache state depend on the runner.
+
+In one comparison on different regular instance runners, Ubuntu took
+16.0 seconds inside the container and 24.5 seconds overall. The lease
+image took 0.5 seconds inside the container and 25.6 seconds overall.
+The prebuilt image cut bootstrap work, while job preparation accounted
+for more time in that run.
+
+GitLab checks for an updated image on every job. The lease runtime is
+also published as `ghcr.io/pschmitt/rworker-lease:latest`.
