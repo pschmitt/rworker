@@ -5,6 +5,7 @@
     <a href="https://github.com/pschmitt/rworker/actions/workflows/build.yaml"><img src="https://github.com/pschmitt/rworker/actions/workflows/build.yaml/badge.svg" alt="build"></a>
     <a href="https://github.com/pschmitt/rworker/actions/workflows/test.yaml"><img src="https://github.com/pschmitt/rworker/actions/workflows/test.yaml/badge.svg" alt="test"></a>
     <a href="https://github.com/pschmitt/rworker/actions/workflows/lint.yaml"><img src="https://github.com/pschmitt/rworker/actions/workflows/lint.yaml/badge.svg" alt="lint"></a>
+    <a href="https://my.home-assistant.io/redirect/marketplace_repository/?owner=pschmitt&amp;repository=rworker&amp;category=integration"><img src="https://my.home-assistant.io/badges/marketplace_repository.svg" alt="Install the Home Assistant integration"></a>
   </p>
   <h1 align="center">rworker</h1>
   <p align="center">Disposable, encrypted build VMs on request: create one, build on it, throw it away.</p>
@@ -37,6 +38,8 @@ when its time runs out.
 - **On-demand Nix builders** lease a worker through a stable SSH endpoint. See [On-demand Nix builders](docs/nix-builders.md).
 - **Terminal UI**: `tui` shows the workers, their jobs and logs, followed
   live, and runs the actions on the selected worker with a key or two.
+- **Home Assistant** receives worker events and fleet counts over WebSocket
+  and exposes worker actions. See [Home Assistant](docs/home-assistant.md).
 - **Scripting**: `--json` on every action but `ssh`; an MCP server
   (`rworker-mcp`) exposes the same actions to agents.
 - **Shell completions**: zsh and bash, for actions, flags, worker names and
@@ -82,6 +85,7 @@ rworker down "$w"                                    # delete it
 | [Nix](docs/nix.md) | Flake outputs, overlay options, the web console and MCP server |
 | [On-demand Nix builders](docs/nix-builders.md) | Gateway, machines entry and worker leases |
 | [Worker images](docs/images.md) | Building, uploading and booting worker images |
+| [Home Assistant](docs/home-assistant.md) | Integration setup, entities, diagnostics and actions |
 | [Development](docs/development.md) | Building and testing |
 | [Changelog](CHANGELOG.md) | Release notes |
 
