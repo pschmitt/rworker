@@ -64,6 +64,8 @@ The Rust client and controller replace the original Bash client.
 
 ### Web console
 
+- Keep the console running when a browser SSH terminal opens or closes.
+
 - Open an interactive SSH terminal from a live worker’s detail view.
 
 - Cache profile flavor resources on the controller and refresh them daily;

@@ -12,7 +12,7 @@ use std::ffi::CStr;
 use std::fs::{File, OpenOptions};
 use std::io::{self, Read, Write};
 use std::os::fd::{AsRawFd, FromRawFd};
-use std::os::unix::process::CommandExt;
+use std::os::unix::{fs::OpenOptionsExt, process::CommandExt};
 use std::path::{Path as FilePath, PathBuf};
 use std::process::{Command, Stdio};
 use std::time::Duration;
@@ -143,7 +143,10 @@ fn spawn(worker: &str, size: Size) -> io::Result<(AsyncFd<File>, SshProcess)> {
     use std::os::unix::ffi::OsStrExt;
     // SAFETY: successful ptsname_r wrote a NUL-terminated path.
     let path = unsafe { CStr::from_ptr(path.as_ptr()) };
+    // The service can itself be a session leader. Only the SSH child should
+    // acquire this terminal, explicitly with TIOCSCTTY after setsid.
     let slave = OpenOptions::new()
+        .custom_flags(libc::O_NOCTTY)
         .read(true)
         .write(true)
         .open(FilePath::new(std::ffi::OsStr::from_bytes(path.to_bytes())))?;
