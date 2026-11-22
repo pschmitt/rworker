@@ -59,7 +59,11 @@ elif url.endswith("/dispatches"):
     assert set(dispatch["inputs"]) == {"job_id", "profile"}
     print('{"workflow_run_id": 42}')
 elif url.endswith("/runs/42"):
-    print(json.dumps({"status": "completed" if (root / "cancelled").exists() else "in_progress"}))
+    cancelled = (root / "cancelled").exists()
+    print(json.dumps({
+        "status": "completed" if cancelled else "in_progress" if (root / "started").exists() else "queued",
+        "conclusion": "cancelled" if cancelled else None,
+    }))
 elif url.endswith("/runs/42/cancel"):
     (root / "cancelled").touch()
 else:
@@ -85,6 +89,9 @@ else:
     lease = control("github-up", "linux-arm64", "2m", public_key, "operator", "fixture")
     assert lease["run_id"] == 42 and lease["state"] == "queued"
     ident = lease["id"]
+    assert control("github-status", ident)["workflow"]["status"] == "queued"
+    (root / "started").touch()
+    assert control("github-status", ident)["workflow"]["status"] == "in_progress"
     api = root / "agent.sock"
 
     def jwt(run_id):
@@ -140,7 +147,8 @@ else:
             assert "token_hash" not in ready
             assert control("github-down", ident, "operator")["state"] == "cancelling"
             assert post("heartbeat", bearer, {})[0] == 403
-            assert control("github-status", ident)["state"] == "ended"
+            ended = control("github-status", ident)
+            assert ended["state"] == "ended" and ended["workflow"]["conclusion"] == "cancelled"
         finally:
             server.terminate()
 

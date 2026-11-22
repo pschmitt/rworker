@@ -86,3 +86,7 @@ Use `gh-x86_64` for a native x86-64 runner.
 
 Both profiles carry the `github-actions` tag. `gh` is shorthand for
 `gh-x86_64`. Existing scripts may still use `github-arm64` or `github-x64`.
+
+The lease deadline includes queue time. A queued run can wait for capacity
+on its selected architecture. The CLI reports when GitHub starts the run,
+waits for SSH readiness, and requests cancellation if the lease expires.

@@ -198,20 +198,40 @@ fn github_up(
     let initial: Value = serde_json::from_str(&raw).map_err(|_| Fail(1))?;
     let id = need(&initial, "id")?;
     let name = format!("gha-{id}");
-    ctx.err(&format!("Waiting for GitHub worker {name}"));
     let run_url = initial["repository"]
         .as_str()
         .zip(initial["run_id"].as_u64())
         .map(|(repository, run)| format!("https://github.com/{repository}/actions/runs/{run}"));
-    if let Some(url) = &run_url {
-        ctx.err(url);
-    }
+    let link = run_url.as_deref().map_or_else(String::new, |url| {
+        format!(" · {}", workflow_link(url, std::io::stderr().is_terminal()))
+    });
+    ctx.err(&format!("Waiting for GitHub worker {name}{link}"));
     let expires = epoch(&initial["expires_at"]);
+    let mut runner_started = false;
+    let mut disconnected = false;
 
     let ready = (|| {
         while crate::time::now() < expires {
-            let raw = state::remote(ctx, &["github-status", &id])?;
-            let lease: Value = serde_json::from_str(&raw).map_err(|_| Fail(1))?;
+            let reply = ctx.muted(|| state::remote(ctx, &["github-status", &id]));
+            let Ok(lease) =
+                reply.and_then(|raw| serde_json::from_str::<Value>(&raw).map_err(|_| Fail(1)))
+            else {
+                if !disconnected {
+                    ctx.err("Could not check the GitHub lease; retrying");
+                    disconnected = true;
+                }
+                std::thread::sleep(Duration::from_secs(3));
+                continue;
+            };
+            disconnected = false;
+            if !runner_started
+                && (lease["workflow"]["status"] == "in_progress" || lease["state"] == "claimed")
+            {
+                runner_started = true;
+                ctx.err(&format!(
+                    "GitHub assigned a runner to {name}; waiting for SSH"
+                ));
+            }
             match lease["state"].as_str() {
                 Some("ready") => {
                     let output = json!({
@@ -237,15 +257,41 @@ fn github_up(
                     state::remember_github(ctx, &name, &output)?;
                     return Ok(output);
                 }
-                Some("ended" | "cancelling" | "dispatch_unknown") => break,
+                Some("ended") => {
+                    let conclusion = jq::or(&lease["workflow"]["conclusion"], "unknown");
+                    ctx.err(&format!(
+                        "GitHub workflow for {name} ended before SSH was ready ({conclusion}){link}"
+                    ));
+                    return Err(Fail(1));
+                }
+                Some("cancelling" | "dispatch_unknown") if crate::time::now() < expires => {
+                    ctx.err(&format!(
+                        "GitHub lease {name} ended before SSH was ready{link}"
+                    ));
+                    return Err(Fail(1));
+                }
                 _ => std::thread::sleep(Duration::from_secs(3)),
             }
         }
-        ctx.err(&format!("GitHub worker {name} did not become ready"));
+        let stage = if runner_started {
+            "SSH readiness"
+        } else {
+            "GitHub to assign a runner"
+        };
+        ctx.err(&format!(
+            "Lease expired while waiting for {stage} on {name}{link}"
+        ));
         Err(Fail(1))
     })();
-    if ready.is_err() {
-        let _ = state::remote_quiet(ctx, &["github-down", &id, &owner]);
+    if ready.is_err()
+        && !matches!(
+            state::remote_quiet(ctx, &["github-down", &id, &owner]),
+            Ok(0)
+        )
+    {
+        ctx.err(&format!(
+            "Could not request cancellation of {name}; the controller will retry at expiry"
+        ));
     }
     ready
 }
@@ -344,7 +390,13 @@ pub fn up(ctx: &Ctx, args: &[String], capture: bool) -> R<Option<String>> {
                         paint(ctx, "33", &fmt_expiry(epoch(&output["expires_at"]))),
                     ),
                     ("SSH", ssh_hint(ctx, &name)),
-                    ("Workflow", jq::or(&output["run_url"], "-")),
+                    (
+                        "Workflow",
+                        output["run_url"].as_str().map_or_else(
+                            || "-".to_owned(),
+                            |url| workflow_link(url, std::io::stdout().is_terminal()),
+                        ),
+                    ),
                 ],
             );
         }
@@ -503,6 +555,14 @@ pub fn up(ctx: &Ctx, args: &[String], capture: bool) -> R<Option<String>> {
         connect(ctx, &name, user)?;
     }
     Ok(None)
+}
+
+fn workflow_link(url: &str, terminal: bool) -> String {
+    if terminal {
+        format!("\x1b]8;;{url}\x1b\\GitHub workflow\x1b]8;;\x1b\\")
+    } else {
+        url.to_owned()
+    }
 }
 
 fn ssh_hint(ctx: &Ctx, name: &str) -> String {

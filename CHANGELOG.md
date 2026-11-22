@@ -6,6 +6,9 @@ The Rust client and controller replace the original Bash client.
 
 ### GitHub Actions
 
+- Show GitHub queue and SSH startup progress with a clickable workflow link,
+  report workflow failures, and retry brief controller interruptions.
+
 - List `gh-aarch64` and `gh-x86_64` with the `github-actions` tag and show the
   standard worker summary when a GitHub lease is ready.
 

@@ -1,8 +1,15 @@
 //! GitHub Actions operations for workers in the configured repository.
 
+use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
 const WORKFLOW: &str = "rworker-job.yaml";
+
+#[derive(Deserialize, PartialEq, Serialize)]
+pub(super) struct RunStatus {
+    pub(super) status: String,
+    pub(super) conclusion: Option<String>,
+}
 
 pub(super) struct GitHub<'a> {
     repository: &'a str,
@@ -47,12 +54,9 @@ impl<'a> GitHub<'a> {
             .ok_or_else(|| "GitHub dispatch did not return a workflow run ID".into())
     }
 
-    pub(super) fn completed(&self, run_id: u64) -> Result<bool, String> {
-        let result = self.request("GET", &format!("/actions/runs/{run_id}"), None)?;
-        result["status"]
-            .as_str()
-            .map(|status| status == "completed")
-            .ok_or_else(|| "GitHub run did not return a status".into())
+    pub(super) fn status(&self, run_id: u64) -> Result<RunStatus, String> {
+        serde_json::from_value(self.request("GET", &format!("/actions/runs/{run_id}"), None)?)
+            .map_err(|_| "Invalid GitHub workflow run status".into())
     }
 
     pub(super) fn cancel(&self, run_id: u64) -> Result<(), String> {

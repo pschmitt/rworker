@@ -11,7 +11,7 @@ use base64::{Engine, engine::general_purpose::STANDARD};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
-use super::github::GitHub;
+use super::github::{GitHub, RunStatus};
 
 const MAX_LEASE_SECONDS: u64 = 7200;
 
@@ -39,6 +39,8 @@ struct Lease {
     topic: String,
     #[serde(default)]
     archive_logs: bool,
+    #[serde(default)]
+    workflow: Option<RunStatus>,
 }
 
 #[derive(Deserialize, Serialize)]
@@ -104,6 +106,7 @@ pub(super) fn run(settings: &Value, action: &str, args: &[String]) -> Result<Val
                     owner: owner.into(),
                     topic: topic.into(),
                     archive_logs: settings["logCollectorOperator"].is_string(),
+                    workflow: None,
                 },
             )
         }
@@ -401,14 +404,28 @@ fn reconcile(
         return Ok(());
     }
     let run_id = lease.run_id.ok_or("GitHub workflow run ID is unknown")?;
-    if github.completed(run_id)? {
+    let workflow = github.status(run_id);
+    if !cancel && now() < lease.expires_at && workflow.is_err() {
+        return workflow.map(|_| ());
+    }
+    let changed = match workflow {
+        Ok(workflow) if lease.workflow.as_ref() != Some(&workflow) => {
+            lease.workflow = Some(workflow);
+            true
+        }
+        _ => false,
+    };
+    if lease
+        .workflow
+        .as_ref()
+        .is_some_and(|workflow| workflow.status == "completed")
+    {
         lease.state = LeaseState::Ended;
     } else if cancel || now() >= lease.expires_at {
         lease.state = LeaseState::Cancelling;
         write_lease(dir, lease).map_err(|error| error.to_string())?;
-        github.cancel(run_id)?;
-        return Ok(());
-    } else {
+        return github.cancel(run_id);
+    } else if !changed {
         return Ok(());
     }
     write_lease(dir, lease).map_err(|error| error.to_string())

@@ -39,10 +39,13 @@ pub fn control_ssh_cmd<S: AsRef<str>>(ctx: &Ctx, args: &[S]) -> Command {
     let _ = fs::create_dir_all(&ctx.state_dir);
     let mut cmd = Command::new("ssh");
     cmd.args(["-q", "-o", "BatchMode=yes"]);
-    if args
-        .first()
-        .is_some_and(|action| action.as_ref().starts_with("__cached-"))
-    {
+    if args.first().is_some_and(|action| {
+        action.as_ref().starts_with("__cached-")
+            || matches!(
+                action.as_ref(),
+                "github-up" | "github-status" | "github-down"
+            )
+    }) {
         cmd.args([
             "-o",
             "ConnectTimeout=5",
