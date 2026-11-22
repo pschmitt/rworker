@@ -136,7 +136,7 @@ impl App {
             Constraint::Length(1),
         ])
         .areas(f.area());
-        let plain = matches!(self.stack.last(), Some(Sub::Text(v)) if v.plain);
+        let plain = self.plain;
         let body = if plain {
             f.area()
         } else {
@@ -155,7 +155,7 @@ impl App {
             }
             Some(Sub::Text(v)) => {
                 self.mouse_text = Some(body);
-                draw_text(f, body, v, self.tick);
+                draw_text(f, body, v, self.tick, plain);
             }
         }
         self.stack = stack;
@@ -329,6 +329,7 @@ impl App {
                 ("e", "extend"),
                 ("d", "down"),
                 ("c", "new"),
+                ("n", "plain view"),
                 ("/", "filter"),
                 ("?", "help"),
             ]),
@@ -345,7 +346,8 @@ impl App {
                 ("⏎", "job log"),
                 ("l", "all logs"),
                 ("p", "ps"),
-                ("n", "start job"),
+                ("c", "start job"),
+                ("n", "plain view"),
                 ("s", "ssh"),
                 ("r", "reload"),
                 ("esc", "back"),
@@ -554,8 +556,8 @@ impl App {
         if let Some((worker, preview)) = &mut self.preview
             && Some(worker.as_str()) == selected.as_deref()
         {
-            draw_text(f, area, preview, self.tick);
-        } else {
+            draw_text(f, area, preview, self.tick, self.plain);
+        } else if !self.plain {
             f.render_widget(
                 Paragraph::new("Connecting to logs…").block(Block::bordered().title(" logs ")),
                 area,
@@ -599,7 +601,7 @@ impl App {
         let right = vec![
             section("Jobs"),
             row("⏎", "follow the job's log"),
-            row("n", "start a job"),
+            row("c", "start a job"),
             row("l  p  s", "all logs · ps · ssh"),
             row("r", "reload"),
             Line::default(),
@@ -711,8 +713,8 @@ fn draw_jobs(f: &mut Frame, area: Rect, j: &mut Jobs) {
     f.render_stateful_widget(table, area, &mut j.state);
 }
 
-fn draw_text(f: &mut Frame, area: Rect, v: &mut TextView, tick: u64) {
-    let inner = if v.plain {
+fn draw_text(f: &mut Frame, area: Rect, v: &mut TextView, tick: u64, plain: bool) {
+    let inner = if plain {
         area
     } else {
         let mut title = vec![Span::styled(format!(" {} ", v.title), Style::new().bold())];
@@ -765,7 +767,7 @@ fn draw_text(f: &mut Frame, area: Rect, v: &mut TextView, tick: u64) {
         .iter()
         .map(|(line, err)| {
             let line = match &v.trim {
-                Some((re, rep)) if !v.plain => re.replace(line, *rep),
+                Some((re, rep)) if !plain => re.replace(line, *rep),
                 _ => std::borrow::Cow::Borrowed(line.as_str()),
             };
             (line, *err)
@@ -773,7 +775,7 @@ fn draw_text(f: &mut Frame, area: Rect, v: &mut TextView, tick: u64) {
         .filter(|(l, _)| needle.is_empty() || ansi::strip(l).to_lowercase().contains(&needle))
         .collect();
     if shown.is_empty() {
-        if v.plain {
+        if plain {
             return;
         }
         let msg = if v.no_jobs && v.filter.is_empty() {

@@ -6,6 +6,8 @@ The Rust client and controller replace the original Bash client.
 
 ### TUI
 
+- Toggle chrome in every TUI view with `n` and start a job with `c`.
+
 - Use `c` to create a worker and `C` to claim one.
 
 - Press `n` in logs or other text views to show command output without TUI chrome.

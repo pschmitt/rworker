@@ -159,7 +159,6 @@ pub struct TextView {
     pub follow: bool,
     pub top: usize,
     pub wrap: bool,
-    pub plain: bool,
     pub filter: String,
     pub no_jobs: bool,
     jobs_loading: bool,
@@ -262,6 +261,7 @@ pub struct App {
     pub prompt: Option<Prompt>,
     pub confirm: Option<Confirm>,
     pub help: bool,
+    pub plain: bool,
     pub flash: Option<Flash>,
     pub tick: u64,
     pending: HashMap<u64, Pending>,
@@ -371,7 +371,6 @@ impl App {
             follow: true,
             top: 0,
             wrap: false,
-            plain: false,
             filter: String::new(),
             no_jobs: false,
             jobs_loading: false,
@@ -823,6 +822,10 @@ impl App {
             return;
         }
         match k.code {
+            KeyCode::Char('n') if k.modifiers.is_empty() => {
+                self.plain = !self.plain;
+                return;
+            }
             KeyCode::Char('?') => {
                 self.help = true;
                 return;
@@ -1136,7 +1139,7 @@ impl App {
                     vec!["ps".into(), worker, "--long".into()],
                 );
             }
-            KeyCode::Char('n') if worker.is_some() => self.ask(
+            KeyCode::Char('c') if worker.is_some() => self.ask(
                 PromptKind::Start(worker.unwrap_or_default()),
                 "start job: command",
                 "",
@@ -1187,7 +1190,6 @@ impl App {
                 }
             }
             KeyCode::Char('w') => v.wrap = !v.wrap,
-            KeyCode::Char('n') => v.plain = !v.plain,
             KeyCode::Char('c') => {
                 v.lines.clear();
                 v.top = 0;
@@ -1520,6 +1522,7 @@ pub fn run(ctx: &Ctx, interval: Duration) -> std::io::Result<()> {
         prompt: None,
         confirm: None,
         help: false,
+        plain: false,
         flash: None,
         tick: 0,
         pending: HashMap::new(),
