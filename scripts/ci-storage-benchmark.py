@@ -1,5 +1,6 @@
 """Run the same workloads inside either CI lease runtime over SSH."""
 
+from hashlib import sha256
 from pathlib import Path
 from statistics import median
 from time import monotonic
@@ -40,17 +41,25 @@ def benchmark_nix(revision):
         name = "rworker-bench-data";
         system = currentSystem;
         builder = "/bin/sh";
-        args = [ "-c" "dd if=/dev/zero of=$out bs=1M count=64 status=none" ];
+        args = [ "-c" "/bin/dd if=/dev/zero of=$out bs=1M count=64 status=none" ];
       };
     in derivation {
       name = "rworker-bench-readback";
       system = currentSystem;
       builder = "/bin/sh";
-      args = [ "-c" "sha256sum < ${data} > $out" ];
+      args = [ "-c" "/bin/sha256sum < ${data} > $out" ];
     }
     """
     nix = ["nix", "build", "--impure", "--no-link", "--print-out-paths"]
-    elapsed = timed([*nix, "--offline", "--expr", expression])
+    started = monotonic()
+    output = subprocess.check_output([*nix, "--offline", "--expr", expression], text=True)
+    elapsed = monotonic() - started
+    digest = sha256()
+    block = bytes(1024**2)
+    for _ in range(64):
+        digest.update(block)
+    if Path(output.strip()).read_text().split()[0] != digest.hexdigest():
+        raise RuntimeError("Nix build output checksum mismatch")
     print(f"rworker benchmark local_nix_s={elapsed:.3f}", flush=True)
     elapsed = timed([*nix, "--rebuild", f"github:NixOS/nixpkgs/{revision}#hello"])
     print(f"rworker benchmark hello_source_s={elapsed:.3f}", flush=True)
