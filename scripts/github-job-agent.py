@@ -379,6 +379,12 @@ def encrypted_build_storage(profile):
 
 
 def check_runtime(profile):
+    benchmark = os.getenv("RWORKER_RUNTIME_BENCHMARK", "off")
+    if benchmark not in {"off", "luks", "plain"}:
+        raise ValueError("Unknown runtime benchmark mode")
+    if benchmark != "off":
+        os.environ["RWORKER_UNENCRYPTED_PROFILES"] = profile if benchmark == "plain" else ""
+    started = time.monotonic()
     status = Path("/proc/self/status").read_text().splitlines()
     capabilities = next(line.split()[1] for line in status if line.startswith("CapEff:"))
     print(f"Storage probe CAP_SYS_ADMIN: {bool(int(capabilities, 16) & (1 << 21))}", flush=True)
@@ -395,6 +401,9 @@ def check_runtime(profile):
         check=False,
     )
     with build_environment(profile) as capabilities, tempfile.TemporaryDirectory(dir="/tmp") as directory:
+        if benchmark != "off":
+            elapsed = time.monotonic() - started
+            print(f"rworker benchmark {profile} {benchmark} setup_s={elapsed:.3f}", flush=True)
         print(f"rworker runtime KVM: {'kvm' in capabilities}", flush=True)
         if encryption_enabled(profile):
             for mount in (pwd.getpwnam(BUILD_USER).pw_dir, "/tmp", "/var/tmp", "/nix"):
@@ -436,6 +445,14 @@ def check_runtime(profile):
                     raise RuntimeError("Runtime SSH user mismatch")
                 if Path(output[1]).read_text().strip() != "ready":
                     raise RuntimeError("Runtime Nix build produced unexpected output")
+                if benchmark != "off":
+                    lock = json.loads(Path("flake.lock").read_text())
+                    revision = lock["nodes"]["nixpkgs"]["locked"]["rev"]
+                    script = Path(__file__).with_name("ci-storage-benchmark.py")
+                    subprocess.run(
+                        [*ssh, f"python3 - {shlex.quote(revision)}"],
+                        input=script.read_bytes(), check=True, timeout=900,
+                    )
                 if os.getenv("RWORKER_CHECK_HTTPS") == "1":
                     subprocess.run([
                         *ssh,

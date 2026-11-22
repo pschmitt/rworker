@@ -1,5 +1,9 @@
 spec:
   inputs:
+    benchmark:
+      description: Storage benchmark mode for an empty assignment
+      default: 'off'
+      options: ['off', luks, plain]
     job_id:
       description: Controller assignment ID (empty runs a local runtime check)
       default: ''
@@ -33,6 +37,7 @@ rworker-lease:
       aud: rworker-job
   variables:
     RWORKER_JOB_ID: $[[ inputs.job_id ]]
+    RWORKER_RUNTIME_BENCHMARK: $[[ inputs.benchmark ]]
   script:
     - test "$(uname -m)" = x86_64
     - test "$(id -u)" = 0

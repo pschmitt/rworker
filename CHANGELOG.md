@@ -4,6 +4,8 @@
 
 The Rust client and controller replace the original Bash client.
 
+- Add a no-lease CI benchmark for encrypted and unencrypted storage and Nix builds.
+
 - Encrypt GitHub Actions and GitLab CI lease storage by default with a disposable LUKS2 key.
 
 - Report storage device access and filesystem types in GitLab runtime checks.

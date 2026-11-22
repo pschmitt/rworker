@@ -4,6 +4,11 @@ run-name: rworker job ${{ inputs.job_id }}
 on:
   workflow_dispatch:
     inputs:
+      benchmark:
+        description: Storage benchmark mode for an empty assignment
+        type: choice
+        default: 'off'
+        options: ['off', luks, plain]
       job_id:
         description: Controller assignment ID (empty runs a local runtime check)
         required: false
@@ -38,6 +43,7 @@ jobs:
           RWORKER_GATEWAY_KNOWN_HOSTS: ${{ vars.RWORKER_GATEWAY_KNOWN_HOSTS }}
           RWORKER_GATEWAY_KEY: ${{ secrets.RWORKER_GATEWAY_KEY }}
           RWORKER_PROFILE: ${{ inputs.profile }}
+          RWORKER_RUNTIME_BENCHMARK: ${{ inputs.benchmark }}
           RWORKER_UNENCRYPTED_PROFILES: ${{ vars.RWORKER_UNENCRYPTED_PROFILES }}
         run: |
           if ! command -v cryptsetup >/dev/null
