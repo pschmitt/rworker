@@ -22,7 +22,15 @@
         <a href="#events" data-view="events"><span aria-hidden="true">◇</span>Events</a>
         <a href="#profiles" data-view="profiles"><span aria-hidden="true">⊞</span>Profiles</a>
       </nav>
-      <div class="session-status"><span class="signal" id="signal"></span><span id="connection" role="status">Locked</span><button type="button" id="lock" title="Lock console" hidden>Lock</button><a id="sign-out" hidden>Sign out</a></div>
+      <div class="session-status">
+        <span class="signal" id="signal"></span>
+        <span id="connection" role="status">Locked</span>
+        <button type="button" id="lock" title="Lock console" hidden>Lock</button>
+        <a id="sign-out" hidden>
+          <svg class="action-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M11 4H5v16h6m-2-8h11m-4-4 4 4-4 4"/></svg>
+          <span>Sign out</span>
+        </a>
+      </div>
     </header>
     <main id="main">
       <header class="page-head">

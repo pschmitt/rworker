@@ -225,7 +225,8 @@ dialog footer { justify-content: end; border-top: 1px solid var(--line); }
 .event-tone.bad { color: var(--red); }
 .event-tone.busy { color: var(--amber); }
 .event-tone.info { color: var(--cyan); }
-.session-status #sign-out { margin-left: auto; color: inherit; white-space: nowrap; }
+.session-status #sign-out { display: inline-flex; align-items: center; gap: 5px; margin-left: auto; color: inherit; white-space: nowrap; }
+.session-status #sign-out .action-icon { width: 14px; height: 14px; }
 
 
 .worker-expiry.urgent { color: var(--red); }
