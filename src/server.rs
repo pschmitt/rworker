@@ -219,7 +219,11 @@ pub fn run(ctx: &crate::ctx::Ctx, args: &[String]) -> R {
                     if let Some(name) = rest.get(1) {
                         rows.retain(|row| row["name"] == name.as_str());
                     }
-                    add_profile_images(&settings, &mut rows);
+                    if let Some(dir) = &cache {
+                        inventory_cache::add_cached_profile_images(dir, &settings, &mut rows);
+                    } else {
+                        add_profile_images(&settings, &mut rows);
+                    }
                 }
                 Value::Array(rows)
             }

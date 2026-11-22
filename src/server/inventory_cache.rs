@@ -10,6 +10,9 @@ use serde_json::{Value, json};
 const REFRESH_INTERVAL: Duration = Duration::from_secs(5);
 const MAX_AGE: Duration = Duration::from_secs(30);
 const READ_TIMEOUT: Duration = Duration::from_secs(12);
+const PROFILE_IMAGE_REFRESH: Duration = Duration::from_secs(300);
+const PROFILE_IMAGE_CACHE: &str = "profile-images.json";
+const IMAGE_FIELDS: [&str; 4] = ["image_name", "image_id", "image_created_at", "image_status"];
 
 pub(super) fn directory() -> Option<PathBuf> {
     std::env::var_os("RWORKER_INVENTORY_DIRECTORY").map(PathBuf::from)
@@ -40,6 +43,70 @@ fn profile_has_resources(row: &Value) -> bool {
         "ram_mib"
     };
     row["vcpus"].as_u64().is_some() && row[ram_field].as_u64().is_some()
+}
+
+fn profile_image_rules(profile: &Value) -> Value {
+    json!([profile["imageTags"], profile["imageNamePattern"]])
+}
+
+fn read_profile_images(dir: &Path) -> Value {
+    File::open(dir.join(PROFILE_IMAGE_CACHE))
+        .ok()
+        .and_then(|file| serde_json::from_reader(BufReader::new(file)).ok())
+        .unwrap_or(Value::Null)
+}
+
+pub(super) fn add_cached_profile_images(dir: &Path, settings: &Value, rows: &mut [Value]) {
+    let cached = read_profile_images(dir);
+    for row in rows {
+        if row["provider"] == "github" {
+            continue;
+        }
+        let Some(name) = row["name"].as_str() else {
+            continue;
+        };
+        let image = &cached[name];
+        if image["rules"] == profile_image_rules(&settings["profiles"][name]) {
+            for field in IMAGE_FIELDS {
+                if let Some(value) = image.get(field) {
+                    row[field] = value.clone();
+                }
+            }
+        } else {
+            row["image_status"] = json!("Image details pending");
+        }
+    }
+}
+
+fn refresh_profile_images(config: &str, dir: &Path) -> io::Result<()> {
+    let settings: Value = serde_json::from_reader(BufReader::new(File::open(config)?))?;
+    let mut rows: Vec<_> = settings["profiles"]
+        .as_object()
+        .into_iter()
+        .flat_map(|profiles| profiles.keys())
+        .map(|name| json!({ "name": name }))
+        .collect();
+    super::add_profile_images(&settings, &mut rows);
+
+    let previous = read_profile_images(dir);
+    let mut snapshot = serde_json::Map::new();
+    for mut row in rows {
+        let Some(name) = row["name"].take().as_str().map(str::to_owned) else {
+            continue;
+        };
+        let rules = profile_image_rules(&settings["profiles"][&name]);
+        let old = &previous[&name];
+        let value = if row["image_status"] == "Image lookup unavailable" && old["rules"] == rules {
+            old.clone()
+        } else {
+            row["rules"] = rules;
+            row
+        };
+        snapshot.insert(name, value);
+    }
+    replace(dir, PROFILE_IMAGE_CACHE, |file| {
+        serde_json::to_writer(file, &snapshot).map_err(io::Error::other)
+    })
 }
 
 fn generation(dir: &Path, marker: &str) -> io::Result<String> {
@@ -169,6 +236,16 @@ pub(super) fn list(dir: &Path, fresh: bool) -> Result<Value, String> {
 }
 
 pub(super) fn refresh_forever(config: &str, dir: &Path) -> Result<(), Box<dyn std::error::Error>> {
+    let image_config = config.to_owned();
+    let image_dir = dir.to_owned();
+    thread::spawn(move || {
+        loop {
+            if let Err(error) = refresh_profile_images(&image_config, &image_dir) {
+                eprintln!("Refresh profile images: {error}");
+            }
+            thread::sleep(PROFILE_IMAGE_REFRESH);
+        }
+    });
     let profile_config = config.to_owned();
     let profile_dir = dir.to_owned();
     thread::spawn(move || {
@@ -254,6 +331,38 @@ mod tests {
             br#"[{"name":"standard","vcpus":4}]"#,
         )?;
         assert_eq!(read_profiles(&dir).unwrap()[0]["vcpus"], 4);
+        fs::remove_dir_all(dir)
+    }
+
+    #[test]
+    fn profile_image_snapshot_respects_current_selection_rules() -> io::Result<()> {
+        let dir =
+            std::env::temp_dir().join(format!("rworker-profile-images-{}", std::process::id()));
+        fs::create_dir(&dir)?;
+        let settings = json!({
+            "profiles": {
+                "standard": {"imageTags": ["rworker"]},
+                "changed": {"imageTags": ["new-tag"]},
+            }
+        });
+        let snapshot = json!({
+            "standard": {"rules": [["rworker"], null], "image_id": "chosen"},
+            "changed": {"rules": [["old-tag"], null], "image_id": "previous"},
+        });
+        replace(&dir, PROFILE_IMAGE_CACHE, |file| {
+            serde_json::to_writer(file, &snapshot).map_err(io::Error::other)
+        })?;
+        let mut rows = [
+            json!({"name": "standard"}),
+            json!({"name": "changed"}),
+            json!({"name": "gh-aarch64", "provider": "github"}),
+        ];
+        add_cached_profile_images(&dir, &settings, &mut rows);
+        assert_eq!(rows[0]["image_id"], "chosen");
+        assert!(rows[0]["rules"].is_null());
+        assert!(rows[1]["image_id"].is_null());
+        assert_eq!(rows[1]["image_status"], "Image details pending");
+        assert!(rows[2]["image_status"].is_null());
         fs::remove_dir_all(dir)
     }
 
