@@ -151,9 +151,15 @@ pub struct Jobs {
     pub error: Option<String>,
 }
 
+pub struct Profiles {
+    pub rows: Vec<Value>,
+    pub state: TableState,
+    request: u64,
+    pub error: Option<String>,
+}
+
 pub struct TextView {
     pub title: String,
-    pub(super) profiles: bool,
     pub worker: Option<String>,
     pub id: u64,
     pub lines: VecDeque<(String, bool)>,
@@ -187,6 +193,7 @@ impl TextView {
 
 pub enum Sub {
     Jobs(Jobs),
+    Profiles(Profiles),
     Text(TextView),
 }
 
@@ -223,6 +230,7 @@ enum Pending {
         deleting: Option<String>,
     },
     JobList,
+    ProfileList,
     History,
     Profiles,
     ProvisionSsh {
@@ -402,7 +410,6 @@ impl App {
     fn text_stream(&mut self, title: impl Into<String>, args: Vec<String>) -> TextView {
         let id = self.id();
         let mut view = TextView {
-            profiles: args == ["profiles"],
             title: title.into(),
             worker: (args.first().is_some_and(|arg| arg == "logs"))
                 .then(|| args.get(1).filter(|arg| !arg.starts_with('-')).cloned())
@@ -437,7 +444,17 @@ impl App {
         match view {
             View::Workers => {}
             View::Jobs => self.open_jobs(None),
-            View::Profiles => self.open_text("profiles", s(&["profiles"])),
+            View::Profiles => {
+                let id = self.id();
+                self.stack.push(Sub::Profiles(Profiles {
+                    rows: Vec::new(),
+                    state: TableState::default(),
+                    request: id,
+                    error: None,
+                }));
+                self.pending.insert(id, Pending::ProfileList);
+                proc::action(id, s(&["profiles", "--json"]), self.tx.clone());
+            }
             View::Events => self.open_text("events", s(&["events", "--watch"])),
             View::Logs => self.open_text("logs · all workers", s(&["logs", "--follow"])),
         }
@@ -561,7 +578,7 @@ impl App {
             .iter_mut()
             .filter_map(|sub| match sub {
                 Sub::Text(view) => Some(view),
-                Sub::Jobs(_) => None,
+                Sub::Jobs(_) | Sub::Profiles(_) => None,
             })
             .chain(self.preview.as_mut().map(|(_, view)| view))
             .find(|view| view.id == id)
@@ -620,7 +637,7 @@ impl App {
             let view = match self.stack.last_mut() {
                 Some(Sub::Text(view)) => Some(view),
                 None => self.preview.as_mut().map(|(_, view)| view),
-                Some(Sub::Jobs(_)) => None,
+                Some(Sub::Jobs(_) | Sub::Profiles(_)) => None,
             };
             if delta != 0
                 && let Some(view) = view
@@ -632,6 +649,7 @@ impl App {
             let worker_count = self.visible().len();
             let (state, count) = match self.stack.last_mut() {
                 Some(Sub::Jobs(jobs)) => (&mut jobs.state, jobs.rows.len()),
+                Some(Sub::Profiles(profiles)) => (&mut profiles.state, profiles.rows.len()),
                 None => (&mut self.table, worker_count),
                 Some(Sub::Text(_)) => return,
             };
@@ -823,6 +841,27 @@ impl App {
                         _ => {}
                     }
                 }
+                Some(Pending::ProfileList) => {
+                    if let Some(Sub::Profiles(profiles)) = self.stack.last_mut()
+                        && profiles.request == id
+                    {
+                        match serde_json::from_str::<Vec<Value>>(&out) {
+                            Ok(rows) if ok && !rows.is_empty() => {
+                                profiles.state.select(Some(0));
+                                profiles.rows = rows;
+                            }
+                            Ok(_) if ok => profiles.error = Some("No profiles available".into()),
+                            _ => {
+                                let reason = proc::last_line(&err);
+                                profiles.error = Some(if reason.is_empty() {
+                                    "Could not list profiles".into()
+                                } else {
+                                    reason
+                                });
+                            }
+                        }
+                    }
+                }
                 Some(Pending::JobList) => {
                     let mut single = None;
                     for sub in &mut self.stack {
@@ -1001,6 +1040,7 @@ impl App {
         match self.stack.last() {
             None => self.workers_key(k),
             Some(Sub::Jobs(_)) => self.jobs_key(k),
+            Some(Sub::Profiles(_)) => self.profiles_key(k),
             Some(Sub::Text(_)) => self.text_key(k),
         }
     }
@@ -1307,6 +1347,44 @@ impl App {
         }
     }
 
+    fn profiles_key(&mut self, k: KeyEvent) {
+        let Some(Sub::Profiles(profiles)) = self.stack.last_mut() else {
+            return;
+        };
+        let selected = profiles.state.selected().unwrap_or(0);
+        let count = profiles.rows.len();
+        match k.code {
+            KeyCode::Esc | KeyCode::Char('q' | 'h') | KeyCode::Backspace => {
+                self.stack.pop();
+            }
+            KeyCode::Down | KeyCode::Char('j') if count > 0 => {
+                profiles.state.select(Some((selected + 1).min(count - 1)));
+            }
+            KeyCode::Up | KeyCode::Char('k') if count > 0 => {
+                profiles.state.select(Some(selected.saturating_sub(1)));
+            }
+            KeyCode::Home | KeyCode::Char('g') if count > 0 => profiles.state.select(Some(0)),
+            KeyCode::End | KeyCode::Char('G') if count > 0 => {
+                profiles.state.select(Some(count - 1))
+            }
+            KeyCode::Enter | KeyCode::Char('i') => {
+                if let Some(name) = profiles
+                    .rows
+                    .get(selected)
+                    .and_then(|row| row["name"].as_str())
+                {
+                    let title = format!("profile · {name}");
+                    let args = s(&["profiles", name]);
+                    let mut details = self.text_stream(title, args);
+                    details.wrap = true;
+                    details.follow = false;
+                    self.stack.push(Sub::Text(details));
+                }
+            }
+            _ => {}
+        }
+    }
+
     fn text_key(&mut self, k: KeyEvent) {
         let Some(Sub::Text(v)) = self.stack.last_mut() else {
             return;
@@ -1322,13 +1400,6 @@ impl App {
             v.top = v.top.saturating_sub(by);
         };
         match k.code {
-            KeyCode::Char('i') | KeyCode::Enter if v.profiles => {
-                let mut details =
-                    self.text_stream("profile details", s(&["profiles", "-o", "wide"]));
-                details.wrap = true;
-                details.follow = false;
-                self.stack.push(Sub::Text(details));
-            }
             KeyCode::Esc | KeyCode::Char('q') | KeyCode::Backspace | KeyCode::Char('h') => {
                 if k.code == KeyCode::Esc && !v.filter.is_empty() {
                     v.filter.clear();

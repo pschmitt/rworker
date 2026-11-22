@@ -1,7 +1,7 @@
 //! Drawing for the current view, status line, and modal overlays.
 
 use super::ansi;
-use super::app::{App, Jobs, LogDivider, Sub, TextView, Urgency};
+use super::app::{App, Jobs, LogDivider, Profiles, Sub, TextView, Urgency};
 use super::create::{CreateWorker, Field};
 use crate::{
     paint,
@@ -218,6 +218,10 @@ impl App {
             Some(Sub::Jobs(j)) => {
                 self.mouse_table = Some(borderless_rows(body));
                 draw_jobs(f, body, j);
+            }
+            Some(Sub::Profiles(profiles)) => {
+                self.mouse_table = Some(borderless_rows(body));
+                draw_profiles(f, body, profiles, self.icons);
             }
             Some(Sub::Text(v)) => {
                 self.mouse_text = Some(body);
@@ -651,6 +655,16 @@ impl App {
                         ("Click / wheel", "Select jobs"),
                     ],
                 ),
+                Some(Sub::Profiles(_)) => (
+                    "Profiles",
+                    vec![
+                        ("↑ / ↓ or k / j", "Select a profile"),
+                        ("Home / End or g / G", "First / last profile"),
+                        ("Enter / i", "Details for the selected profile"),
+                        ("Esc / q / Backspace / h", "Back"),
+                        ("Click / wheel", "Select profiles"),
+                    ],
+                ),
                 Some(Sub::Text(view)) => {
                     let mut keys = vec![
                         ("↑ / ↓ or k / j", "Scroll by a line"),
@@ -668,17 +682,7 @@ impl App {
                     if view.worker.is_some() {
                         keys.push(("J", "Jobs for this worker"));
                     }
-                    if view.profiles {
-                        keys.push(("Enter / i", "Open profile details"));
-                    }
-                    (
-                        if view.profiles {
-                            "Profiles"
-                        } else {
-                            "Logs and output"
-                        },
-                        keys,
-                    )
+                    ("Logs and output", keys)
                 }
             }
         };
@@ -730,6 +734,78 @@ fn borderless_rows(area: Rect) -> Rect {
         height: area.height.saturating_sub(1),
         ..area
     }
+}
+
+fn draw_profiles(f: &mut Frame, area: Rect, profiles: &mut Profiles, icons: bool) {
+    if profiles.rows.is_empty() {
+        let message = profiles.error.as_deref().unwrap_or("Loading profiles…");
+        f.render_widget(Paragraph::new(Line::styled(message, dim())), area);
+        return;
+    }
+    let show_flavor = area.width >= 67;
+    let show_tags = area.width >= 90;
+    let mut header = vec!["PROFILE", "VCPU", "RAM (GB)", "DISK (GB)"];
+    let mut widths = vec![
+        Constraint::Fill(1),
+        Constraint::Length(4),
+        Constraint::Length(8),
+        Constraint::Length(9),
+    ];
+    if show_flavor {
+        header.push("FLAVOR / RUNNER");
+        widths.push(Constraint::Length(20));
+    }
+    if show_tags {
+        header.push("IMAGE TAGS");
+        widths.push(Constraint::Length(24));
+    }
+    let rows = profiles.rows.iter().map(|profile| {
+        let name = profile["name"].as_str().unwrap_or("-");
+        let mut label = Line::default();
+        if icons {
+            label.push_span(crate::pool_icon::profile_glyph(profile));
+            label.push_span(" ");
+        }
+        label.push_span(Span::styled(name, Style::new().fg(ACCENT)));
+        if profile["default"] == true {
+            label.push_span(Span::styled("*", Style::new().fg(Color::Green)));
+        }
+        let [ram, disk] = crate::table::profile_sizes(profile);
+        let vcpus = profile["vcpus"]
+            .as_u64()
+            .map_or_else(|| "-".into(), |n| n.to_string());
+        let mut cells = vec![
+            Cell::from(label),
+            Cell::from(vcpus),
+            Cell::from(ram),
+            Cell::from(disk),
+        ];
+        if show_flavor {
+            cells.push(Cell::from(profile["flavor"].as_str().unwrap_or("-")));
+        }
+        if show_tags {
+            let tags = profile["image_tags"]
+                .as_array()
+                .map(|tags| {
+                    tags.iter()
+                        .filter_map(serde_json::Value::as_str)
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                })
+                .unwrap_or_default();
+            cells.push(Cell::from(tags));
+        }
+        Row::new(cells)
+    });
+    let table = Table::new(rows, widths)
+        .header(Row::new(header).style(Style::new().add_modifier(Modifier::BOLD | Modifier::DIM)))
+        .column_spacing(2)
+        .row_highlight_style(
+            Style::new()
+                .bg(Color::Indexed(236))
+                .add_modifier(Modifier::BOLD),
+        );
+    f.render_stateful_widget(table, area, &mut profiles.state);
 }
 
 fn draw_jobs(f: &mut Frame, area: Rect, j: &mut Jobs) {

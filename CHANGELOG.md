@@ -19,6 +19,8 @@ The Rust client and controller replace the original Bash client.
 
 - Serve profile image details from the controller's background cache.
 
+- Select a profile in the TUI and press Enter to see its details.
+
 - Add `rworker ssh --create --rm` to delete the new worker when SSH exits.
 
 ### GitHub Actions

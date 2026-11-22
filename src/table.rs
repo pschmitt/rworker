@@ -255,6 +255,29 @@ pub fn colorize(table: &str) -> String {
     crate::paint::agents(&lines.join("\n"))
 }
 
+/// Display profile RAM and disk as decimal GB for both providers.
+pub(crate) fn profile_sizes(profile: &Value) -> [String; 2] {
+    let ram = profile["ram_gb"].as_f64().or_else(|| {
+        profile["ram_mib"]
+            .as_f64()
+            .map(|mib| mib * 1_048_576.0 / 1e9)
+    });
+    let disk = profile["disk_total_bytes"]
+        .as_f64()
+        .map(|bytes| bytes / 1e9)
+        .or_else(|| {
+            profile["disk"]
+                .as_f64()
+                .map(|gib| gib * 1_073_741_824.0 / 1e9)
+        });
+    [ram, disk].map(|size| {
+        size.map_or_else(
+            || "-".to_owned(),
+            |gb| format!("{gb:.1}").trim_end_matches(".0").to_owned(),
+        )
+    })
+}
+
 /// Align plain cells before styling them so ANSI escapes never shift columns.
 pub(crate) fn styled_columns(
     ctx: &Ctx,

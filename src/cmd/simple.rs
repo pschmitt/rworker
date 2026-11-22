@@ -267,12 +267,6 @@ pub fn cmd_profiles(ctx: &Ctx, args: &[String]) -> R {
     if wide {
         rows[0].push_str("\tPROVIDER\tIMAGE / RUNNER\tIMAGE ID\tIMAGE CREATED");
     }
-    let format_gb = |size: Option<f64>| {
-        size.map_or_else(
-            || "-".to_owned(),
-            |gb| format!("{gb:.1}").trim_end_matches(".0").to_owned(),
-        )
-    };
     for p in &list {
         let star = if jq::truthy(get(p, "default")) {
             "*"
@@ -283,13 +277,7 @@ pub fn cmd_profiles(ctx: &Ctx, args: &[String]) -> R {
             .as_array()
             .map(|a| a.iter().map(jq::raw).collect())
             .unwrap_or_default();
-        let ram = p["ram_gb"]
-            .as_f64()
-            .or_else(|| p["ram_mib"].as_f64().map(|mib| mib * 1_048_576.0 / 1e9));
-        let disk = p["disk_total_bytes"]
-            .as_f64()
-            .map(|bytes| bytes / 1e9)
-            .or_else(|| p["disk"].as_f64().map(|gib| gib * 1_073_741_824.0 / 1e9));
+        let [ram, disk] = crate::table::profile_sizes(p);
         let name = jq::raw(get(p, "name"));
         let label = if ctx.icons.get() {
             format!("{} {name}{star}", crate::pool_icon::profile_glyph(p))
@@ -304,8 +292,8 @@ pub fn cmd_profiles(ctx: &Ctx, args: &[String]) -> R {
                     .filter(|value| !value.is_null())
                     .map_or_else(|| "-".to_owned(), jq::raw)
             )),
-            format_gb(ram),
-            format_gb(disk),
+            ram,
+            disk,
             jq::tsv(&json!(tags.join(", "))),
         ]
         .join("\t");
