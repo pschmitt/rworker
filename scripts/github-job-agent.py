@@ -124,6 +124,11 @@ def prepare_build_user():
             privileged("usermod", "-aG", "kvm", BUILD_USER),
             check=True,
         )
+
+
+def kvm_capabilities():
+    if not Path("/dev/kvm").is_char_device():
+        return []
     probe = """
 import fcntl
 import os
@@ -173,7 +178,7 @@ def gitlab_nix_daemon():
 
 @contextmanager
 def build_environment(profile):
-    capabilities = prepare_build_user()
+    prepare_build_user()
     with ExitStack() as stack:
         if encryption_enabled(profile):
             stack.enter_context(encrypted_build_storage(profile))
@@ -182,7 +187,7 @@ def build_environment(profile):
                 stack.enter_context(gitlab_nix_daemon())
             else:
                 prepare_gitlab_nix()
-        yield capabilities
+        yield kvm_capabilities()
 
 
 def prepare_sshd(paths, public_key):
