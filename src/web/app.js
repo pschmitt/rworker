@@ -298,10 +298,10 @@ function compareSortValues(left, right, descending) {
 function table(columns, rows, view) {
   const node = element("table");
   const head = node.createTHead().insertRow();
-  for (const [index, [label, optional]] of columns.entries()) {
-    const cell = element("th", view ? null : label, optional ? "optional" : "");
+  for (const [index, [label, optional, sortable = true]] of columns.entries()) {
+    const cell = element("th", view && sortable ? null : label, optional ? "optional" : "");
     cell.scope = "col";
-    if (view) {
+    if (view && sortable) {
       const sort = state.sort[view];
       const active = sort?.index === index;
       const heading = button(label, () => {
@@ -451,6 +451,7 @@ function render() {
       break;
     default:
       columns = [["Profile"], ["vCPUs"], ["RAM"], ["Disk"], ["Flavor", true], ["Image tags", true]];
+      if (state.authenticated) columns.push(["Actions", false, false]);
       rows = visible.map((row) => {
         const tags = (row.image_tags || []).join(", ");
         const profile = named(row.name, row.default ? "Default" : "", () => openProfile(row));
@@ -462,9 +463,13 @@ function render() {
           row.ram_mib % 1024 === 0 ? row.ram_mib / 1024 + " GiB" : row.ram_mib + " MiB";
         const disk = row.disk_total_bytes != null ? `${(row.disk_total_bytes / 2 ** 30).toFixed(1)} GiB` :
           row.disk ? row.disk + " GiB" : "—";
-        return {
-          cells: [profileName, row.vcpus, ram, disk, row.flavor, tags || "—"],
-        };
+        const cells = [profileName, row.vcpus, ram, disk, row.flavor, tags || "—"];
+        if (state.authenticated) {
+          const create = button("+ New worker", () => form("create", null, row.name), "profile-create-action");
+          create.setAttribute("aria-label", `New worker from ${row.name}`);
+          cells.push(create);
+        }
+        return { cells };
       });
   }
   const previous = results.querySelector(`[data-view-table="${state.view}"]`);

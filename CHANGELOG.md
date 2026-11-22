@@ -4,6 +4,8 @@
 
 The Rust client and controller replace the original Bash client.
 
+- Open the new worker form from a profile row in the web console or the TUI.
+
 - Fix HTTPS trust in lease SSH sessions and bundle curl and OpenSSL.
 
 - Refresh the web console font so browsers show the GitLab glyph.

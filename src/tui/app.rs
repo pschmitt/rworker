@@ -264,6 +264,7 @@ pub struct App {
     history_loading: bool,
     pub table: TableState,
     pub mouse_table: Option<Rect>,
+    pub(super) mouse_profile_create: Option<Rect>,
     pub mouse_text: Option<Rect>,
     pub(super) log_divider: Option<LogDivider>,
     pub(super) log_drag: Option<Direction>,
@@ -597,6 +598,14 @@ impl App {
             return;
         }
         let point = Position::new(event.column, event.row);
+        if event.kind == MouseEventKind::Down(MouseButton::Left)
+            && self
+                .mouse_profile_create
+                .is_some_and(|area| area.contains(point))
+        {
+            self.create_from_selected_profile();
+            return;
+        }
         if let Some(divider) = &self.log_divider {
             if event.kind == MouseEventKind::Down(MouseButton::Left)
                 && divider.border.contains(point)
@@ -1347,6 +1356,19 @@ impl App {
         }
     }
 
+    fn create_from_selected_profile(&mut self) {
+        let Some(Sub::Profiles(profiles)) = self.stack.last() else {
+            return;
+        };
+        let selected = profiles.state.selected().unwrap_or(0);
+        if selected < profiles.rows.len() {
+            self.create_worker = Some(CreateWorker::from_profile_rows(
+                profiles.rows.clone(),
+                selected,
+            ));
+        }
+    }
+
     fn profiles_key(&mut self, k: KeyEvent) {
         let Some(Sub::Profiles(profiles)) = self.stack.last_mut() else {
             return;
@@ -1367,6 +1389,7 @@ impl App {
             KeyCode::End | KeyCode::Char('G') if count > 0 => {
                 profiles.state.select(Some(count - 1))
             }
+            KeyCode::Char('c') => self.create_from_selected_profile(),
             KeyCode::Enter | KeyCode::Char('i') => {
                 if let Some(name) = profiles
                     .rows
@@ -1683,6 +1706,7 @@ pub(super) fn run(ctx: &Ctx, interval: Duration, view: View) -> std::io::Result<
         history_loading: false,
         table: TableState::default(),
         mouse_table: None,
+        mouse_profile_create: None,
         mouse_text: None,
         log_divider: None,
         log_drag: None,

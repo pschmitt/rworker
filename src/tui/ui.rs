@@ -228,6 +228,7 @@ impl App {
             Layout::vertical([Constraint::Fill(1), Constraint::Length(u16::from(!plain))])
                 .areas(f.area());
         self.mouse_table = None;
+        self.mouse_profile_create = None;
         self.mouse_text = None;
         self.log_divider = None;
         let mut stack = std::mem::take(&mut self.stack);
@@ -238,8 +239,24 @@ impl App {
                 draw_jobs(f, body, j);
             }
             Some(Sub::Profiles(profiles)) => {
-                self.mouse_table = Some(borderless_rows(body));
-                draw_profiles(f, body, profiles, self.icons);
+                let table = if !profiles.rows.is_empty() && body.height >= 3 {
+                    let [actions, table] =
+                        Layout::vertical([Constraint::Length(1), Constraint::Fill(1)]).areas(body);
+                    let width = actions.width.min(16);
+                    let button =
+                        Rect::new(actions.right().saturating_sub(width), actions.y, width, 1);
+                    self.mouse_profile_create = Some(button);
+                    f.render_widget(
+                        Paragraph::new(" [c] New worker ")
+                            .style(Style::new().fg(Color::Black).bg(ACCENT)),
+                        button,
+                    );
+                    table
+                } else {
+                    body
+                };
+                self.mouse_table = Some(borderless_rows(table));
+                draw_profiles(f, table, profiles, self.icons);
             }
             Some(Sub::Text(v)) => {
                 self.mouse_text = Some(body);
@@ -672,6 +689,7 @@ impl App {
                         ("↑ / ↓ or k / j", "Select a profile"),
                         ("Home / End or g / G", "First / last profile"),
                         ("Enter / i", "Details for the selected profile"),
+                        ("c", "New worker from the selected profile"),
                         ("Esc / q / Backspace / h", "Back"),
                         ("Click / wheel", "Select profiles"),
                     ],

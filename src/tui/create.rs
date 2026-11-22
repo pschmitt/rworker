@@ -129,6 +129,14 @@ impl CreateWorker {
         }
     }
 
+    pub(super) fn from_profile_rows(rows: Vec<Value>, selected: usize) -> Self {
+        let mut form = Self::new(0);
+        form.loading = false;
+        form.profiles = rows;
+        form.profile = selected;
+        form
+    }
+
     pub(super) fn load(&mut self, result: Result<Vec<Value>, String>) {
         self.loading = false;
         match result {
@@ -340,6 +348,27 @@ impl CreateWorker {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn create_from_profiles_keeps_the_selected_profile() {
+        let form = CreateWorker::from_profile_rows(
+            vec![
+                serde_json::json!({"name": "standard", "default": true}),
+                serde_json::json!({"name": "gl-x86_64-lease", "provider": "gitlab"}),
+            ],
+            1,
+        );
+        assert!(!form.loading);
+        assert_eq!(
+            form.submission().unwrap().0,
+            [
+                "up",
+                "--profile",
+                "gl-x86_64-lease",
+                "--quiet-topic-warning"
+            ]
+        );
+    }
 
     #[test]
     fn github_ssh_cleanup_keeps_topic_and_omits_openstack_overrides() {
