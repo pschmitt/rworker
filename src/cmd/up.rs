@@ -204,7 +204,7 @@ fn hosted_up(
     let owner = ctx.owner();
     let forge = profile.forge;
     let action = |command| format!("{}-{command}", forge.key());
-    let raw = state::remote(
+    let raw = state::remote::<&str>(
         ctx,
         &[
             &action("up"),
