@@ -14,6 +14,7 @@ login user, as with ssh (agent by default on a new worker).
 
 Examples:
   __ME__ ssh --create --ttl 4h
+  __ME__ ssh --create --profile gh-aarch64
   __ME__ ssh adhoc-1234abcd
   __ME__ ssh pschmitt@adhoc-1234abcd sudo journalctl -b
   __ME__ ssh --create -l pschmitt
