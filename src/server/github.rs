@@ -59,6 +59,21 @@ impl<'a> GitHub<'a> {
             .map_err(|_| "Invalid GitHub workflow run status".into())
     }
 
+    pub(super) fn job_id(&self, run_id: u64) -> Option<u64> {
+        let response = self
+            .request(
+                "GET",
+                &format!("/actions/runs/{run_id}/attempts/1/jobs"),
+                None,
+            )
+            .ok()?;
+        response["jobs"]
+            .as_array()?
+            .iter()
+            .find(|job| job["name"] == "build")?["id"]
+            .as_u64()
+    }
+
     pub(super) fn cancel(&self, run_id: u64) -> Result<(), String> {
         self.request("POST", &format!("/actions/runs/{run_id}/cancel"), None)?;
         Ok(())

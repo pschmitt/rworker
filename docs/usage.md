@@ -36,6 +36,11 @@ OpenStack workers. [GitLab CI workers](gitlab-ci.md) offer both `gl-x86_64` and
 
 ## Worker names
 
+New GitHub Actions and GitLab CI workers use the same eight-character
+suffix as OpenStack workers. Existing lease names stay valid. Use
+`rworker inspect WORKER` or `rworker ls --json` to see the CI run or
+pipeline ID, job ID, and links when available.
+
 A name may be abbreviated: an exact name wins, then a unique prefix, then a
 unique substring (`rworker ssh 3e19`). An ambiguous fragment lists the
 matches. `USER@NAME` picks the login user; the default is `agent` on ad-hoc

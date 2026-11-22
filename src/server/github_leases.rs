@@ -3,7 +3,7 @@
 use std::fs::{self, DirBuilder, File, OpenOptions};
 use std::io::{self, Read};
 use std::os::fd::AsRawFd;
-use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt};
+use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt, symlink};
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -13,17 +13,21 @@ use serde_json::{Value, json};
 
 use super::github::{GitHub, RunStatus};
 use super::gitlab::GitLab;
-use crate::github_profiles::Forge;
+use crate::github_profiles::{Forge, WORKER_SUFFIX_BYTES, valid_worker_suffix};
 
 const MAX_LEASE_SECONDS: u64 = 7200;
 
 #[derive(Serialize, Deserialize)]
 struct Lease {
     id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    worker_suffix: Option<String>,
     repository: String,
     profile: String,
     expires_at: u64,
     run_id: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    job_id: Option<u64>,
     state: LeaseState,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     token_hash: Option<String>,
@@ -88,6 +92,14 @@ impl Backend<'_> {
             Self::GitHub(api) => api.status(id),
             Self::GitLab(api) => api.status(id),
         }
+    }
+
+    fn job_id(&self, id: u64) -> Option<u64> {
+        match self {
+            Self::GitHub(api) => api.job_id(id),
+            Self::GitLab(api) => api.job_id(id),
+        }
+        .filter(|id| *id != 0)
     }
 
     fn cancel(&self, id: u64) -> Result<(), String> {
@@ -164,16 +176,18 @@ pub(super) fn run(
                 Some(key) => format!("{public_key}\n{key}"),
                 None => public_key.clone(),
             };
-            let mut response = create(
+            let response = create(
                 root,
                 &backend,
                 Lease {
                     id: random_hex::<16>()?,
+                    worker_suffix: None,
                     repository: repository.clone(),
                     profile: profile.into(),
                     created_at: now(),
                     expires_at: now() + ttl,
                     run_id: None,
+                    job_id: None,
                     state: LeaseState::Dispatching,
                     token_hash: None,
                     public_key: keys,
@@ -186,19 +200,10 @@ pub(super) fn run(
                     disk: None,
                 },
             )?;
-            if forge == Forge::GitLab
-                && let Some(run) = response["run_id"].as_u64()
-                && let Some(project) = config["project"].as_str()
-            {
-                response["run_url"] = json!(format!(
-                    "{}/{project}/-/pipelines/{run}",
-                    setting("instance")?
-                ));
-            }
-            Ok(response)
+            Ok(with_provider_links(response, forge, config))
         }
         ("status", [id]) | ("down", [id, _]) => {
-            let dir = lease_dir(root, id)?;
+            let dir = worker_lease_dir(root, id)?;
             let guard = File::open(dir.join("lock")).map_err(|error| error.to_string())?;
             lock(&guard)?;
             let mut lease = read_lease(&dir).map_err(|error| error.to_string())?;
@@ -209,7 +214,7 @@ pub(super) fn run(
                 return Err("Worker lease belongs to a different operator".into());
             }
             reconcile(&dir, &mut lease, &backend, command == "down")?;
-            Ok(public_lease(lease))
+            Ok(with_provider_links(public_lease(lease), forge, config))
         }
         ("reap", []) => {
             for dir in directories(root)? {
@@ -217,8 +222,32 @@ pub(super) fn run(
                     let guard = File::open(dir.join("lock")).map_err(|error| error.to_string())?;
                     lock(&guard)?;
                     let mut lease = read_lease(&dir).map_err(|error| error.to_string())?;
-                    if lease.repository == repository && lease.run_id.is_some() {
+                    if lease.repository == repository
+                        && let Some(run_id) = lease.run_id
+                        && lease.state != LeaseState::Ended
+                    {
+                        let started =
+                            matches!(lease.state, LeaseState::Claimed | LeaseState::Ready);
                         reconcile(&dir, &mut lease, &backend, false)?;
+                        let lookup = lease.job_id.is_none()
+                            && (started
+                                || lease.workflow.as_ref().is_some_and(|workflow| {
+                                    matches!(workflow.status.as_str(), "in_progress" | "completed")
+                                }));
+                        // The provider's jobs API must not hold the lock needed
+                        // by readiness probes, status requests, or heartbeats.
+                        drop(guard);
+                        if lookup && let Some(job_id) = backend.job_id(run_id) {
+                            let guard =
+                                File::open(dir.join("lock")).map_err(|error| error.to_string())?;
+                            lock(&guard)?;
+                            let mut current =
+                                read_lease(&dir).map_err(|error| error.to_string())?;
+                            if current.run_id == Some(run_id) && current.job_id.is_none() {
+                                current.job_id = Some(job_id);
+                                write_lease(&dir, &current).map_err(|error| error.to_string())?;
+                            }
+                        }
                     }
                     Ok::<_, String>(())
                 })();
@@ -245,14 +274,17 @@ pub(super) fn claim(
     let config = &settings[forge.settings_key()];
     let repository = repository(config, forge).ok_or("Missing worker pipeline project")?;
     let root = state_directory(config).ok_or("Missing worker lease state directory")?;
-    let run_id = match forge {
-        Forge::GitHub => super::github_oidc::verify(
-            oidc_token,
-            &repository,
-            config["repositoryId"]
-                .as_str()
-                .ok_or("Missing GitHub repository ID")?,
-        )?,
+    let (run_id, job_id) = match forge {
+        Forge::GitHub => (
+            super::github_oidc::verify(
+                oidc_token,
+                &repository,
+                config["repositoryId"]
+                    .as_str()
+                    .ok_or("Missing GitHub repository ID")?,
+            )?,
+            None,
+        ),
         Forge::GitLab => super::github_oidc::verify_gitlab(oidc_token, config)?,
     };
     let dir = lease_dir(root, id)?;
@@ -279,6 +311,7 @@ pub(super) fn claim(
     let hash = ring::digest::digest(&ring::digest::SHA256, token.as_bytes());
     lease.token_hash = Some(STANDARD.encode(hash.as_ref()));
     lease.state = LeaseState::Claimed;
+    lease.job_id = job_id;
     lease.kvm = kvm;
     lease.disk = disk.filter(|disk| disk.total_bytes != 0);
     write_lease(&dir, &lease).map_err(|error| error.to_string())?;
@@ -308,9 +341,9 @@ fn provider_inventory(settings: &Value, forge: Forge) -> Result<Vec<Value>, Stri
                 && matches!(lease.state, LeaseState::Queued | LeaseState::Claimed | LeaseState::Ready | LeaseState::Cancelling)
         })
         .map(|lease| {
-            let name = format!("{}{}", forge.prefix(), lease.id);
+            let name = format!("{}{}", forge.prefix(), lease.worker_suffix.as_deref().unwrap_or(&lease.id));
             let ready = lease.state == LeaseState::Ready;
-            json!({
+            with_provider_links(json!({
                 "name": name,
                 "ip": ready.then_some(&name),
                 "provider": forge.key(),
@@ -329,7 +362,9 @@ fn provider_inventory(settings: &Value, forge: Forge) -> Result<Vec<Value>, Stri
                 "expires_at": lease.expires_at,
                 "created_at": jiff::Timestamp::from_second(lease.created_at as i64).ok().map(|time| time.to_string()),
                 "kvm": lease.kvm,
-            })
+                "run_id": lease.run_id,
+                "job_id": lease.job_id,
+            }), forge, config)
         })
         .collect())
 }
@@ -462,6 +497,36 @@ fn public_lease(mut lease: Lease) -> Value {
     json!(lease)
 }
 
+fn with_provider_links(mut row: Value, forge: Forge, config: &Value) -> Value {
+    let Some(run) = row["run_id"].as_u64() else {
+        return row;
+    };
+    let job = row["job_id"].as_u64();
+    match forge {
+        Forge::GitHub => {
+            if let Some(repository) = config["repository"].as_str() {
+                let run_url = format!("https://github.com/{repository}/actions/runs/{run}");
+                if let Some(job) = job {
+                    row["job_url"] = json!(format!("{run_url}/job/{job}"));
+                }
+                row["run_url"] = json!(run_url);
+            }
+        }
+        Forge::GitLab => {
+            if let (Some(instance), Some(project)) =
+                (config["instance"].as_str(), config["project"].as_str())
+            {
+                let base = format!("{instance}/{project}/-");
+                row["run_url"] = json!(format!("{base}/pipelines/{run}"));
+                if let Some(job) = job {
+                    row["job_url"] = json!(format!("{base}/jobs/{job}"));
+                }
+            }
+        }
+    }
+    row
+}
+
 fn random_hex<const N: usize>() -> Result<String, String> {
     let mut random = [0u8; N];
     File::open("/dev/urandom")
@@ -480,14 +545,24 @@ fn lock(file: &File) -> Result<(), String> {
 }
 
 fn lease_dir(root: &Path, id: &str) -> Result<PathBuf, String> {
-    if id.len() != 32
-        || !id
-            .bytes()
-            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
-    {
+    if id.len() != 32 || !valid_worker_suffix(id) {
         return Err("Invalid worker lease ID".into());
     }
     Ok(root.join(id))
+}
+
+fn worker_lease_dir(root: &Path, suffix: &str) -> Result<PathBuf, String> {
+    if suffix.len() != WORKER_SUFFIX_BYTES * 2 || !valid_worker_suffix(suffix) {
+        return lease_dir(root, suffix);
+    }
+    let target =
+        fs::read_link(root.join("names").join(suffix)).map_err(|error| error.to_string())?;
+    let id = target
+        .strip_prefix("..")
+        .ok()
+        .and_then(Path::to_str)
+        .ok_or("Invalid worker lease alias")?;
+    lease_dir(root, id)
 }
 
 fn now() -> u64 {
@@ -498,16 +573,35 @@ fn now() -> u64 {
 }
 
 fn create(root: &Path, backend: &Backend<'_>, mut lease: Lease) -> Result<Value, String> {
-    let dir = lease_dir(root, &lease.id)?;
     DirBuilder::new()
         .recursive(true)
         .mode(0o700)
         .create(root)
         .map_err(|error| error.to_string())?;
+    let dir = lease_dir(root, &lease.id)?;
     DirBuilder::new()
         .mode(0o700)
         .create(&dir)
         .map_err(|error| error.to_string())?;
+    let names = root.join("names");
+    DirBuilder::new()
+        .recursive(true)
+        .mode(0o700)
+        .create(&names)
+        .map_err(|error| error.to_string())?;
+    loop {
+        let suffix = random_hex::<WORKER_SUFFIX_BYTES>()?;
+        // A symlink reserves the name atomically and records the assignment
+        // ID without requiring a network lookup or a scan of past leases.
+        match symlink(Path::new("..").join(&lease.id), names.join(&suffix)) {
+            Ok(()) => {
+                lease.worker_suffix = Some(suffix);
+                break;
+            }
+            Err(error) if error.kind() == io::ErrorKind::AlreadyExists => continue,
+            Err(error) => return Err(error.to_string()),
+        }
+    }
     let guard = OpenOptions::new()
         .read(true)
         .write(true)

@@ -4,6 +4,10 @@
 
 The Rust client and controller replace the original Bash client.
 
+- Keep CI run and job identifiers in worker metadata for GitHub and GitLab.
+
+- Use eight-character suffixes for new GitHub and GitLab worker names.
+
 - Label the web profile-row create action “Worker”.
 
 - Use the standard close icon in the web SSH dialog.

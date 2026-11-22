@@ -160,6 +160,8 @@ struct GitLabClaims {
     job_project_id: String,
     job_project_path: String,
     pipeline_id: String,
+    #[serde(default)]
+    job_id: serde_json::Value,
     pipeline_source: String,
     ref_path: String,
     ref_protected: String,
@@ -167,7 +169,10 @@ struct GitLabClaims {
     ci_config_ref_uri: String,
 }
 
-pub(super) fn verify_gitlab(token: &str, config: &serde_json::Value) -> Result<u64, &'static str> {
+pub(super) fn verify_gitlab(
+    token: &str,
+    config: &serde_json::Value,
+) -> Result<(u64, Option<u64>), &'static str> {
     static CACHES: Mutex<std::collections::BTreeMap<String, std::sync::Arc<Mutex<Cache>>>> =
         Mutex::new(std::collections::BTreeMap::new());
     let invalid = "Invalid GitLab identity";
@@ -212,10 +217,17 @@ pub(super) fn verify_gitlab(token: &str, config: &serde_json::Value) -> Result<u
     {
         return Err(invalid);
     }
-    claims
-        .pipeline_id
-        .parse::<u64>()
-        .ok()
-        .filter(|id| *id != 0)
-        .ok_or(invalid)
+    let id = |value: &str| {
+        value
+            .parse::<u64>()
+            .ok()
+            .filter(|id| *id != 0)
+            .ok_or(invalid)
+    };
+    let job = claims
+        .job_id
+        .as_u64()
+        .or_else(|| claims.job_id.as_str()?.parse().ok())
+        .filter(|id| *id != 0);
+    Ok((id(&claims.pipeline_id)?, job))
 }

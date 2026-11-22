@@ -122,6 +122,17 @@ pub fn cmd_inspect(ctx: &Ctx, args: &[String]) -> R {
             label(ctx, title, value);
         }
     }
+    for (id, url, title) in [
+        ("run_id", "run_url", "CI run"),
+        ("job_id", "job_url", "CI job"),
+    ] {
+        if let Some(id) = info[id].as_u64() {
+            let value = info[url]
+                .as_str()
+                .map_or_else(|| id.to_string(), |url| format!("{id} · {url}"));
+            label(ctx, title, &value);
+        }
+    }
     label(ctx, "Zone", &or("availability_zone", "-"));
     label(
         ctx,

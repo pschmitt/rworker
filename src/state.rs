@@ -207,11 +207,7 @@ pub fn hosted_id(name: &str) -> Option<(crate::github_profiles::Forge, &str)> {
     let (forge, id) = crate::github_profiles::Forge::ALL
         .into_iter()
         .find_map(|forge| name.strip_prefix(forge.prefix()).map(|id| (forge, id)))?;
-    (id.len() == 32
-        && id
-            .bytes()
-            .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b)))
-    .then_some((forge, id))
+    crate::github_profiles::valid_worker_suffix(id).then_some((forge, id))
 }
 
 /// Fetch a worker this host did not create (another host's, or nixbot's

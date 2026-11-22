@@ -217,7 +217,8 @@ fn hosted_up(
     )?;
     let initial: Value = serde_json::from_str(&raw).map_err(|_| Fail(1))?;
     let id = need(&initial, "id")?;
-    let name = format!("{}{id}", forge.prefix());
+    let suffix = initial["worker_suffix"].as_str().unwrap_or(&id);
+    let name = format!("{}{suffix}", forge.prefix());
     let run_url = initial["run_url"].as_str().map(str::to_owned).or_else(|| {
         initial["repository"]
             .as_str()
@@ -278,6 +279,8 @@ fn hosted_up(
                         "topic": lease["topic"],
                         "archive_logs": lease["archive_logs"],
                         "run_id": lease["run_id"],
+                        "job_id": lease["job_id"],
+                        "job_url": lease["job_url"],
                         "github_port": lease["endpoint"]["port"],
                         "host_key": lease["endpoint"]["host_key"],
                         "kvm": lease["kvm"],

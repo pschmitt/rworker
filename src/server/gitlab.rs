@@ -42,6 +42,17 @@ impl<'a> GitLab<'a> {
         pipeline_status(&pipeline)
     }
 
+    pub(super) fn job_id(&self, pipeline_id: u64) -> Option<u64> {
+        let response = self
+            .request("GET", &format!("/pipelines/{pipeline_id}/jobs"), None)
+            .ok()?;
+        response
+            .as_array()?
+            .iter()
+            .find(|job| job["name"] == "rworker-lease")?["id"]
+            .as_u64()
+    }
+
     pub(super) fn cancel(&self, pipeline_id: u64) -> Result<(), String> {
         self.request("POST", &format!("/pipelines/{pipeline_id}/cancel"), None)?;
         Ok(())

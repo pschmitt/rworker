@@ -1,3 +1,14 @@
+pub(crate) const WORKER_SUFFIX_BYTES: usize = 4;
+
+pub(crate) fn valid_worker_suffix(id: &str) -> bool {
+    // Current names use the same suffix width as OpenStack. Earlier names
+    // contain the full assignment ID.
+    (id.len() == WORKER_SUFFIX_BYTES * 2 || id.len() == 32)
+        && id
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+}
+
 /// A CI runner and its rworker profile.
 pub(crate) struct Profile {
     pub forge: Forge,

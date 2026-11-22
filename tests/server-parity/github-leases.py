@@ -75,6 +75,8 @@ elif url.endswith("/dispatches"):
     assert dispatch["inputs"]["profile"] == "linux-arm64"
     assert set(dispatch["inputs"]) == {"job_id", "profile"}
     print('{"workflow_run_id": 42}')
+elif url.endswith("/runs/42/attempts/1/jobs"):
+    print('{"jobs":[{"id":77,"name":"build"}]}')
 elif url.endswith("/runs/42"):
     cancelled = (root / "cancelled").exists()
     print(json.dumps({
@@ -128,6 +130,9 @@ else:
     lease = control(f"{provider}-up", runner, "2m", public_key, "operator@fixture", "fixture")
     assert lease["run_id"] == 42 and lease["state"] == "queued"
     ident = lease["id"]
+    assert len(ident) == 32
+    suffix = lease["worker_suffix"]
+    assert len(suffix) == 8
     agent_id = f"glci-{ident}" if gitlab else ident
     if gitlab:
         assert lease["run_url"] == "https://gitlab.example.com/example/project/-/pipelines/42"
@@ -149,7 +154,7 @@ else:
             claims = dict(
                 iss="https://gitlab.example.com", aud="rworker-job",
                 nbf=now - 30, exp=now + 60, job_project_id="123456",
-                job_project_path="example/project", pipeline_id=str(run_id),
+                job_project_path="example/project", pipeline_id=str(run_id), job_id="77",
                 pipeline_source="api", ref_path="refs/heads/main", ref_protected="true",
                 runner_id=99,
                 ci_config_ref_uri="gitlab.example.com/example/project//.gitlab-ci.yml@refs/heads/main",
@@ -212,10 +217,21 @@ else:
             endpoint = {"port": 22223, "host_key": public_key}
             assert post("ready", "0" * 64, endpoint)[0] == 403
             assert post("ready", bearer, endpoint)[0] == 204
-            ready = control(f"{provider}-status", ident)
+            if not gitlab:
+                control("github-reap")
+            ready = control(f"{provider}-status", suffix)
+            assert ready["run_id"] == 42 and ready["job_id"] == 77
+            assert ready["job_url"].endswith("/77")
             assert ready["state"] == "ready" and ready["endpoint"] == endpoint and ready["kvm"]
             assert "token_hash" not in ready
-            assert control(f"{provider}-down", ident, "operator@fixture")["state"] == "cancelling"
+            legacy = "a" * 32
+            legacy_dir = state / legacy
+            legacy_dir.mkdir()
+            (legacy_dir / "lock").touch()
+            legacy_record = {key: value for key, value in ready.items() if key != "worker_suffix"}
+            (legacy_dir / "lease.json").write_text(json.dumps(dict(legacy_record, id=legacy)))
+            assert "worker_suffix" not in control(f"{provider}-status", legacy)
+            assert control(f"{provider}-down", suffix, "operator@fixture")["state"] == "cancelling"
             assert post("heartbeat", bearer, {})[0] == 403
             ended = control(f"{provider}-status", ident)
             assert ended["state"] == "ended" and ended["workflow"]["conclusion"] == ("canceled" if gitlab else "cancelled")
