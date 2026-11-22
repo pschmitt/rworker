@@ -14,7 +14,7 @@ workflow:
     - if: '$CI_PIPELINE_SOURCE == "api" && $CI_COMMIT_BRANCH == "main" && $CI_COMMIT_REF_PROTECTED == "true"'
 
 rworker-lease:
-  image: ubuntu:24.04
+  image: ubuntu:26.04
   timeout: 2h
   id_tokens:
     RWORKER_GITLAB_ID_TOKEN:
