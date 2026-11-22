@@ -62,9 +62,13 @@ fn render_progress(ctx: &Ctx, stderr: impl Read + Send + 'static) {
             }
         }
     });
+    render_progress_lines(rx, ctx.no_color);
+}
+
+fn render_progress_lines(rx: mpsc::Receiver<String>, no_color: bool) {
     let frames: Vec<char> = "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏".chars().collect();
     let tty = std::io::stderr().is_terminal();
-    let esc = tty && !ctx.no_color;
+    let esc = tty && !no_color;
     let creating = Regex::new(
         r"^creating[[:space:]]+([^[:space:]]+)[[:space:]]+\(([^()]*)\)[[:space:]]+from[[:space:]]+image[[:space:]]+(.+)$",
     )
@@ -185,6 +189,7 @@ fn github_up(
     ttl: &str,
     key_file: &str,
     topic: &str,
+    progress: &mpsc::Sender<String>,
 ) -> R<Value> {
     let key = std::fs::read_to_string(key_file).map_err(|error| {
         ctx.err(&format!("Read SSH public key {key_file}: {error}"));
@@ -205,7 +210,11 @@ fn github_up(
     let link = run_url.as_deref().map_or_else(String::new, |url| {
         format!(" · {}", workflow_link(url, std::io::stderr().is_terminal()))
     });
-    ctx.err(&format!("Waiting for GitHub worker {name}{link}"));
+    let _ = progress.send(format!(
+        "creating {name} ({}) from image {}{link}",
+        profile.name, profile.label
+    ));
+    let _ = progress.send("rworker-progress QUEUED · GitHub Actions".into());
     let expires = epoch(&initial["expires_at"]);
     let mut runner_started = false;
     let mut disconnected = false;
@@ -217,21 +226,25 @@ fn github_up(
                 reply.and_then(|raw| serde_json::from_str::<Value>(&raw).map_err(|_| Fail(1)))
             else {
                 if !disconnected {
-                    ctx.err("Could not check the GitHub lease; retrying");
+                    let _ = progress.send("rworker-progress RECONNECTING · controller".into());
                     disconnected = true;
                 }
                 std::thread::sleep(Duration::from_secs(3));
                 continue;
             };
-            disconnected = false;
-            if !runner_started
-                && (lease["workflow"]["status"] == "in_progress" || lease["state"] == "claimed")
-            {
-                runner_started = true;
-                ctx.err(&format!(
-                    "GitHub assigned a runner to {name}; waiting for SSH"
-                ));
+            let started = runner_started
+                || lease["workflow"]["status"] == "in_progress"
+                || lease["state"] == "claimed";
+            if started != runner_started || disconnected {
+                let stage = if started {
+                    "STARTING · SSH"
+                } else {
+                    "QUEUED · GitHub Actions"
+                };
+                let _ = progress.send(format!("rworker-progress {stage}"));
             }
+            runner_started = started;
+            disconnected = false;
             match lease["state"].as_str() {
                 Some("ready") => {
                     let output = json!({
@@ -259,13 +272,13 @@ fn github_up(
                 }
                 Some("ended") => {
                     let conclusion = jq::or(&lease["workflow"]["conclusion"], "unknown");
-                    ctx.err(&format!(
+                    let _ = progress.send(format!(
                         "GitHub workflow for {name} ended before SSH was ready ({conclusion}){link}"
                     ));
                     return Err(Fail(1));
                 }
                 Some("cancelling" | "dispatch_unknown") if crate::time::now() < expires => {
-                    ctx.err(&format!(
+                    let _ = progress.send(format!(
                         "GitHub lease {name} ended before SSH was ready{link}"
                     ));
                     return Err(Fail(1));
@@ -278,7 +291,7 @@ fn github_up(
         } else {
             "GitHub to assign a runner"
         };
-        ctx.err(&format!(
+        let _ = progress.send(format!(
             "Lease expired while waiting for {stage} on {name}{link}"
         ));
         Err(Fail(1))
@@ -289,7 +302,7 @@ fn github_up(
             Ok(0)
         )
     {
-        ctx.err(&format!(
+        let _ = progress.send(format!(
             "Could not request cancellation of {name}; the controller will retry at expiry"
         ));
     }
@@ -341,6 +354,9 @@ pub fn up(ctx: &Ctx, args: &[String], capture: bool) -> R<Option<String>> {
         }
         i += 1;
     }
+    if topic.is_empty() && !quiet_topic_warning {
+        ctx.err(&format!("{} no topic provided", paint::warn_mark(ctx)));
+    }
     let github_profile = rest
         .windows(2)
         .filter(|pair| pair[0] == "--profile")
@@ -361,7 +377,14 @@ pub fn up(ctx: &Ctx, args: &[String], capture: bool) -> R<Option<String>> {
             .last()
             .unwrap_or("30m");
         let started = crate::time::now();
-        let output = github_up(ctx, profile, ttl, &key_file, &topic)?;
+        let output = std::thread::scope(|scope| {
+            let (tx, rx) = mpsc::channel();
+            let no_color = ctx.no_color;
+            scope.spawn(move || render_progress_lines(rx, no_color));
+            let result = github_up(ctx, profile, ttl, &key_file, &topic, &tx);
+            drop(tx);
+            result
+        })?;
         if capture {
             return Ok(Some(jq::compact(&output)));
         }
@@ -411,9 +434,6 @@ pub fn up(ctx: &Ctx, args: &[String], capture: bool) -> R<Option<String>> {
         return Ok(None);
     }
     let meta = crate::creator::meta(&topic, &agent_id);
-    if topic.is_empty() && !quiet_topic_warning {
-        ctx.err(&format!("{} no topic provided", paint::warn_mark(ctx)));
-    }
     let Ok(key) = std::fs::read_to_string(&key_file) else {
         ctx.err(&format!(
             "Public key {key_file} not readable (set RWORKER_KEY)"
