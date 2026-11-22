@@ -5,6 +5,7 @@
 The Rust client and controller replace the original Bash client.
 
 - Keep profile listing fast when provider data is missing or unavailable.
+- Add a `gitlab` tag to GitLab profiles.
 - Show the GitLab Nerd Font glyph in GitLab orange for workers and profiles.
 
 - Lease regular GitLab CI jobs with the `gl-x86_64` worker profile.

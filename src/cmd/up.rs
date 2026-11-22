@@ -271,7 +271,7 @@ fn hosted_up(
                         "profile": profile.name,
                         "flavor": profile.label,
                         "system": profile.system,
-                        "image_tags": [forge.tag()],
+                        "image_tags": forge.tags(),
                         "run_url": run_url,
                         "expires_at": expires,
                         "created_at": lease["created_at"],

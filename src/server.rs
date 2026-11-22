@@ -498,7 +498,7 @@ fn add_gitlab_profiles(settings: &Value, rows: &mut Vec<Value>) {
                 "provider": gitlab.key(),
                 "system": profile.system,
                 "flavor": profile.label,
-                "image_tags": [gitlab.tag()],
+                "image_tags": gitlab.tags(),
                 "default": false,
             })
         }));

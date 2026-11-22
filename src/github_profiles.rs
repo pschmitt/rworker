@@ -72,10 +72,10 @@ impl Forge {
         }
     }
 
-    pub(crate) fn tag(self) -> &'static str {
+    pub(crate) fn tags(self) -> &'static [&'static str] {
         match self {
-            Self::GitHub => "github-actions",
-            Self::GitLab => "gitlab-ci",
+            Self::GitHub => &["github-actions"],
+            Self::GitLab => &["gitlab-ci", "gitlab"],
         }
     }
 

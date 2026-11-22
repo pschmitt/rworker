@@ -107,7 +107,7 @@ else:
     if gitlab:
         profiles = control("profiles")
         assert [row["name"] for row in profiles] == [profile]
-        assert profiles[0]["image_tags"] == ["gitlab-ci"]
+        assert profiles[0]["image_tags"] == ["gitlab-ci", "gitlab"]
         cache = root / "inventory"
         cache.mkdir()
         (cache / "profiles.json").write_text(json.dumps([{"name": "standard"}]))
