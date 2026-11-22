@@ -41,4 +41,4 @@ in /run/rworker/metadata.json.
 Example:
   w=$(__ME__ up --ttl 3h --flavor s1.2xlarge | jq -r .name)
 
-CI profiles: gh-aarch64 and gh-x86_64 for GitHub Actions, gl-x86_64 for GitLab CI.
+CI profiles: gh-aarch64 and gh-x86_64 for GitHub Actions, gl-x86_64 and gl-x86_64-lease for GitLab CI.

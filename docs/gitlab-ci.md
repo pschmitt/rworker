@@ -1,12 +1,17 @@
 # GitLab CI workers
 
-The `gl-x86_64` profile leases a Linux x86-64 GitLab CI job.
-`gl` is an alias. The 30-minute default lease includes queue time, and the
+Both GitLab profiles lease a Linux x86-64 job on the project's regular
+untagged runners. The 30-minute default lease includes queue time, and the
 maximum is two hours.
+
+| Profile | Worker image | Bootstrap |
+| --- | --- | --- |
+| `gl-x86_64` (alias `gl`) | `ubuntu:24.04` | Installs Nix, SSH and the runner tools with APT in each job |
+| `gl-x86_64-lease` | `ghcr.io/pschmitt/rworker:lease` | Starts the bundled Nix daemon and SSH server with the prebuilt runtime |
 
 ```sh
 rworker up --profile gl-x86_64 --topic "interactive build" --ssh
-rworker exec --profile gl-x86_64 --sync .:src -- 'cd src && nix build'
+rworker exec --profile gl-x86_64-lease --sync .:src -- 'cd src && nix build'
 ```
 
 `down` closes the lease and requests cancellation of its pipeline.
@@ -26,12 +31,12 @@ script. The configuration only creates pipelines for API requests on
 protected `main`.
 
 The job uses the project's regular untagged runners. It needs a Linux x86-64
-container executor that starts a fresh, unprivileged Ubuntu container with a
+container executor that starts a fresh, unprivileged container with a
 root bootstrap user, no host Docker socket, and private build storage. Allow
 HTTPS access to GitLab, Ubuntu package mirrors, Nix caches, and the
-controller, plus SSH access to the controller. The job installs its
-dependencies and runs builds under an unprivileged local account with its
-own Nix store.
+controller, plus SSH access to the controller. The runner also needs to pull
+the selected image from Docker Hub or GHCR. Commands run under an
+unprivileged local account with a job-local Nix store.
 
 Configure these protected project CI/CD variables.
 
@@ -73,3 +78,23 @@ heartbeats.
 
 Set `gitlabCi.runnerId` only if you want to restrict claims to a specific
 runner. In that case, ensure the project's job can be assigned to that runner.
+
+
+## Compare bootstrap times
+
+Create API pipelines on protected `main` with an empty `job_id`.
+They start a local SSH server, authenticate as the build user, check the Nix
+store, and exit without requesting a worker lease.
+
+```sh
+glab api 'projects/12345/pipeline' --method POST --input - <<'JSON'
+{"ref":"main","inputs":{"job_id":"","profile":"gl-linux-x64"}}
+JSON
+glab api 'projects/12345/pipeline' --method POST --input - <<'JSON'
+{"ref":"main","inputs":{"job_id":"","profile":"gl-linux-x64-lease"}}
+JSON
+```
+
+The `rworker bootstrap` line measures setup and the runtime check inside
+the container. Compare the GitLab job duration for the full job, including
+image preparation. Queue time and image cache state depend on the runner.

@@ -4,6 +4,8 @@
 
 The Rust client and controller replace the original Bash client.
 
+- Publish a Nix-built lease image and use it with `gl-x86_64-lease`.
+
 - Keep profile listing fast when provider data is missing or unavailable.
 - Add a `gitlab` tag to GitLab profiles.
 - Show the GitLab Nerd Font glyph in GitLab orange for workers and profiles.

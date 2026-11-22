@@ -19,4 +19,4 @@ Examples:
   __ME__ exec --sync .:src -- 'cd src && nix develop -c cargo build --release'
   __ME__ exec --flavor s1.2xlarge --sync .:app --fetch app/out:./out -- 'cd app && ./build.sh'
 
-CI profiles: gh-aarch64 and gh-x86_64 for GitHub Actions, gl-x86_64 for GitLab CI.
+CI profiles: gh-aarch64 and gh-x86_64 for GitHub Actions, gl-x86_64 and gl-x86_64-lease for GitLab CI.

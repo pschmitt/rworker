@@ -1,33 +1,52 @@
 spec:
   inputs:
     job_id:
-      description: Controller assignment ID
+      description: Controller assignment ID (empty runs a local runtime check)
       default: ''
       regex: '^([a-f0-9]{32})?$'
     profile:
       description: Runner profile
       default: gl-linux-x64
-      options: [gl-linux-x64]
+      options: [gl-linux-x64, gl-linux-x64-lease]
 ---
 workflow:
   rules:
     - if: '$CI_PIPELINE_SOURCE == "api" && $CI_COMMIT_BRANCH == "main" && $CI_COMMIT_REF_PROTECTED == "true"'
 
+variables:
+  RWORKER_PROFILE: $[[ inputs.profile ]]
+
 rworker-lease:
-  image: ubuntu:24.04
+  image: $RWORKER_JOB_IMAGE
+  rules:
+    - if: '$RWORKER_PROFILE == "gl-linux-x64-lease"'
+      variables:
+        RWORKER_JOB_IMAGE: ghcr.io/pschmitt/rworker:lease
+    - when: on_success
+      variables:
+        RWORKER_JOB_IMAGE: ubuntu:24.04
   timeout: 2h
   id_tokens:
     RWORKER_GITLAB_ID_TOKEN:
       aud: rworker-job
   variables:
     RWORKER_JOB_ID: $[[ inputs.job_id ]]
-    RWORKER_PROFILE: $[[ inputs.profile ]]
   script:
-    - test -n "$RWORKER_JOB_ID"
     - test "$(uname -m)" = x86_64
     - test "$(id -u)" = 0
-    - ': "${RWORKER_AGENT_URL:?Set RWORKER_AGENT_URL}" "${RWORKER_GATEWAY:?Set RWORKER_GATEWAY}" "${RWORKER_GATEWAY_KNOWN_HOSTS:?Set RWORKER_GATEWAY_KNOWN_HOSTS}" "${RWORKER_GATEWAY_KEY:?Set RWORKER_GATEWAY_KEY}"'
     - chmod 0700 "$CI_PROJECT_DIR"
-    - apt-get update
-    - DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends ca-certificates git nix-bin openssh-client openssh-server procps python3 rsync sudo
-    - python3 scripts/github-job-agent.py
+    - |
+      started=$(date +%s%3N)
+      if [ "$RWORKER_PROFILE" = gl-linux-x64 ]
+      then
+        apt-get update
+        DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends ca-certificates git nix-bin openssh-client openssh-server procps python3 rsync sudo
+      fi
+      if [ -z "$RWORKER_JOB_ID" ]
+      then
+        python3 scripts/github-job-agent.py --check-runtime
+        printf 'rworker bootstrap: %s ms\n' "$(( $(date +%s%3N) - started ))"
+      else
+        : "${RWORKER_AGENT_URL:?Set RWORKER_AGENT_URL}" "${RWORKER_GATEWAY:?Set RWORKER_GATEWAY}" "${RWORKER_GATEWAY_KNOWN_HOSTS:?Set RWORKER_GATEWAY_KNOWN_HOSTS}" "${RWORKER_GATEWAY_KEY:?Set RWORKER_GATEWAY_KEY}"
+        python3 scripts/github-job-agent.py
+      fi

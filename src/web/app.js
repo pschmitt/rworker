@@ -987,7 +987,7 @@ async function form(action, worker, profile) {
     fields.append(options);
     const updateProvider = () => {
       const profile = state.rows.profiles?.find((row) => row.name === profileInput.value);
-      const ci = Object.hasOwn(ciProviders, profile?.provider) || /^(gh-(aarch64|x86_64)|gl-x86_64)$/.test(profileInput.value);
+      const ci = Object.hasOwn(ciProviders, profile?.provider) || /^(gh-(aarch64|x86_64)|gl-x86_64(-lease)?)$/.test(profileInput.value);
       overrides.hidden = overrides.disabled = ci;
       flavor.placeholder = ci ? "" : profile?.flavor || "Use profile default";
       disk.placeholder = ci || !profile?.disk ? "Use profile default" : String(profile.disk);

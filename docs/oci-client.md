@@ -24,3 +24,6 @@ nix build .#client-image
 docker load < result
 docker run --rm ghcr.io/pschmitt/rworker:latest rworker help
 ```
+
+The separate [GitLab lease image](gitlab-ci.md) bundles the worker runtime
+and serves the `gl-x86_64-lease` profile.

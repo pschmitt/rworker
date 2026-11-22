@@ -14,10 +14,13 @@ def b64(data):
     return base64.urlsafe_b64encode(data).rstrip(b"=").decode()
 
 
-def exercise(binary, root, provider, runner_pin=None):
+def exercise(binary, root, provider, runner_pin=None, prebuilt=False):
     gitlab = provider == "gitlab"
     runner = "gl-linux-x64" if gitlab else "linux-arm64"
     profile = "gl-x86_64" if gitlab else "gh-aarch64"
+    if prebuilt:
+        runner += "-lease"
+        profile += "-lease"
     token_file = root / "token"
     token_file.write_text("fake-provider-credential")
     config = root / "config.json"
@@ -81,7 +84,7 @@ elif url.endswith("/runs/42"):
 elif url == "https://gitlab.example.com/api/v4/projects/123456/pipeline":
     dispatch = json.loads(json.loads(config["data-raw"]))
     assert dispatch["ref"] == "main"
-    assert dispatch["inputs"]["profile"] == "gl-linux-x64"
+    assert dispatch["inputs"]["profile"] == os.environ["RWORKER_GITLAB_FIXTURE_PROFILE"]
     assert set(dispatch["inputs"]) == {"job_id", "profile"}
     print('{"id": 42}')
 elif url.endswith("/pipelines/42"):
@@ -97,7 +100,7 @@ else:
     (root / "rworker-web-worker-public-key").write_text(console_key + "\n")
     environment = dict(
         os.environ, PATH=f"{root}:{os.environ['PATH']}", RWORKER_GITHUB_FIXTURE=str(root),
-        CREDENTIALS_DIRECTORY=str(root), RWORKER_WEB_WORKER_OWNER="operator",
+        RWORKER_GITLAB_FIXTURE_PROFILE=runner, CREDENTIALS_DIRECTORY=str(root), RWORKER_WEB_WORKER_OWNER="operator",
     )
     command = [binary, "server", config]
 
@@ -106,7 +109,7 @@ else:
 
     if gitlab:
         profiles = control("profiles")
-        assert [row["name"] for row in profiles] == [profile]
+        assert [row["name"] for row in profiles] == ["gl-x86_64", "gl-x86_64-lease"]
         assert profiles[0]["image_tags"] == ["gitlab-ci", "gitlab"]
         cache = root / "inventory"
         cache.mkdir()
@@ -115,7 +118,7 @@ else:
             [*command, "profiles"],
             env=dict(environment, RWORKER_INVENTORY_DIRECTORY=str(cache)),
         ))
-        assert [row["name"] for row in cached] == [profile]
+        assert [row["name"] for row in cached] == ["gl-x86_64", "gl-x86_64-lease"]
     else:
         profiles = control("profiles", "--details")
         assert {row["name"] for row in profiles} == {"gh-aarch64", "gh-x86_64"}
@@ -231,6 +234,6 @@ else:
 
 
 if __name__ == "__main__":
-    for provider, runner_pin in (("github", None), ("gitlab", None), ("gitlab", 99)):
+    for provider, runner_pin, prebuilt in (("github", None, False), ("gitlab", None, False), ("gitlab", 99, True)):
         with tempfile.TemporaryDirectory() as directory:
-            exercise(str(Path(sys.argv[1]).resolve()), Path(directory), provider, runner_pin)
+            exercise(str(Path(sys.argv[1]).resolve()), Path(directory), provider, runner_pin, prebuilt)

@@ -82,9 +82,9 @@ flag setup --dry-run only show what would be pushed
 flag setup -n short for --dry-run
 flag up -l=user log in as this user (with --ssh; default agent)
 flag up --topic=topic what the worker is for (none unless given)
-flag up --profile=profile worker profile (including gh-aarch64, gh-x86_64 and gl-x86_64)
+flag up --profile=profile worker profile (including gh-aarch64, gh-x86_64, gl-x86_64 and gl-x86_64-lease)
 flag exec --topic=topic what the worker is for (none unless given)
-flag exec --profile=profile worker profile (including gh-aarch64, gh-x86_64 and gl-x86_64)
+flag exec --profile=profile worker profile (including gh-aarch64, gh-x86_64, gl-x86_64 and gl-x86_64-lease)
 flag machines -o=format output format (json or wide)
 flag profiles -o=format output format (json or wide)
 flag profiles --wide show image and runner details
@@ -138,7 +138,7 @@ flag tui -n=interval short for --interval
 values tui-view workers jobs profiles events logs
 values duration 30m 1h 2h 4h 8h 24h
 values flavor s1.large s1.xlarge s1.2xlarge
-values profile standard browser-daemon large-builder gh-aarch64 gh-x86_64 gl-x86_64
+values profile standard browser-daemon large-builder gh-aarch64 gh-x86_64 gl-x86_64 gl-x86_64-lease
 values size 100 150 250 500
 values path
 values format json wide

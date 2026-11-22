@@ -1,4 +1,4 @@
-/// A standard GitHub-hosted Linux runner and its rworker profile.
+/// A CI runner and its rworker profile.
 pub(crate) struct Profile {
     pub forge: Forge,
     pub name: &'static str,
@@ -33,17 +33,26 @@ pub(crate) fn from_name(name: &str) -> Option<&'static Profile> {
     };
     PROFILES
         .iter()
-        .chain(std::iter::once(&GITLAB_PROFILE))
+        .chain(&GITLAB_PROFILES)
         .find(|profile| profile.name == name)
 }
 
-pub(crate) const GITLAB_PROFILE: Profile = Profile {
-    forge: Forge::GitLab,
-    name: "gl-x86_64",
-    runner: "gl-linux-x64",
-    label: "GitLab Linux x86-64",
-    system: "x86_64-linux",
-};
+const GITLAB_PROFILES: [Profile; 2] = [
+    Profile {
+        forge: Forge::GitLab,
+        name: "gl-x86_64",
+        runner: "gl-linux-x64",
+        label: "ubuntu:24.04",
+        system: "x86_64-linux",
+    },
+    Profile {
+        forge: Forge::GitLab,
+        name: "gl-x86_64-lease",
+        runner: "gl-linux-x64-lease",
+        label: "ghcr.io/pschmitt/rworker:lease",
+        system: "x86_64-linux",
+    },
+];
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Forge {
@@ -96,7 +105,7 @@ impl Forge {
     pub(crate) fn profiles(self) -> &'static [Profile] {
         match self {
             Self::GitHub => &PROFILES,
-            Self::GitLab => std::slice::from_ref(&GITLAB_PROFILE),
+            Self::GitLab => &GITLAB_PROFILES,
         }
     }
 }

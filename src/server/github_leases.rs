@@ -264,7 +264,11 @@ pub(super) fn claim(
         || lease.profile != profile
         || !matches!(
             (profile, architecture),
-            ("linux-arm64", "aarch64") | ("linux-x64" | "gl-linux-x64", "x86_64")
+            ("linux-arm64", "aarch64")
+                | (
+                    "linux-x64" | "gl-linux-x64" | "gl-linux-x64-lease",
+                    "x86_64"
+                )
         )
         || lease.state != LeaseState::Queued
         || now() >= lease.expires_at
