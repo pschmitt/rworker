@@ -6,6 +6,7 @@ lifecycle events, followed live, and the actions on the selected worker
 (ssh, inspect, ps, extend, topic, claim, down, new worker, ...).
 Press J to toggle Workers and Jobs, or Enter for the selected worker’s jobs.
 Press h to show or hide retired workers inline.
+Press c to create a worker, or C to claim the selected worker.
 Press n in a text view to toggle full-screen command output.
 Alt+Shift+Q quits from any view.
 The second pane follows the selected worker’s logs. Click a row to

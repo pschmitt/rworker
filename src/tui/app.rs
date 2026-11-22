@@ -925,7 +925,7 @@ impl App {
             KeyCode::Char('L') => self.open_text("logs · all workers", s(&["logs", "--follow"])),
             KeyCode::Char('E') => self.open_text("events", s(&["events", "--watch"])),
             KeyCode::Char('P') => self.open_text("profiles", s(&["profiles"])),
-            KeyCode::Char('n') => self.ask(
+            KeyCode::Char('c') => self.ask(
                 PromptKind::Up,
                 "new worker",
                 "--ttl 2h --topic ",
@@ -1017,7 +1017,7 @@ impl App {
                     self.ask(PromptKind::Topic(w.0), "topic", &w.1, "empty clears it");
                 }
             }
-            KeyCode::Char('c') => {
+            KeyCode::Char('C') => {
                 if let Some(w) = self.selected().map(|w| (w.name.clone(), w.topic.clone())) {
                     self.ask(
                         PromptKind::Claim(w.0),

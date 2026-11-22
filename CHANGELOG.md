@@ -6,6 +6,8 @@ The Rust client and controller replace the original Bash client.
 
 ### TUI
 
+- Use `c` to create a worker and `C` to claim one.
+
 - Press `n` in logs or other text views to show command output without TUI chrome.
 - Explain when the worker log preview is empty because it has no jobs.
 - Open a worker's only active job directly; use `J` in its logs to show jobs.
