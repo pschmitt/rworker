@@ -123,13 +123,17 @@ KbdInteractiveAuthentication no
 AuthenticationMethods publickey
 DisableForwarding yes
 PermitUserEnvironment no
+SetEnv XDG_CONFIG_HOME={pwd.getpwnam(BUILD_USER).pw_dir}/.config
 SetEnv PATH=/nix/var/nix/profiles/default/bin:/usr/local/bin:/usr/bin:/bin
 AcceptEnv LANG LC_*
 Subsystem sftp internal-sftp
 """
         )
         with subprocess.Popen(
-            ["sudo", "-n", "/usr/sbin/sshd", "-D", "-e", "-f", sshd_config],
+            [
+                "sudo", "-n", "/usr/bin/prlimit", "--stack=67108864:67108864", "--",
+                "/usr/sbin/sshd", "-D", "-e", "-f", sshd_config,
+            ],
             stdin=subprocess.DEVNULL,
         ) as sshd:
             master = [

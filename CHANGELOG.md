@@ -6,6 +6,9 @@ The Rust client and controller replace the original Bash client.
 
 ### GitHub Actions
 
+- Give SSH sessions their own Nix configuration path and enough stack for
+  Nix evaluation on GitHub runners.
+
 - Report the latest observed GitHub runner disk size and free space at startup.
 
 - Show GitHub queue and SSH startup progress with a clickable workflow link,
