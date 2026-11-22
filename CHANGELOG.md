@@ -6,6 +6,8 @@ The Rust client and controller replace the original Bash client.
 
 ### TUI
 
+- Use one divider around the worker log preview and remove the log spinner.
+
 - Remove the live inventory badge and give the stacked log pane one more row.
 
 - Show pending down requests in the worker status column and display the full

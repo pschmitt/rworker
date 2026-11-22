@@ -11,7 +11,7 @@ use ratatui::Frame;
 use ratatui::layout::{Alignment, Constraint, Direction, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span, Text};
-use ratatui::widgets::{Block, BorderType, Cell, Clear, Paragraph, Row, Table, Wrap};
+use ratatui::widgets::{Block, BorderType, Borders, Cell, Clear, Paragraph, Row, Table, Wrap};
 use std::time::Duration;
 use unicode_width::UnicodeWidthStr;
 
@@ -158,7 +158,7 @@ impl App {
             }
             Some(Sub::Text(v)) => {
                 self.mouse_text = Some(body);
-                draw_text(f, body, v, self.tick, plain);
+                draw_text(f, body, v, plain);
             }
         }
         self.stack = stack;
@@ -555,15 +555,22 @@ impl App {
             border,
             direction,
         });
-        let area = pane;
+        let separator = Block::new()
+            .borders(match direction {
+                Direction::Horizontal => Borders::LEFT,
+                Direction::Vertical => Borders::TOP,
+            })
+            .border_style(dim());
+        let area = separator.inner(pane);
+        f.render_widget(separator, pane);
         self.mouse_text = Some(area);
         if let Some((worker, preview)) = &mut self.preview
             && Some(worker.as_str()) == selected.as_deref()
         {
-            draw_text(f, area, preview, self.tick, self.plain);
+            draw_text_content(f, area, preview, self.plain);
         } else if !self.plain {
             f.render_widget(
-                Paragraph::new("Connecting to logs…").block(Block::bordered().title(" logs ")),
+                Paragraph::new(Line::styled("Connecting to logs…", dim())),
                 area,
             );
         }
@@ -600,7 +607,7 @@ impl App {
             row("/  m", "filter · only yours"),
             row("r", "refresh now"),
             row("click / wheel", "select rows or scroll logs"),
-            row("drag border", "resize the logs pane"),
+            row("drag divider", "resize the logs pane"),
         ];
         let right = vec![
             section("Jobs"),
@@ -717,17 +724,13 @@ fn draw_jobs(f: &mut Frame, area: Rect, j: &mut Jobs) {
     f.render_stateful_widget(table, area, &mut j.state);
 }
 
-fn draw_text(f: &mut Frame, area: Rect, v: &mut TextView, tick: u64, plain: bool) {
+fn draw_text(f: &mut Frame, area: Rect, v: &mut TextView, plain: bool) {
     let inner = if plain {
         area
     } else {
         let mut title = vec![Span::styled(format!(" {} ", v.title), Style::new().bold())];
         match &v.exit {
-            None => title.push(Span::styled(
-                format!("{} ", SPINNER[tick as usize % SPINNER.len()]),
-                Style::new().fg(Color::Green),
-            )),
-            Some(Some(0)) => {}
+            None | Some(Some(0)) => {}
             Some(Some(c)) => title.push(Span::styled(
                 format!("[exit {c}] "),
                 Style::new().fg(Color::Red),
@@ -763,6 +766,10 @@ fn draw_text(f: &mut Frame, area: Rect, v: &mut TextView, tick: u64, plain: bool
         f.render_widget(block, area);
         inner
     };
+    draw_text_content(f, inner, v, plain);
+}
+
+fn draw_text_content(f: &mut Frame, inner: Rect, v: &mut TextView, plain: bool) {
     let height = inner.height as usize;
     v.height = height;
     let needle = v.filter.to_lowercase();
