@@ -37,7 +37,7 @@ fn refresh_profiles(config: &str, dir: &Path) -> io::Result<()> {
 }
 
 fn profile_has_resources(row: &Value) -> bool {
-    let ram_field = if matches!(row["provider"].as_str(), Some("github" | "gitlab")) {
+    let ram_field = if row["provider"] == "github" {
         "ram_gb"
     } else {
         "ram_mib"

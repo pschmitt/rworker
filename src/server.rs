@@ -213,6 +213,7 @@ pub fn run(ctx: &crate::ctx::Ctx, args: &[String]) -> R {
                     Some(Value::Array(rows)) => rows,
                     _ => profiles(&settings)?,
                 };
+                add_gitlab_profiles(&settings, &mut rows);
                 github_leases::add_disk_observations(&settings, &mut rows);
                 if !rest.is_empty() {
                     if let Some(name) = rest.get(1) {
@@ -477,6 +478,13 @@ fn profiles(settings: &Value) -> io::Result<Vec<Value>> {
             })
         }));
     }
+    Ok(rows)
+}
+
+fn add_gitlab_profiles(settings: &Value, rows: &mut Vec<Value>) {
+    // Shared runner resources are unknown until a job is assigned. Build
+    // these rows from the current settings regardless of the profile cache.
+    rows.retain(|row| row["provider"] != "gitlab");
     let gitlab = crate::github_profiles::Forge::GitLab;
     if settings[gitlab.settings_key()]["projectId"].is_u64() {
         rows.extend(gitlab.profiles().iter().map(|profile| {
@@ -490,7 +498,6 @@ fn profiles(settings: &Value) -> io::Result<Vec<Value>> {
             })
         }));
     }
-    Ok(rows)
 }
 
 fn add_profile_images(settings: &Value, rows: &mut [Value]) {

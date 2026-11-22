@@ -108,6 +108,14 @@ else:
         profiles = control("profiles")
         assert [row["name"] for row in profiles] == [profile]
         assert profiles[0]["image_tags"] == ["gitlab-ci"]
+        cache = root / "inventory"
+        cache.mkdir()
+        (cache / "profiles.json").write_text(json.dumps([{"name": "standard"}]))
+        cached = json.loads(subprocess.check_output(
+            [*command, "profiles"],
+            env=dict(environment, RWORKER_INVENTORY_DIRECTORY=str(cache)),
+        ))
+        assert [row["name"] for row in cached] == ["standard", profile]
     else:
         for resource_spec in ((4, 16), (2, 8)):
             profiles = control("profiles")

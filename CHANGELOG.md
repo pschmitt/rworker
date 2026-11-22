@@ -5,6 +5,7 @@
 The Rust client and controller replace the original Bash client.
 
 - Lease regular GitLab CI jobs with the `gl-x86_64` worker profile.
+- Show the GitLab CI profile immediately when it is configured.
 
 - Publish a Nix-built rworker client image to GHCR for amd64 and arm64.
 
