@@ -4,6 +4,7 @@
 
 The Rust client and controller replace the original Bash client.
 
+- Use the standard close icon in the web SSH dialog.
 - Open the new worker form from a profile row in the web console or the TUI.
 
 - Fix HTTPS trust in lease SSH sessions and bundle curl and OpenSSL.
