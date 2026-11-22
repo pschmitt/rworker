@@ -34,7 +34,7 @@ def benchmark_disk():
 
 
 def benchmark_nix(revision):
-    expression = """
+    expression = r"""
     let
       inherit (builtins) currentSystem derivation;
       data = derivation {
