@@ -4,6 +4,7 @@
 
 The Rust client and controller replace the original Bash client.
 
+- Refresh the web console font so browsers show the GitLab glyph.
 - Publish a Nix-built lease image and use it with `gl-x86_64-lease`.
 
 - Keep profile listing fast when provider data is missing or unavailable.

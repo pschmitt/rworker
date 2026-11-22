@@ -54,7 +54,10 @@ pub(super) fn routes(router: Router<PathBuf>) -> Router<PathBuf> {
             "/assets/agents.woff2",
             get(|| async {
                 (
-                    [(header::CONTENT_TYPE, "font/woff2")],
+                    [
+                        (header::CONTENT_TYPE, "font/woff2"),
+                        (header::CACHE_CONTROL, "no-cache"),
+                    ],
                     include_bytes!("../web/agents.woff2").as_slice(),
                 )
             }),
