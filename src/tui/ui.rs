@@ -89,7 +89,7 @@ fn workers_layout(
     } else if area.height >= 14 {
         let height = log_size(
             area.height,
-            log_height.unwrap_or(if area.width < 80 { 7 } else { 5 }),
+            log_height.unwrap_or(if area.width < 80 { 8 } else { 6 }),
             Direction::Vertical,
         );
         let [table, details] =
@@ -272,7 +272,7 @@ impl App {
                 dim(),
             )
         } else if self.inventory_live {
-            Span::styled("live ", Style::new().fg(Color::Green))
+            Span::raw("")
         } else if let Some((at, took)) = self.refreshed {
             Span::styled(
                 format!(

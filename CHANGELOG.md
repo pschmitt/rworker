@@ -6,6 +6,8 @@ The Rust client and controller replace the original Bash client.
 
 ### TUI
 
+- Remove the live inventory badge and give the stacked log pane one more row.
+
 - Show pending down requests in the worker status column and display the full
   `DELETING` status in bold red.
 
