@@ -124,18 +124,30 @@ const agentIcons = new Map([
 // Worker glyphs: the `icon` of the worker's Glance image (rworker_icon) when
 // the bundled font has it, else one for its kind. Keep in sync with
 // scripts/web-icon-font.sh, which builds agents.woff2 from these.
-const workerGlyphs = new Set(["\u{f1064}", "\u{f06a9}", "\u{f048b}", "\u{f0508}", "\u{f059f}", "\u{f09b}"]);
+const githubGlyph = "\u{f09b}";
+const openstackGlyph = "\u{e856}";
+const workerGlyphs = new Set(["\u{f1064}", "\u{f06a9}", "\u{f048b}", "\u{f0508}", "\u{f059f}", githubGlyph]);
 
 function isPool(row) {
   return Boolean(row.kind) && !["adhoc", "unknown"].includes(row.kind);
 }
 
 function workerGlyph(row) {
-  if (row.name?.startsWith("gha-")) return "\u{f09b}";
+  if (row.name?.startsWith("gha-")) return githubGlyph;
   if (row.icon && workerGlyphs.has(row.icon)) return row.icon;
   if (row.kind === "adhoc") return "\u{f1064}";
   if (row.kind === "nixbot" || row.kind === "pool") return "\u{f06a9}";
   return "\u{f048b}";
+}
+
+function profileGlyph(row) {
+  return row.provider === "github" ? githubGlyph : openstackGlyph;
+}
+
+function profileIcon(row, className = "agent-icon profile-icon") {
+  const icon = element("span", profileGlyph(row), className);
+  icon.setAttribute("aria-hidden", "true");
+  return icon;
 }
 
 function workerName(row) {
@@ -437,12 +449,14 @@ function render() {
         const profile = named(row.name, row.default ? "Default" : "", () => form("create", null, row.name));
         if (row.flavor) profile.append(element("span", row.flavor, "secondary profile-context"));
         if (tags) profile.append(element("span", tags, "secondary profile-context"));
+        const profileName = element("div", null, "profile-name");
+        profileName.append(profileIcon(row, "agent-icon worker-icon"), profile);
         const ram = row.ram_gb != null ? row.ram_gb + " GB" : row.ram_mib == null ? "—" :
           row.ram_mib % 1024 === 0 ? row.ram_mib / 1024 + " GiB" : row.ram_mib + " MiB";
         const disk = row.disk_total_bytes != null ? `${(row.disk_total_bytes / 2 ** 30).toFixed(1)} GiB` :
           row.disk ? row.disk + " GiB" : "—";
         return {
-          cells: [profile, row.vcpus, ram, disk, row.flavor, tags || "—"],
+          cells: [profileName, row.vcpus, ram, disk, row.flavor, tags || "—"],
         };
       });
   }
@@ -525,6 +539,7 @@ function detailPanel() {
     const datum = element("div");
     const description = element("dd", key === "Agent" ? null : value);
     if (key === "Agent") description.append(agentLabel(value));
+    if (key === "Profile") description.prepend(profileIcon(row), " ");
     datum.append(element("dt", key), description);
     $("metadata").append(datum);
   }
@@ -800,9 +815,11 @@ async function form(action, worker, profile) {
     node.id = "field-" + name;
     node.name = name;
     if (kind === "select") {
+      node.classList.add("profile-select");
       for (const choice of choices) {
-        const option = element("option", choice);
-        option.value = choice;
+        const option = element("option", profileGlyph(choice) + " " + choice.name);
+        option.value = choice.name;
+        option.setAttribute("aria-label", choice.name);
         node.append(option);
       }
     }
@@ -821,9 +838,8 @@ async function form(action, worker, profile) {
       catch { profiles = []; }
     }
     if (!state.authenticated) return;
-    const names = profiles.map((item) => item.name);
-    const initial = profile || profiles.find((item) => item.default)?.name || names[0] || "standard";
-    if (names.length) field("Profile", "profile", initial, "select", names);
+    const initial = profile || profiles.find((item) => item.default)?.name || profiles[0]?.name || "standard";
+    if (profiles.length) field("Profile", "profile", initial, "select", profiles);
     else field("Profile", "profile", initial);
     field("Lifetime", "ttl", "2h");
   }

@@ -1,15 +1,15 @@
 #!/usr/bin/env bash
 # Rebuild src/web/agents.woff2, the web console's icon font: a subset of
 # Nerd Fonts' "Symbols Nerd Font" with every glyph the current file has
-# (agent icons) plus the worker glyphs below. Keep WORKER_GLYPHS in sync
-# with `workerGlyphs` in src/web/app.js and src/pool_icon.rs.
+# (agent icons) plus the worker and profile glyphs below. Keep the list in sync
+# with src/web/app.js and src/pool_icon.rs.
 #
 #   nix shell --impure --expr 'let pkgs = (builtins.getFlake "nixpkgs").legacyPackages.${builtins.currentSystem}; in pkgs.symlinkJoin { name = "rworker-icon-tools"; paths = [ pkgs.nerd-fonts.symbols-only (pkgs.python3.withPackages (p: [ p.fonttools p.brotli ])) ]; }' \
 #     -c bash scripts/web-icon-font.sh
 set -euo pipefail
 
-# nf-md-tools, nf-md-robot, nf-md-server, nf-md-tent, nf-md-web, nf-fa-github
-WORKER_GLYPHS=(U+F1064 U+F06A9 U+F048B U+F0508 U+F059F U+F09B)
+# nf-md-tools, nf-md-robot, nf-md-server, nf-md-tent, nf-md-web, nf-fa-github, nf-dev-openstack
+WORKER_GLYPHS=(U+F1064 U+F06A9 U+F048B U+F0508 U+F059F U+F09B U+E856)
 
 usage() {
   echo "usage: $(basename "$0") [SYMBOLS_FONT]" >&2

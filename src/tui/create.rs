@@ -188,7 +188,7 @@ impl CreateWorker {
         facts.join(" · ")
     }
 
-    pub(super) fn choice(&self, field: Field) -> String {
+    pub(super) fn choice(&self, field: Field, icons: bool) -> String {
         if field == AfterCreate {
             return format!("‹ {} ›", MODES[self.mode].1);
         }
@@ -201,8 +201,13 @@ impl CreateWorker {
         } else {
             ""
         };
+        let icon = if icons {
+            format!("{} ", crate::pool_icon::profile_glyph(profile))
+        } else {
+            String::new()
+        };
         format!(
-            "‹ {name}{default} ›   {}/{}",
+            "‹ {icon}{name}{default} ›   {}/{}",
             self.profile + 1,
             self.profiles.len()
         )

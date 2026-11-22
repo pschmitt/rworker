@@ -5,8 +5,18 @@
 
 use serde_json::Value;
 
-/// nf-fa-github: GitHub Actions workers.
+/// nf-fa-github: GitHub Actions workers and profiles.
 const GITHUB: &str = "\u{f09b}";
+/// nf-dev-openstack: OpenStack profiles.
+const OPENSTACK: &str = "\u{e856}";
+
+pub fn profile_glyph(profile: &Value) -> &'static str {
+    if profile["provider"] == "github" {
+        GITHUB
+    } else {
+        OPENSTACK
+    }
+}
 
 /// nf-md-tools: ad-hoc workers on an image without an icon.
 const ADHOC: &str = "\u{f1064}";
@@ -66,6 +76,13 @@ mod tests {
             glyph(&json!({"name": "gha-example", "kind": "adhoc"})),
             GITHUB
         );
+    }
+
+    #[test]
+    fn profile_glyphs_follow_the_provider() {
+        assert_eq!(profile_glyph(&json!({"provider": "github"})), GITHUB);
+        assert_eq!(profile_glyph(&json!({"provider": "openstack"})), OPENSTACK);
+        assert_eq!(profile_glyph(&json!({"name": "standard"})), OPENSTACK);
     }
 
     #[test]

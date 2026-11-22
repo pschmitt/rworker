@@ -258,9 +258,15 @@ pub fn cmd_profiles(ctx: &Ctx, args: &[String]) -> R {
         } else {
             jq::or(&p["disk"], "-")
         };
+        let name = jq::raw(get(p, "name"));
+        let label = if ctx.icons.get() {
+            format!("{} {name}{star}", crate::pool_icon::profile_glyph(p))
+        } else {
+            format!("{name}{star}")
+        };
         rows.push(
             [
-                jq::tsv(&json!(format!("{}{star}", jq::raw(get(p, "name"))))),
+                jq::tsv(&json!(label)),
                 jq::tsv(get(p, "flavor")),
                 jq::tsv(&json!(
                     p.get("vcpus")

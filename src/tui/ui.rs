@@ -110,7 +110,7 @@ fn centered(area: Rect, width: u16, height: u16) -> Rect {
     }
 }
 
-fn draw_create(f: &mut Frame, form: &CreateWorker) {
+fn draw_create(f: &mut Frame, form: &CreateWorker, icons: bool) {
     let facts = form.profile_facts();
     let mut rows = Vec::new();
     for field in form.fields() {
@@ -187,7 +187,7 @@ fn draw_create(f: &mut Frame, form: &CreateWorker) {
             }
         } else {
             f.render_widget(
-                Paragraph::new(Line::styled(form.choice(field), style)),
+                Paragraph::new(Line::styled(form.choice(field, icons), style)),
                 value_area,
             );
         }
@@ -280,7 +280,7 @@ impl App {
             f.set_cursor_position((inner.x + 2 + before.width() as u16 - shift, inner.y));
         }
         if let Some(form) = &self.create_worker {
-            draw_create(f, form);
+            draw_create(f, form, self.icons);
         }
         if self.help {
             self.draw_help(f);
