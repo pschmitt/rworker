@@ -2,6 +2,7 @@
 //! text views (logs, events, inspect, ps, command output) stack on it and
 //! Esc goes back.
 
+use super::create::{self, CreateWorker};
 use super::proc::{self, Msg, Stream};
 use crate::ctx::Ctx;
 use crate::jq::{self, get};
@@ -193,7 +194,6 @@ pub enum PromptKind {
     Extend(String),
     Topic(String),
     Claim(String),
-    Up,
     Start(String),
     Command,
 }
@@ -221,6 +221,7 @@ enum Pending {
     },
     JobList,
     History,
+    Profiles,
     LogPreview(u64),
     PreviewJobs(u64),
 }
@@ -262,8 +263,10 @@ pub struct App {
     pub refresh_error: Option<String>,
     pub stack: Vec<Sub>,
     pub prompt: Option<Prompt>,
+    pub(super) create_worker: Option<CreateWorker>,
     pub confirm: Option<Confirm>,
     pub help: bool,
+    pub(super) help_top: u16,
     pub plain: bool,
     pub flash: Option<Flash>,
     pub tick: u64,
@@ -540,7 +543,11 @@ impl App {
             self.log_drag = None;
             return;
         }
-        if self.help || self.prompt.is_some() || self.confirm.is_some() {
+        if self.help
+            || self.prompt.is_some()
+            || self.create_worker.is_some()
+            || self.confirm.is_some()
+        {
             return;
         }
         let point = Position::new(event.column, event.row);
@@ -713,6 +720,20 @@ impl App {
                         view.no_jobs = ok && out.trim().is_empty();
                     }
                 }
+                Some(Pending::Profiles) => {
+                    if let Some(form) = self
+                        .create_worker
+                        .as_mut()
+                        .filter(|form| form.request == id)
+                    {
+                        let result = if ok {
+                            serde_json::from_str(&out).map_err(|error| error.to_string())
+                        } else {
+                            Err(err)
+                        };
+                        form.load(result);
+                    }
+                }
                 Some(Pending::History) => {
                     self.history_loading = false;
                     let keep = self.selected().map(|w| w.name.clone());
@@ -827,6 +848,46 @@ impl App {
             self.quit = true;
             return;
         }
+        if self.help {
+            match k.code {
+                KeyCode::Down => self.help_top = self.help_top.saturating_add(1),
+                KeyCode::Up => self.help_top = self.help_top.saturating_sub(1),
+                KeyCode::PageDown => self.help_top = self.help_top.saturating_add(10),
+                KeyCode::PageUp => self.help_top = self.help_top.saturating_sub(10),
+                _ => self.help = false,
+            }
+            return;
+        }
+        if k.code == KeyCode::F(1)
+            || (k.code == KeyCode::Char('?')
+                && self.prompt.is_none()
+                && self
+                    .create_worker
+                    .as_ref()
+                    .is_none_or(|form| form.input(form.focus).is_none()))
+        {
+            self.help = true;
+            self.help_top = 0;
+            return;
+        }
+        if let Some(form) = &mut self.create_worker {
+            match k.code {
+                KeyCode::Esc => self.create_worker = None,
+                KeyCode::Enter => match form.submission() {
+                    Ok((args, ssh)) => {
+                        self.create_worker = None;
+                        if ssh {
+                            self.suspend = Some(args);
+                        } else {
+                            self.act(args, "new worker");
+                        }
+                    }
+                    Err(error) => form.error = Some(error),
+                },
+                _ => form.key(k),
+            }
+            return;
+        }
         if self.prompt.is_some() {
             self.prompt_key(k);
             return;
@@ -838,17 +899,9 @@ impl App {
             }
             return;
         }
-        if self.help {
-            self.help = false;
-            return;
-        }
         match k.code {
             KeyCode::Char('n') if k.modifiers.is_empty() => {
                 self.plain = !self.plain;
-                return;
-            }
-            KeyCode::Char('?') => {
-                self.help = true;
                 return;
             }
             KeyCode::Char(':') => {
@@ -889,13 +942,11 @@ impl App {
             && matches!(
                 k.code,
                 KeyCode::Delete
-                    | KeyCode::Char(
-                        's' | 'i' | 'I' | 'p' | 'b' | 'y' | 'e' | 't' | 'c' | 'K' | 'N'
-                    )
+                    | KeyCode::Char('s' | 'i' | 'I' | 'p' | 'b' | 'y' | 'e' | 't' | 'K' | 'N')
             )
             || retired && k.code == KeyCode::Char('d') && !ctrl
         {
-            self.say("Worker is retired. Press Enter for cached logs.", false);
+            self.say("Worker is retired. Cached logs are available.", false);
             return;
         }
         let need = |app: &mut App| -> Option<String> {
@@ -949,12 +1000,12 @@ impl App {
             KeyCode::Char('L') => self.open_text("logs · all workers", s(&["logs", "--follow"])),
             KeyCode::Char('E') => self.open_text("events", s(&["events", "--watch"])),
             KeyCode::Char('P') => self.open_text("profiles", s(&["profiles"])),
-            KeyCode::Char('c') => self.ask(
-                PromptKind::Up,
-                "new worker",
-                "--ttl 2h --topic ",
-                "up options: --ttl --profile --flavor --disk --topic …",
-            ),
+            KeyCode::Char('c') => {
+                let id = self.id();
+                self.create_worker = Some(CreateWorker::new(id));
+                self.pending.insert(id, Pending::Profiles);
+                proc::action(id, s(&["profiles", "--json"]), self.tx.clone());
+            }
             KeyCode::Char('X') => {
                 let mine: Vec<String> = self
                     .workers
@@ -1232,8 +1283,6 @@ impl App {
         let Some(p) = self.prompt.as_mut() else {
             return;
         };
-        let ctrl = k.modifiers.contains(KeyModifiers::CONTROL);
-        let byte = |s: &str, c: usize| s.char_indices().nth(c).map_or(s.len(), |(i, _)| i);
         match k.code {
             KeyCode::Esc => {
                 let kind = p.kind.clone();
@@ -1258,39 +1307,7 @@ impl App {
                 self.submit(p);
                 return;
             }
-            KeyCode::Char('u') if ctrl => {
-                let at = byte(&p.input, p.cursor);
-                p.input.replace_range(..at, "");
-                p.cursor = 0;
-            }
-            KeyCode::Char('a') if ctrl => p.cursor = 0,
-            KeyCode::Char('e') if ctrl => p.cursor = p.input.chars().count(),
-            KeyCode::Char('w') if ctrl => {
-                let at = byte(&p.input, p.cursor);
-                let head = p.input[..at].trim_end();
-                let cut = head.rfind(' ').map_or(0, |i| i + 1);
-                p.input.replace_range(cut..at, "");
-                p.cursor = p.input[..cut].chars().count();
-            }
-            KeyCode::Char(c) if !ctrl => {
-                let at = byte(&p.input, p.cursor);
-                p.input.insert(at, c);
-                p.cursor += 1;
-            }
-            KeyCode::Backspace if p.cursor > 0 => {
-                let at = byte(&p.input, p.cursor - 1);
-                p.input.remove(at);
-                p.cursor -= 1;
-            }
-            KeyCode::Delete if p.cursor < p.input.chars().count() => {
-                let at = byte(&p.input, p.cursor);
-                p.input.remove(at);
-            }
-            KeyCode::Left => p.cursor = p.cursor.saturating_sub(1),
-            KeyCode::Right => p.cursor = (p.cursor + 1).min(p.input.chars().count()),
-            KeyCode::Home => p.cursor = 0,
-            KeyCode::End => p.cursor = p.input.chars().count(),
-            _ => {}
+            _ => create::edit(&mut p.input, &mut p.cursor, k),
         }
         // Filters apply while typing.
         let (kind, input) = (p.kind.clone(), p.input.clone());
@@ -1338,20 +1355,6 @@ impl App {
                 }
                 self.act(args, format!("claim {w}"));
             }
-            PromptKind::Up => match split_words(&input) {
-                Ok(mut words) => {
-                    let mut args = vec!["up".to_string()];
-                    if words.iter().any(|w| w == "--ssh") {
-                        args.append(&mut words);
-                        self.suspend = Some(args);
-                    } else {
-                        args.append(&mut words);
-                        args.push("--quiet-topic-warning".into());
-                        self.act(args, "new worker");
-                    }
-                }
-                Err(e) => self.say(e, true),
-            },
             PromptKind::Start(w) if !input.is_empty() => {
                 let label = format!("start on {w}");
                 self.act(vec!["start".into(), w, "--".into(), input], label);
@@ -1534,8 +1537,10 @@ pub fn run(ctx: &Ctx, interval: Duration) -> std::io::Result<()> {
         refresh_error: None,
         stack: Vec::new(),
         prompt: None,
+        create_worker: None,
         confirm: None,
         help: false,
+        help_top: 0,
         plain: false,
         flash: None,
         tick: 0,

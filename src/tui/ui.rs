@@ -1,8 +1,8 @@
-//! Drawing: a header line, the current view, a one-line key hint footer,
-//! and overlays (prompt, confirmation, help).
+//! Drawing for the current view, status line, and modal overlays.
 
 use super::ansi;
 use super::app::{App, Jobs, LogDivider, Sub, TextView, Urgency};
+use super::create::{CreateWorker, Field};
 use crate::{
     paint,
     table::{COLUMNS, WIDE_COLUMNS, glyph},
@@ -21,21 +21,6 @@ const SPINNER: &[&str] = &["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧
 
 fn dim() -> Style {
     Style::new().fg(Color::DarkGray)
-}
-
-fn key_hints(pairs: &[(&str, &str)]) -> Line<'static> {
-    let mut spans = Vec::new();
-    for (i, (k, what)) in pairs.iter().enumerate() {
-        if i > 0 {
-            spans.push(Span::styled("  ", dim()));
-        }
-        spans.push(Span::styled(
-            (*k).to_string(),
-            Style::new().fg(ACCENT).bold(),
-        ));
-        spans.push(Span::styled(format!(" {what}"), dim()));
-    }
-    Line::from(spans)
 }
 
 fn agent_cell(agent: &str, icons: bool) -> Line<'static> {
@@ -122,6 +107,90 @@ fn centered(area: Rect, width: u16, height: u16) -> Rect {
     }
 }
 
+fn draw_create(f: &mut Frame, form: &CreateWorker) {
+    let facts = form.profile_facts();
+    let mut rows = Vec::new();
+    for field in form.fields() {
+        rows.push(Some(field));
+        if field == Field::Profile && !facts.is_empty() {
+            rows.push(None);
+        }
+    }
+    let area = centered(f.area(), 72, rows.len() as u16 + 3);
+    f.render_widget(Clear, area);
+    let block = Block::bordered()
+        .border_type(BorderType::Rounded)
+        .border_style(Style::new().fg(ACCENT))
+        .title(" Create worker ");
+    let inner = block.inner(area);
+    f.render_widget(block, area);
+    if inner.height < 3 || inner.width < 18 {
+        return;
+    }
+
+    let error_rows = u16::from(form.error.is_some());
+    if let Some(error) = &form.error {
+        f.render_widget(
+            Paragraph::new(Line::styled(error.as_str(), Style::new().fg(Color::Yellow))),
+            Rect::new(inner.x + 1, inner.bottom() - 1, inner.width - 2, 1),
+        );
+    }
+    let visible = usize::from(inner.height - error_rows);
+    let focus = rows
+        .iter()
+        .position(|row| *row == Some(form.focus))
+        .unwrap_or(0);
+    let start = focus.saturating_sub(visible - 1);
+    let label_width = 15;
+    let value_width = inner.width - label_width - 2;
+    for (position, field) in rows.into_iter().skip(start).take(visible).enumerate() {
+        let y = inner.y + position as u16;
+        let value_area = Rect::new(inner.x + label_width, y, value_width, 1);
+        let Some(field) = field else {
+            f.render_widget(
+                Paragraph::new(Line::styled(facts.as_str(), dim())),
+                value_area,
+            );
+            continue;
+        };
+        let active = form.focus == field;
+        let style = if active {
+            Style::new().fg(ACCENT).bold()
+        } else {
+            Style::default()
+        };
+        let marker = if active { "› " } else { "  " };
+        let label = Line::styled(format!("{marker}{}", field.label()), style);
+        f.render_widget(
+            Paragraph::new(label),
+            Rect::new(inner.x + 1, y, label_width - 1, 1),
+        );
+        if let Some((input, placeholder)) = form.input(field) {
+            let text = if input.text.is_empty() {
+                Line::styled(placeholder, dim())
+            } else {
+                Line::from(input.text.as_str())
+            };
+            let before: String = input.text.chars().take(input.cursor).collect();
+            let cursor = before.width().min(u16::MAX as usize) as u16;
+            let shift = if active {
+                cursor.saturating_sub(value_width - 1)
+            } else {
+                0
+            };
+            f.render_widget(Paragraph::new(text).scroll((0, shift)), value_area);
+            if active {
+                f.set_cursor_position((value_area.x + cursor - shift, y));
+            }
+        } else {
+            f.render_widget(
+                Paragraph::new(Line::styled(form.choice(field), style)),
+                value_area,
+            );
+        }
+    }
+}
+
 fn ago(d: Duration) -> String {
     let s = d.as_secs();
     if s < 60 {
@@ -133,19 +202,10 @@ fn ago(d: Duration) -> String {
 
 impl App {
     pub fn draw(&mut self, f: &mut Frame) {
-        let [head, body, foot] = Layout::vertical([
-            Constraint::Length(1),
-            Constraint::Fill(1),
-            Constraint::Length(1),
-        ])
-        .areas(f.area());
+        let [body, status] =
+            Layout::vertical([Constraint::Fill(1), Constraint::Length(1)]).areas(f.area());
         let plain = self.plain;
-        let body = if plain {
-            f.area()
-        } else {
-            self.draw_header(f, head);
-            body
-        };
+        let body = if plain { f.area() } else { body };
         self.mouse_table = None;
         self.mouse_text = None;
         self.log_divider = None;
@@ -165,26 +225,16 @@ impl App {
         if self.log_drag != self.log_divider.as_ref().map(|divider| divider.direction)
             || self.help
             || self.prompt.is_some()
+            || self.create_worker.is_some()
             || self.confirm.is_some()
         {
             self.log_drag = None;
         }
         if !plain {
-            self.draw_footer(f, foot);
-        }
-        if self.help {
-            self.draw_help(f);
+            self.draw_status(f, status);
         }
         if let Some(c) = &self.confirm {
-            let lines: Vec<Line> = c
-                .text
-                .lines()
-                .map(|l| Line::from(l.to_string()))
-                .chain([
-                    Line::default(),
-                    key_hints(&[("y", "yes"), ("any other key", "no")]),
-                ])
-                .collect();
+            let lines: Vec<Line> = c.text.lines().map(|l| Line::from(l.to_string())).collect();
             let width = c
                 .text
                 .lines()
@@ -226,9 +276,15 @@ impl App {
             );
             f.set_cursor_position((inner.x + 2 + before.width() as u16 - shift, inner.y));
         }
+        if let Some(form) = &self.create_worker {
+            draw_create(f, form);
+        }
+        if self.help {
+            self.draw_help(f);
+        }
     }
 
-    fn draw_header(&self, f: &mut Frame, area: Rect) {
+    fn draw_status(&self, f: &mut Frame, area: Rect) {
         let mine = self.workers.iter().filter(|w| w.mine).count();
         let mut left = vec![
             Span::styled(" rworker ", Style::new().fg(Color::Black).bg(ACCENT).bold()),
@@ -261,7 +317,14 @@ impl App {
                 Style::new().fg(Color::Yellow),
             ));
         }
-        let right = if let Some(e) = &self.refresh_error {
+        let right = if let Some(flash) = self.flash_live() {
+            let color = if flash.error {
+                Color::Red
+            } else {
+                Color::Green
+            };
+            Span::styled(format!("{} ", flash.text), Style::new().fg(color))
+        } else if let Some(e) = &self.refresh_error {
             Span::styled(format!("⚠ {e} "), Style::new().fg(Color::Red))
         } else if self.refreshing {
             Span::styled(
@@ -289,92 +352,15 @@ impl App {
         };
         let [l, r] = Layout::horizontal([
             Constraint::Fill(1),
-            Constraint::Length(right.width() as u16),
+            Constraint::Length(
+                right
+                    .width()
+                    .min(usize::from(area.width.saturating_sub(10))) as u16,
+            ),
         ])
         .areas(area);
         f.render_widget(Line::from(left), l);
         f.render_widget(Line::from(right).alignment(Alignment::Right), r);
-    }
-
-    fn draw_footer(&self, f: &mut Frame, area: Rect) {
-        if let Some(fl) = self.flash_live() {
-            let style = if fl.error {
-                Style::new().fg(Color::Red)
-            } else {
-                Style::new().fg(Color::Green)
-            };
-            f.render_widget(Line::styled(format!(" {}", fl.text), style), area);
-            return;
-        }
-        let hints = match self.stack.last() {
-            None => key_hints(&[
-                ("J", "jobs"),
-                (
-                    "h",
-                    if self.show_history {
-                        "hide retired"
-                    } else {
-                        "show retired"
-                    },
-                ),
-                (
-                    "⏎",
-                    if self.selected().is_some_and(|worker| worker.retired) {
-                        "cached logs"
-                    } else {
-                        "worker jobs"
-                    },
-                ),
-                ("l", "logs"),
-                ("L", "all logs"),
-                ("s", "ssh"),
-                ("i", "inspect"),
-                ("e", "extend"),
-                ("d", "down"),
-                ("c", "new"),
-                ("n", "plain view"),
-                ("/", "filter"),
-                ("?", "help"),
-            ]),
-            Some(Sub::Jobs(jobs)) => key_hints(&[
-                ("J", "workers"),
-                (
-                    "d",
-                    if jobs.show_finished {
-                        "active jobs"
-                    } else {
-                        "include finished"
-                    },
-                ),
-                ("⏎", "job log"),
-                ("l", "all logs"),
-                ("p", "ps"),
-                ("c", "start job"),
-                ("n", "plain view"),
-                ("s", "ssh"),
-                ("r", "reload"),
-                ("esc", "back"),
-            ]),
-            Some(Sub::Text(_)) => key_hints(&[
-                ("↑↓", "scroll"),
-                ("g/G", "top / resume"),
-                ("space", "pause / resume"),
-                ("J", "worker jobs"),
-                ("/", "filter"),
-                ("w", "wrap"),
-                ("n", "plain view"),
-                ("c", "clear"),
-                ("esc", "back"),
-            ]),
-        };
-        f.render_widget(
-            hints,
-            Rect {
-                x: area.x + 1,
-                width: area.width.saturating_sub(1),
-                ..area
-            },
-        );
     }
 
     fn draw_workers(&mut self, f: &mut Frame, area: Rect) {
@@ -404,7 +390,7 @@ impl App {
                 if self.refreshed.is_none() && !self.stale {
                     "loading…"
                 } else {
-                    "No workers. Press c to create one."
+                    "No workers."
                 }
             } else {
                 "Nothing matches the filter (esc clears it)."
@@ -576,74 +562,141 @@ impl App {
         }
     }
 
-    fn draw_help(&self, f: &mut Frame) {
-        let section = |t: &str| Line::styled(t.to_string(), Style::new().fg(ACCENT).bold());
-        let row = |k: &str, what: &str| {
-            Line::from(vec![
-                Span::styled(format!(" {k:<13}"), Style::new().bold()),
-                Span::raw(what.to_string()),
-            ])
+    fn draw_help(&mut self, f: &mut Frame) {
+        let (title, mut keys) = if self.create_worker.is_some() {
+            (
+                "Create worker",
+                vec![
+                    ("Tab / ↓", "Next field"),
+                    ("Shift-Tab / ↑", "Previous field"),
+                    (
+                        "← / → / Space",
+                        "Change profile or SSH behavior on a selector",
+                    ),
+                    ("← / →", "Move cursor in a text field"),
+                    ("Enter", "Create with the current values"),
+                    ("Esc", "Cancel creation"),
+                ],
+            )
+        } else if self.prompt.is_some() {
+            (
+                "Text input",
+                vec![
+                    ("← / →", "Move cursor"),
+                    ("Enter", "Accept"),
+                    ("Esc", "Cancel"),
+                ],
+            )
+        } else if self.confirm.is_some() {
+            (
+                "Confirm action",
+                vec![("y / Enter", "Confirm"), ("Other key", "Cancel")],
+            )
+        } else {
+            match self.stack.last() {
+                None => (
+                    "Workers",
+                    vec![
+                        ("↑ / ↓ or k / j", "Select a worker"),
+                        ("Home / End or g / G", "First / last worker"),
+                        ("PgUp / PgDn", "Move by ten workers"),
+                        ("Ctrl-U / Ctrl-D", "Move by ten workers"),
+                        (
+                            "Enter / o",
+                            "Worker jobs, or cached logs for retired workers",
+                        ),
+                        ("J", "All jobs"),
+                        ("l / L", "Worker logs / all logs"),
+                        ("E / P", "Lifecycle events / profiles"),
+                        ("i / I / p", "Inspect / boot details / job processes"),
+                        ("s / b / y", "SSH / builder line / copy name"),
+                        ("e / t / C", "Extend / edit topic / claim"),
+                        ("K / N", "Renew niks3 token / configure Nix cache"),
+                        ("c", "Create a worker"),
+                        (
+                            "d / Delete / X",
+                            "Delete worker / prune yours (confirmation)",
+                        ),
+                        ("h / m", "Toggle retired workers / only yours"),
+                        ("/", "Filter workers"),
+                        ("Esc / r / q", "Clear filters / refresh / quit"),
+                        ("Click / wheel", "Select workers or scroll log preview"),
+                        ("Drag divider", "Resize the log preview"),
+                    ],
+                ),
+                Some(Sub::Jobs(_)) => (
+                    "Jobs",
+                    vec![
+                        ("↑ / ↓ or k / j", "Select a job"),
+                        ("g / G", "First / last job"),
+                        ("Enter / l", "Selected log / all logs for this worker"),
+                        ("c / p / s", "Start job / job processes / SSH"),
+                        ("d / r", "Toggle finished jobs / reload"),
+                        ("J", "Return to workers"),
+                        ("Esc / q / Backspace / h", "Back"),
+                        ("Click / wheel", "Select jobs"),
+                    ],
+                ),
+                Some(Sub::Text(view)) => {
+                    let mut keys = vec![
+                        ("↑ / ↓ or k / j", "Scroll by a line"),
+                        ("PgUp / PgDn", "Scroll by a page"),
+                        ("Ctrl-U / Ctrl-D", "Scroll by half a page"),
+                        ("Home / g", "Go to top and pause following"),
+                        ("End / G", "Resume following at the bottom"),
+                        ("Space / f", "Toggle following"),
+                        ("/", "Filter lines"),
+                        ("w / c", "Toggle wrap / clear output"),
+                        ("Mouse wheel", "Scroll"),
+                        ("Esc", "Clear the filter or go back"),
+                        ("q / Backspace / h", "Back"),
+                    ];
+                    if view.worker.is_some() {
+                        keys.push(("J", "Jobs for this worker"));
+                    }
+                    ("Logs and output", keys)
+                }
+            }
         };
-        let left = vec![
-            section("Workers"),
-            row("↑↓ k g G", "move"),
-            row("J", "toggle Jobs / Workers"),
-            row("h", "show or hide retired workers"),
-            row("d (Jobs)", "toggle finished jobs"),
-            row("⏎ / o", "jobs of the worker"),
-            row("l", "follow its logs"),
-            row("L", "follow all workers' logs"),
-            row("E", "lifecycle events"),
-            row("i / I", "inspect (I: boot metadata)"),
-            row("p", "processes of its jobs"),
-            row("s", "ssh (exit comes back)"),
-            row("e  t  C", "extend · topic · claim"),
-            row("d", "down (asks first)"),
-            row("c", "new worker (up)"),
-            row("X", "prune yours (asks first)"),
-            row("K  N", "niks3 token · nix-cache"),
-            row("b  y", "builder line · copy name"),
-            row("P", "profiles"),
-            row("/  m", "filter · only yours"),
-            row("r", "refresh now"),
-            row("click / wheel", "select rows or scroll logs"),
-            row("drag divider", "resize the logs pane"),
-        ];
-        let right = vec![
-            section("Jobs"),
-            row("⏎", "follow the job's log"),
-            row("c", "start a job"),
-            row("l  p  s", "all logs · ps · ssh"),
-            row("r", "reload"),
-            Line::default(),
-            section("Logs and output"),
-            row("↑↓ PgUp PgDn", "scroll"),
-            row("g / G", "top and pause / bottom and resume"),
-            row("space / f", "pause / resume following"),
-            row("J", "show worker jobs"),
-            row("/", "filter lines"),
-            row("w  c", "wrap · clear"),
-            Line::default(),
-            section("Anywhere"),
-            row(":", "any rworker action"),
-            row("", "(sync, cp, exec, …)"),
-            row("esc / q", "back (q on the list quits)"),
-            row("ctrl-c / alt-shift-q", "quit"),
-        ];
-        let rows = left.len().max(right.len()) as u16;
-        let area = centered(f.area(), 92, rows + 2);
+        if self.prompt.is_some() || self.create_worker.is_some() {
+            keys.extend([
+                ("Home / End", "Beginning / end of input"),
+                ("Ctrl-A / Ctrl-E", "Beginning / end of input"),
+                ("Backspace / Delete", "Delete left / right of cursor"),
+                ("Ctrl-W / Ctrl-U", "Delete previous word / to beginning"),
+            ]);
+        } else if self.confirm.is_none() {
+            keys.extend([(":", "Run an rworker command"), ("n", "Toggle plain view")]);
+        }
+        keys.push(("Ctrl-C / Alt-Shift-Q", "Quit rworker"));
+        let compact = f.area().width < 62;
+        let row_count = keys.len() as u16 * if compact { 2 } else { 1 };
+        let area = centered(f.area(), 78, row_count + 2);
         f.render_widget(Clear, area);
         let block = Block::bordered()
             .border_type(BorderType::Rounded)
             .border_style(Style::new().fg(ACCENT))
-            .title(" keys ")
-            .title_bottom(Line::styled(" any key closes ", dim()));
+            .title(format!(" {title} · keys "))
+            .title_bottom(Line::styled(" ↑ ↓ Scroll · Esc Close ", dim()));
         let inner = block.inner(area);
         f.render_widget(block, area);
-        let [l, r] = Layout::horizontal([Constraint::Percentage(50), Constraint::Percentage(50)])
-            .areas(inner);
-        f.render_widget(Paragraph::new(left), l);
-        f.render_widget(Paragraph::new(right), r);
+        let mut lines = Vec::new();
+        let key_style = Style::new().fg(ACCENT).bold();
+        for (key, description) in keys {
+            if compact {
+                lines.push(Line::styled(format!(" {key}"), key_style));
+                lines.push(Line::from(format!("   {description}")));
+            } else {
+                lines.push(Line::from(vec![
+                    Span::styled(format!(" {key:<24}"), key_style),
+                    Span::raw(description),
+                ]));
+            }
+        }
+        self.help_top = self
+            .help_top
+            .min((lines.len() as u16).saturating_sub(inner.height));
+        f.render_widget(Paragraph::new(lines).scroll((self.help_top, 0)), inner);
     }
 }
 
@@ -664,7 +717,7 @@ fn draw_jobs(f: &mut Frame, area: Rect, j: &mut Jobs) {
         } else if j.show_finished {
             "No jobs"
         } else {
-            "No active jobs. Press d to include finished jobs."
+            "No active jobs."
         };
         f.render_widget(
             Paragraph::new(Line::styled(message, dim())).wrap(Wrap { trim: false }),

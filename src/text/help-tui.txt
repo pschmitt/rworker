@@ -6,12 +6,13 @@ lifecycle events, followed live, and the actions on the selected worker
 (ssh, inspect, ps, extend, topic, claim, down, new worker, ...).
 Press J to toggle Workers and Jobs, or Enter for the selected worker’s jobs.
 Press h to show or hide retired workers inline.
-Press c to create a worker, or C to claim the selected worker.
-Press n to toggle chrome in all views. In Jobs, press c to start a job.
+Press c to open the worker creation form, or C to claim the selected worker.
+Press n to toggle plain view in all views. In Jobs, press c to start a job.
 Alt+Shift+Q quits from any view.
 The second pane follows the selected worker’s logs. Click a row to
 select it, or scroll over a table or log pane.
-: runs any other action (sync, cp, exec, nix-cache, ...). ? lists the keys.
+: runs any other action (sync, cp, exec, nix-cache, ...). ? opens help for the current view.
+F1 opens help while editing a field.
 
   -n SECONDS, --interval SECONDS
                  jobs refresh and inventory polling fallback interval (default 5)

@@ -41,6 +41,10 @@ The Rust client and controller replace the original Bash client.
 
 ### TUI
 
+- Move status to the bottom and show shortcuts in help for the current view.
+
+- Add a worker creation form with profile resources and SSH options.
+
 - Use one divider around the worker log preview and remove the log spinner.
 
 - Remove the live inventory badge and give the stacked log pane one more row.
