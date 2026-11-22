@@ -260,8 +260,9 @@ const sortFields = {
   ],
   jobs: [(row) => row.job, (row) => row.state],
   events: [(row) => row.kind, (row) => row.target, (row) => timestamp(row.timestamp)],
-  profiles: [(row) => row.name, (row) => row.vcpus, (row) => row.ram_mib,
-    (row) => Number(row.disk) || null, (row) => row.flavor, (row) => (row.image_tags || []).join(", ")],
+  profiles: [(row) => row.name, (row) => row.vcpus,
+    (row) => row.ram_gb == null ? row.ram_mib : row.ram_gb * 1e9 / 2 ** 20,
+    (row) => row.disk_gb == null ? Number(row.disk) || null : row.disk_gb * 1e9 / 2 ** 30, (row) => row.flavor, (row) => (row.image_tags || []).join(", ")],
 };
 const sortLabels = new Intl.Collator(undefined, { numeric: true, sensitivity: "base" });
 
@@ -435,10 +436,11 @@ function render() {
         const profile = named(row.name, row.default ? "Default" : "", () => form("create", null, row.name));
         if (row.flavor) profile.append(element("span", row.flavor, "secondary profile-context"));
         if (tags) profile.append(element("span", tags, "secondary profile-context"));
-        const ram = row.ram_mib == null ? "—" :
+        const ram = row.ram_gb != null ? row.ram_gb + " GB" : row.ram_mib == null ? "—" :
           row.ram_mib % 1024 === 0 ? row.ram_mib / 1024 + " GiB" : row.ram_mib + " MiB";
+        const disk = row.disk_gb != null ? row.disk_gb + " GB" : row.disk ? row.disk + " GiB" : "—";
         return {
-          cells: [profile, row.vcpus, ram, row.disk ? row.disk + " GiB" : "—", row.flavor, tags || "—"],
+          cells: [profile, row.vcpus, ram, disk, row.flavor, tags || "—"],
         };
       });
   }

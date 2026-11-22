@@ -233,7 +233,7 @@ pub fn cmd_profiles(ctx: &Ctx, args: &[String]) -> R {
         crate::ctx::json_out(ctx, &jq::pretty(&Value::Array(list)));
         return Ok(());
     }
-    let mut rows = vec!["PROFILE\tFLAVOR\tVCPU\tRAM (MiB)\tDISK (GiB)\tIMAGE TAGS".to_string()];
+    let mut rows = vec!["PROFILE\tFLAVOR\tVCPU\tRAM\tDISK\tIMAGE TAGS".to_string()];
     for p in &list {
         let star = if jq::truthy(get(p, "default")) {
             "*"
@@ -244,17 +244,26 @@ pub fn cmd_profiles(ctx: &Ctx, args: &[String]) -> R {
             .as_array()
             .map(|a| a.iter().map(jq::raw).collect())
             .unwrap_or_default();
+        let size = |decimal: &str, binary: &str, unit: &str| {
+            if let Some(gb) = p[decimal].as_u64() {
+                format!("{gb} GB")
+            } else if !p[binary].is_null() {
+                format!("{} {unit}", jq::raw(&p[binary]))
+            } else {
+                "-".to_owned()
+            }
+        };
         rows.push(
             [
                 jq::tsv(&json!(format!("{}{star}", jq::raw(get(p, "name"))))),
                 jq::tsv(get(p, "flavor")),
                 jq::tsv(&json!(
-                    p.get("vcpus").map_or_else(|| "-".to_string(), jq::raw)
+                    p.get("vcpus")
+                        .filter(|value| !value.is_null())
+                        .map_or_else(|| "-".to_owned(), jq::raw)
                 )),
-                jq::tsv(&json!(
-                    p.get("ram_mib").map_or_else(|| "-".to_string(), jq::raw)
-                )),
-                jq::raw(get(p, "disk")),
+                size("ram_gb", "ram_mib", "MiB"),
+                size("disk_gb", "disk", "GiB"),
                 jq::tsv(&json!(tags.join(", "))),
             ]
             .join("\t"),

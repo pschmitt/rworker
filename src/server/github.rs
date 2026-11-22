@@ -39,7 +39,7 @@ impl<'a> GitHub<'a> {
         });
         self.request(
             "POST",
-            &format!("workflows/{WORKFLOW}/dispatches"),
+            &format!("/actions/workflows/{WORKFLOW}/dispatches"),
             Some(payload),
         )?["workflow_run_id"]
             .as_u64()
@@ -48,7 +48,7 @@ impl<'a> GitHub<'a> {
     }
 
     pub(super) fn completed(&self, run_id: u64) -> Result<bool, String> {
-        let result = self.request("GET", &format!("runs/{run_id}"), None)?;
+        let result = self.request("GET", &format!("/actions/runs/{run_id}"), None)?;
         result["status"]
             .as_str()
             .map(|status| status == "completed")
@@ -56,15 +56,18 @@ impl<'a> GitHub<'a> {
     }
 
     pub(super) fn cancel(&self, run_id: u64) -> Result<(), String> {
-        self.request("POST", &format!("runs/{run_id}/cancel"), None)?;
+        self.request("POST", &format!("/actions/runs/{run_id}/cancel"), None)?;
         Ok(())
     }
 
+    pub(super) fn public_repository(&self) -> Option<bool> {
+        self.request("GET", "", None).ok()?["private"]
+            .as_bool()
+            .map(|private| !private)
+    }
+
     fn request(&self, method: &str, endpoint: &str, body: Option<Value>) -> Result<Value, String> {
-        let url = format!(
-            "https://api.github.com/repos/{}/actions/{endpoint}",
-            self.repository
-        );
+        let url = format!("https://api.github.com/repos/{}{endpoint}", self.repository);
         let authorization = format!("Authorization: Bearer {}", self.token);
         let body = body.map(|value| value.to_string());
         super::http::json_request(

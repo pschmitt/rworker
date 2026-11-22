@@ -437,17 +437,32 @@ fn profiles(settings: &Value) -> io::Result<Vec<Value>> {
             }
         }
     }
-    if settings["githubActions"].is_object() {
+    let gha = &settings["githubActions"];
+    if let Some(repository) = gha["repository"].as_str() {
+        let specs = gha["tokenFile"]
+            .as_str()
+            .and_then(|path| std::fs::read_to_string(path).ok())
+            .and_then(|token| {
+                github::GitHub::new(repository, token.trim())
+                    .ok()?
+                    .public_repository()
+            })
+            // GitHub's standard public and private Ubuntu runner specifications.
+            .map(|public| if public { (4, 16) } else { (2, 8) });
         rows.extend(
             [
-                ("github-arm64", "aarch64-linux"),
-                ("github-x64", "x86_64-linux"),
+                ("github-arm64", "aarch64-linux", "ubuntu-24.04-arm"),
+                ("github-x64", "x86_64-linux", "ubuntu-24.04"),
             ]
-            .map(|(profile, system)| {
+            .map(|(profile, system, runner)| {
                 json!({
                     "name": profile,
                     "provider": "github",
                     "system": system,
+                    "flavor": runner,
+                    "vcpus": specs.map(|(cpus, _)| cpus),
+                    "ram_gb": specs.map(|(_, ram)| ram),
+                    "disk_gb": 14,
                     "default": false,
                 })
             }),

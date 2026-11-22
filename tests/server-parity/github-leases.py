@@ -47,7 +47,9 @@ import sys
 root = Path(os.environ["RWORKER_GITHUB_FIXTURE"])
 config = dict(line.strip().split(" = ", 1) for line in sys.stdin if not line.startswith("header"))
 url = json.loads(config["url"])
-if url.endswith("/jwks"):
+if url == "https://api.github.com/repos/example/project":
+    print(json.dumps({"private": (root / "private").exists()}))
+elif url.endswith("/jwks"):
     print((root / "jwks").read_text())
 elif url.endswith("/dispatches"):
     dispatch = json.loads(json.loads(config["data-raw"]))
@@ -69,6 +71,14 @@ else:
 
     def control(*args):
         return json.loads(subprocess.check_output([*command, *args], env=environment))
+
+    for resource_spec in ((4, 16), (2, 8)):
+        profiles = control("profiles")
+        assert {profile["name"] for profile in profiles} == {"github-arm64", "github-x64"}
+        for profile in profiles:
+            assert (profile["vcpus"], profile["ram_gb"]) == resource_spec
+            assert profile["disk_gb"] == 14
+        (root / "private").touch()
 
     public_key = "ssh-ed25519 " + base64.b64encode(bytes(32)).decode()
     lease = control("github-up", "linux-arm64", "2m", public_key, "operator", "fixture")
