@@ -131,7 +131,11 @@ pub fn run(ctx: &crate::ctx::Ctx, args: &[String]) -> R {
         "up" | "github-up" | "github-status" | "github-down" | "github-reap" => None,
         "reap" if rest.is_empty() || rest == ["--dry-run"] => None,
         "autoscale" if rest.is_empty() || rest == ["--once"] => None,
-        "profiles" if rest.is_empty() => None,
+        "profiles"
+            if rest.is_empty() || matches!(rest, [flag] | [flag, _] if flag == "--details") =>
+        {
+            None
+        }
         "ls" if rest.is_empty() || rest == ["--fresh"] => None,
         "topic" | "claim" | "extend" | "niks3-token" | "down" => match parse_edit(action, rest) {
             Ok(edit) => Some(edit),
@@ -211,6 +215,12 @@ pub fn run(ctx: &crate::ctx::Ctx, args: &[String]) -> R {
                     _ => profiles(&settings)?,
                 };
                 github_leases::add_disk_observations(&settings, &mut rows);
+                if !rest.is_empty() {
+                    if let Some(name) = rest.get(1) {
+                        rows.retain(|row| row["name"] == name.as_str());
+                    }
+                    add_profile_images(&settings, &mut rows);
+                }
                 Value::Array(rows)
             }
         };
@@ -465,6 +475,32 @@ fn profiles(settings: &Value) -> io::Result<Vec<Value>> {
         }));
     }
     Ok(rows)
+}
+
+fn add_profile_images(settings: &Value, rows: &mut [Value]) {
+    let compute = openstack::OpenStack::from_settings(settings);
+    let mut images = provision::Images::default();
+    for row in rows {
+        if row["provider"] == "github" {
+            continue;
+        }
+        let Some(name) = row["name"].as_str() else {
+            continue;
+        };
+        match compute
+            .as_ref()
+            .map_err(ToString::to_string)
+            .and_then(|compute| images.select(compute, name, &settings["profiles"][name]))
+        {
+            Ok(Some((created, id, name))) => {
+                row["image_name"] = json!(name);
+                row["image_id"] = json!(id);
+                row["image_created_at"] = json!(created);
+            }
+            Ok(None) => row["image_status"] = json!("No matching active image"),
+            Err(_) => row["image_status"] = json!("Image lookup unavailable"),
+        }
+    }
 }
 
 fn epoch() -> f64 {

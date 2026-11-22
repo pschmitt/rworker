@@ -110,6 +110,17 @@ def record(event):
 """ + script)
         path.chmod(0o700)
 
+    detailed = subprocess.run(
+        [str(binary), "server", str(root / "cfg"), "profiles", "--details", "standard"],
+        capture_output=True, text=True, timeout=10,
+        env={**os.environ, "PATH": f"{root}:{os.environ['PATH']}"},
+        check=True,
+    )
+    [profile] = json.loads(detailed.stdout)
+    assert (profile["image_id"], profile["image_name"], profile["image_created_at"]) == (
+        "image", "rworker-abcdef123456", "2026-01-01",
+    )
+
     console_key = "ssh-ed25519 " + base64.b64encode(bytes([1]) * 32).decode()
     (root / "rworker-web-worker-public-key").write_text(console_key + "\n")
     for status, token in [("ERROR", False), ("ACTIVE", False), ("ACTIVE", True)]:

@@ -6,6 +6,7 @@ lifecycle events, followed live, and the actions on the selected worker
 (ssh, inspect, ps, extend, topic, claim, down, new worker, ...).
 VIEW is workers (default), jobs, profiles, events or logs. Use any non-empty
 prefix, such as prof for profiles or j for jobs.
+In Profiles, press Enter or i to show image and runner details.
 Press J to toggle Workers and Jobs, or Enter for the selected worker’s jobs.
 Press h to show or hide retired workers inline.
 Press c to open the worker creation form, or C to claim the selected worker.

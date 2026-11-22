@@ -86,6 +86,8 @@ flag up --profile=profile worker profile (including gh-aarch64 and gh-x86_64)
 flag exec --topic=topic what the worker is for (none unless given)
 flag exec --profile=profile worker profile (including gh-aarch64 and gh-x86_64)
 flag machines -o=format output format (json or wide)
+flag profiles -o=format output format (json or wide)
+flag profiles --wide show image and runner details
 flag machines --all include retired workers from history
 flag machines -A short for --all
 flag machines --history alias for --all

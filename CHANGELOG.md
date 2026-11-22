@@ -14,6 +14,9 @@ The Rust client and controller replace the original Bash client.
 
 - Open any standalone TUI view by name or prefix, such as `rworker tui prof`.
 
+- Show profile image and runner details in the web console, TUI, and
+  `rworker profiles -o wide`.
+
 - Add `rworker ssh --create --rm` to delete the new worker when SSH exits.
 
 ### GitHub Actions

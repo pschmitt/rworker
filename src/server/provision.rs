@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::fs::{self, OpenOptions};
 use std::io::Write;
 use std::os::unix::fs::OpenOptionsExt;
@@ -26,6 +27,85 @@ struct UserData(PathBuf);
 impl Drop for UserData {
     fn drop(&mut self) {
         let _ = fs::remove_file(&self.0);
+    }
+}
+
+// Shares image discovery across profiles within a single request.
+#[derive(Default)]
+pub(super) struct Images {
+    ids: HashMap<String, Vec<String>>,
+    details: HashMap<String, Value>,
+}
+
+impl Images {
+    pub(super) fn select(
+        &mut self,
+        compute: &OpenStack,
+        profile_name: &str,
+        profile: &Value,
+    ) -> Result<Option<(String, String, String)>, String> {
+        let tags = profile["imageTags"]
+            .as_array()
+            .filter(|tags| !tags.is_empty())
+            .ok_or_else(|| format!("unknown worker profile: {}", profile_name))?;
+        let image_name_pattern = profile
+            .get("imageNamePattern")
+            .map(|pattern| {
+                let pattern = pattern
+                    .as_str()
+                    .ok_or("Expected imageNamePattern to be a string")?;
+                regex::Regex::new(pattern)
+                    .map_err(|error| format!("Invalid imageNamePattern: {error}"))
+            })
+            .transpose()?;
+        let mut newest = None;
+        for tag in tags {
+            let tag = tag.as_str().ok_or("Invalid image tag")?;
+            if !self.ids.contains_key(tag) {
+                let output = compute.command(&[
+                    "image",
+                    "list",
+                    "--private",
+                    "--status",
+                    "active",
+                    "--tag",
+                    tag,
+                    "-f",
+                    "json",
+                ])?;
+                let images: Vec<Value> =
+                    serde_json::from_slice(&output).map_err(|_| "Invalid image listing")?;
+                let ids = images
+                    .iter()
+                    .map(|image| setting(image, "ID").map(str::to_owned))
+                    .collect::<Result<Vec<_>, _>>()?;
+                self.ids.insert(tag.to_owned(), ids);
+            }
+            for id in &self.ids[tag] {
+                if !self.details.contains_key(id) {
+                    let output = compute.command(&["image", "show", "-f", "json", "--", id])?;
+                    let detail =
+                        serde_json::from_slice(&output).map_err(|_| "Invalid image detail")?;
+                    self.details.insert(id.clone(), detail);
+                }
+                let detail = &self.details[id];
+                let name = setting(detail, "name")?;
+                if image_name_pattern
+                    .as_ref()
+                    .is_some_and(|pattern| !pattern.is_match(name))
+                {
+                    continue;
+                }
+                let created = setting(detail, "created_at")?;
+                if newest
+                    .as_ref()
+                    .is_none_or(|(date, _, _): &(String, String, String)| created > date.as_str())
+                {
+                    newest = Some((created.into(), id.clone(), name.into()));
+                }
+            }
+        }
+        Ok(newest)
     }
 }
 
@@ -70,59 +150,15 @@ pub(super) fn create(
         }
     }
 
-    let profile = &cfg["profiles"][request.profile];
-    let tags = profile["imageTags"]
-        .as_array()
-        .filter(|tags| !tags.is_empty())
-        .ok_or_else(|| format!("unknown worker profile: {}", request.profile))?;
-    let image_name_pattern = profile
-        .get("imageNamePattern")
-        .map(|pattern| {
-            let pattern = pattern
-                .as_str()
-                .ok_or("Expected imageNamePattern to be a string")?;
-            regex::Regex::new(pattern).map_err(|error| format!("Invalid imageNamePattern: {error}"))
-        })
-        .transpose()?;
-    let mut newest = None;
-    for tag in tags {
-        let tag = tag.as_str().ok_or("Invalid image tag")?;
-        let output = compute.command(&[
-            "image",
-            "list",
-            "--private",
-            "--status",
-            "active",
-            "--tag",
-            tag,
-            "-f",
-            "json",
-        ])?;
-        let images: Vec<Value> =
-            serde_json::from_slice(&output).map_err(|_| "Invalid image listing")?;
-        for image in images {
-            let id = setting(&image, "ID")?;
-            let output = compute.command(&["image", "show", "-f", "json", "--", id])?;
-            let detail: Value =
-                serde_json::from_slice(&output).map_err(|_| "Invalid image detail")?;
-            let name = setting(&detail, "name")?;
-            if image_name_pattern
-                .as_ref()
-                .is_some_and(|pattern| !pattern.is_match(name))
-            {
-                continue;
-            }
-            let created = setting(&detail, "created_at")?;
-            if newest
-                .as_ref()
-                .is_none_or(|(date, _, _): &(String, String, String)| created > date.as_str())
-            {
-                newest = Some((created.into(), id.into(), name.into()));
-            }
-        }
-    }
-    let (_, image_id, image_name) =
-        newest.ok_or_else(|| format!("no active image for worker profile {}", request.profile))?;
+    let mut images = Images::default();
+    let Some((_, image_id, image_name)) =
+        images.select(compute, request.profile, &cfg["profiles"][request.profile])?
+    else {
+        return Err(format!(
+            "no active image for worker profile {}",
+            request.profile
+        ));
+    };
 
     let netbird = NetBird::from_settings(cfg)?;
     let group = netbird.group(request.group)?;

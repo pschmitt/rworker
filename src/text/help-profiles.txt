@@ -1,3 +1,7 @@
-Usage: __ME__ profiles [--json]
+Usage: __ME__ profiles [NAME] [-o wide|json] [--json]
 
 List profiles and their resources.
+Give NAME to show details for a single profile.
+
+  -o wide, --wide   include the provider and selected image or runner
+  -o json, --json   print JSON (combine with --wide to include image details)

@@ -21,7 +21,8 @@ Actions:
                        list and follow worker and job lifecycle events
   register NAME JOB --log PATH
                        register an existing log file
-  profiles             list available worker profiles
+  profiles [NAME] [-o wide]
+                       list worker profiles and optionally their image details
   up [--ttl 2h] [--flavor s1.xlarge] [--disk 150] [--topic TEXT]
      [--no-nix-cache] [--no-nix-auth] [--no-niks3-token] [--ssh [-l USER]]
                        create a worker and wait until it is ready

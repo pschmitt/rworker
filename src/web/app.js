@@ -447,7 +447,7 @@ function render() {
       columns = [["Profile"], ["vCPUs"], ["RAM"], ["Disk"], ["Flavor", true], ["Image tags", true]];
       rows = visible.map((row) => {
         const tags = (row.image_tags || []).join(", ");
-        const profile = named(row.name, row.default ? "Default" : "", () => form("create", null, row.name));
+        const profile = named(row.name, row.default ? "Default" : "", () => openProfile(row));
         if (row.flavor) profile.append(element("span", row.flavor, "secondary profile-context"));
         if (tags) profile.append(element("span", tags, "secondary profile-context"));
         const profileName = element("div", null, "profile-name");
@@ -515,6 +515,51 @@ async function refresh(manual = false) {
   } finally {
     loading = false;
     if (state.authenticated && state.view !== view) refresh();
+  }
+}
+
+async function openProfile(row) {
+  const dialog = $("profile-dialog");
+  const status = $("profile-status");
+  const metadata = $("profile-metadata");
+  const title = $("profile-title");
+  title.replaceChildren(profileIcon(row), " " + row.name);
+  $("profile-create").onclick = () => {
+    dialog.close();
+    form("create", null, row.name);
+  };
+  const show = (profile) => {
+    const github = profile.provider === "github";
+    const fields = [
+      ["Provider", github ? "GitHub Actions" : "OpenStack"],
+      [github ? "Runner" : "Flavor", profile.flavor], ["Architecture", profile.system],
+      ["vCPUs", profile.vcpus], ["RAM", profile.ram_gb != null ? profile.ram_gb + " GB" :
+        profile.ram_mib != null ? (profile.ram_mib * 2 ** 20 / 1e9).toFixed(1) + " GB" : null],
+      ["Disk", profile.disk_total_bytes != null ? (profile.disk_total_bytes / 1e9).toFixed(1) + " GB" :
+        profile.disk != null ? (profile.disk * 2 ** 30 / 1e9).toFixed(1) + " GB" : null],
+      ["Image tags", profile.image_tags?.join(", ")],
+      ["Image name", profile.image_name || profile.image_status],
+      ["Image ID", profile.image_id], ["Image created", profile.image_created_at],
+    ];
+    metadata.replaceChildren(...fields.filter(([, value]) => value != null && value !== "").map(([key, value]) => {
+      const field = element("div");
+      field.append(element("dt", key), element("dd", value));
+      return field;
+    }));
+  };
+  show(row);
+  status.textContent = "Loading image details…";
+  status.hidden = row.provider === "github";
+  dialog.showModal();
+  if (row.provider === "github") return;
+  const create = $("profile-create").onclick;
+  try {
+    const [profile] = await request("profiles/" + encodeURIComponent(row.name));
+    if (!dialog.open || $("profile-create").onclick !== create) return;
+    if (profile) show(profile);
+    status.hidden = true;
+  } catch (error) {
+    if (dialog.open && $("profile-create").onclick === create) status.textContent = error.message;
   }
 }
 
@@ -902,6 +947,7 @@ $("unlock").addEventListener("submit", (event) => {
 });
 $("lock").addEventListener("click", () => { lock(); notice(""); });
 $("create").addEventListener("click", () => form("create"));
+$("profile-close").addEventListener("click", () => $("profile-dialog").close());
 $("search").addEventListener("input", () => { state.limit = 200; render(); });
 $("extra").addEventListener("change", () => {
   state.showFinished = $("extra").checked;

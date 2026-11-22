@@ -146,6 +146,7 @@ tbody tr:hover td { background: var(--accent-soft); }
 .metadata div { min-width: 0; }
 .metadata dt { color: var(--muted); }
 .metadata dd { margin: 0; overflow-wrap: anywhere; }
+#profile-metadata { padding-top: 12px; }
 .worker-actions { display: flex; flex-wrap: wrap; gap: 6px; padding: 0 14px 12px; }
 .worker-actions button { min-height: 30px; font-size: .83rem; padding: 4px 8px; }
 .details-nav { display: flex; gap: 7px; padding: 0 13px; border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); }

@@ -215,11 +215,35 @@ pub fn cmd_niks3_token(ctx: &Ctx, args: &[String]) -> R {
 }
 
 pub fn cmd_profiles(ctx: &Ctx, args: &[String]) -> R {
-    if !args.is_empty() {
-        crate::help::show(ctx, "profiles");
-        return Err(Fail(2));
+    let (mut wide, mut json, mut profile) = (false, ctx.json.get(), None);
+    let mut args = args.iter().map(String::as_str);
+    while let Some(arg) = args.next() {
+        match arg {
+            "-o" => match args.next() {
+                Some("wide") => wide = true,
+                Some("json") => json = true,
+                _ => {
+                    ctx.err("Output format must be json or wide");
+                    return Err(Fail(2));
+                }
+            },
+            "--wide" | "-owide" => wide = true,
+            "-ojson" => json = true,
+            name if !name.starts_with('-') && profile.is_none() => profile = Some(name),
+            _ => {
+                ctx.err(&format!("Unknown profile argument: {arg}"));
+                crate::help::show(ctx, "profiles");
+                return Err(Fail(2));
+            }
+        }
     }
-    let out = state::remote(ctx, &["profiles"])?;
+    wide |= profile.is_some();
+    let mut query = vec!["profiles"];
+    if wide {
+        query.push("--details");
+        query.extend(profile);
+    }
+    let out = state::remote(ctx, &query)?;
     let v = state::parse(ctx, &out)?;
     let Value::Array(mut list) = v else {
         ctx.err("jq: error (at <stdin>:0): Cannot sort, input must be an array");
@@ -229,11 +253,20 @@ pub fn cmd_profiles(ctx: &Ctx, args: &[String]) -> R {
         let key = |w: &Value| json!([!jq::truthy(get(w, "default")), get(w, "name")]);
         jq::cmp(&key(a), &key(b))
     });
-    if ctx.json.get() {
+    if list.is_empty()
+        && let Some(name) = profile
+    {
+        ctx.err(&format!("Unknown profile: {name}"));
+        return Err(Fail(1));
+    }
+    if json {
         crate::ctx::json_out(ctx, &jq::pretty(&Value::Array(list)));
         return Ok(());
     }
     let mut rows = vec!["PROFILE\tFLAVOR\tVCPU\tRAM (GB)\tDISK (GB)\tIMAGE TAGS".to_string()];
+    if wide {
+        rows[0].push_str("\tPROVIDER\tIMAGE / RUNNER\tIMAGE ID\tIMAGE CREATED");
+    }
     let format_gb = |size: Option<f64>| {
         size.map_or_else(
             || "-".to_owned(),
@@ -263,21 +296,42 @@ pub fn cmd_profiles(ctx: &Ctx, args: &[String]) -> R {
         } else {
             format!("{name}{star}")
         };
-        rows.push(
-            [
-                jq::tsv(&json!(label)),
-                jq::tsv(get(p, "flavor")),
-                jq::tsv(&json!(
-                    p.get("vcpus")
-                        .filter(|value| !value.is_null())
-                        .map_or_else(|| "-".to_owned(), jq::raw)
-                )),
-                format_gb(ram),
-                format_gb(disk),
-                jq::tsv(&json!(tags.join(", "))),
-            ]
-            .join("\t"),
-        );
+        let mut row = [
+            jq::tsv(&json!(label)),
+            jq::tsv(get(p, "flavor")),
+            jq::tsv(&json!(
+                p.get("vcpus")
+                    .filter(|value| !value.is_null())
+                    .map_or_else(|| "-".to_owned(), jq::raw)
+            )),
+            format_gb(ram),
+            format_gb(disk),
+            jq::tsv(&json!(tags.join(", "))),
+        ]
+        .join("\t");
+        if wide {
+            let github = p["provider"] == "github";
+            let provider = if github {
+                "GitHub Actions"
+            } else {
+                "OpenStack"
+            };
+            let image = if github {
+                jq::or(&p["flavor"], "-")
+            } else {
+                jq::or(&p["image_name"], &jq::or(&p["image_status"], "-"))
+            };
+            for value in [
+                provider.to_owned(),
+                image,
+                jq::or(&p["image_id"], "-"),
+                jq::or(&p["image_created_at"], "-"),
+            ] {
+                row.push('\t');
+                row.push_str(&jq::tsv(&json!(value)));
+            }
+        }
+        rows.push(row);
     }
     if ctx.color {
         let cells: Vec<_> = rows.iter().map(|row| row.split('\t').collect()).collect();

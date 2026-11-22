@@ -79,6 +79,12 @@
       <footer><button type="button" id="dismiss">Cancel</button><button id="confirm" class="primary">Save</button></footer>
     </form>
   </dialog>
+  <dialog id="profile-dialog" aria-labelledby="profile-title">
+    <header><h2 id="profile-title"></h2><button id="profile-close" aria-label="Close">×</button></header>
+    <p id="profile-status" class="empty" role="status" hidden></p>
+    <dl id="profile-metadata" class="metadata"></dl>
+    <footer><button id="profile-create" class="primary">Create worker</button></footer>
+  </dialog>
   <dialog id="terminal-dialog" aria-labelledby="terminal-title">
     <header>
       <div><h2 id="terminal-title"></h2><p id="terminal-status" role="status"></p></div>

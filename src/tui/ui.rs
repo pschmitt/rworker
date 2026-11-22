@@ -668,7 +668,17 @@ impl App {
                     if view.worker.is_some() {
                         keys.push(("J", "Jobs for this worker"));
                     }
-                    ("Logs and output", keys)
+                    if view.profiles {
+                        keys.push(("Enter / i", "Open profile details"));
+                    }
+                    (
+                        if view.profiles {
+                            "Profiles"
+                        } else {
+                            "Logs and output"
+                        },
+                        keys,
+                    )
                 }
             }
         };

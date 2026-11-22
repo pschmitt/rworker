@@ -434,6 +434,13 @@ fn worker_command(
 }
 
 async fn worker_view(Path((view, worker)): Path<(String, String)>, headers: HeaderMap) -> Response {
+    if view == "profiles" {
+        return read(
+            headers,
+            name(&worker).map(|profile| (words(&["profiles", profile, "--json"]), true)),
+        )
+        .await;
+    }
     if view == "jobs" {
         return match name(&worker) {
             Ok(_) => cached_jobs(&headers, Some(worker)).await,

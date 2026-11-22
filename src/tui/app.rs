@@ -153,6 +153,7 @@ pub struct Jobs {
 
 pub struct TextView {
     pub title: String,
+    pub(super) profiles: bool,
     pub worker: Option<String>,
     pub id: u64,
     pub lines: VecDeque<(String, bool)>,
@@ -401,6 +402,7 @@ impl App {
     fn text_stream(&mut self, title: impl Into<String>, args: Vec<String>) -> TextView {
         let id = self.id();
         let mut view = TextView {
+            profiles: args == ["profiles"],
             title: title.into(),
             worker: (args.first().is_some_and(|arg| arg == "logs"))
                 .then(|| args.get(1).filter(|arg| !arg.starts_with('-')).cloned())
@@ -1320,6 +1322,13 @@ impl App {
             v.top = v.top.saturating_sub(by);
         };
         match k.code {
+            KeyCode::Char('i') | KeyCode::Enter if v.profiles => {
+                let mut details =
+                    self.text_stream("profile details", s(&["profiles", "-o", "wide"]));
+                details.wrap = true;
+                details.follow = false;
+                self.stack.push(Sub::Text(details));
+            }
             KeyCode::Esc | KeyCode::Char('q') | KeyCode::Backspace | KeyCode::Char('h') => {
                 if k.code == KeyCode::Esc && !v.filter.is_empty() {
                     v.filter.clear();
