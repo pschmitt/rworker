@@ -238,4 +238,5 @@ th[aria-sort] .sort-arrow { color: var(--cyan); }
 #terminal-title, #terminal-status { margin: 0; }
 #terminal-status { color: var(--muted); font-size: .85rem; }
 #terminal-close { flex-shrink: 0; }
-#terminal-screen { height: min(66dvh, 720px); padding: 8px; background: #101419; }
+#terminal-screen { height: min(66dvh, 720px); background: #101419; }
+#terminal-screen .xterm { padding: 8px; }
