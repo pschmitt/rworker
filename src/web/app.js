@@ -465,7 +465,7 @@ function render() {
           row.disk ? row.disk + " GiB" : "—";
         const cells = [profileName, row.vcpus, ram, disk, row.flavor, tags || "—"];
         if (state.authenticated) {
-          const create = button("+ New worker", () => form("create", null, row.name), "profile-create-action");
+          const create = button("Worker", () => form("create", null, row.name), "profile-create-action");
           create.setAttribute("aria-label", `New worker from ${row.name}`);
           cells.push(create);
         }

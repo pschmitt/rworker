@@ -4,6 +4,8 @@
 
 The Rust client and controller replace the original Bash client.
 
+- Label the web profile-row create action “Worker”.
+
 - Use the standard close icon in the web SSH dialog.
 - Open the new worker form from a profile row in the web console or the TUI.
 
