@@ -24,16 +24,36 @@ pub(super) fn read_profiles(dir: &Path) -> Option<Value> {
     rows.is_array().then_some(rows)
 }
 
-fn refresh_profiles(config: &str, dir: &Path) -> io::Result<()> {
-    let settings = serde_json::from_reader(BufReader::new(File::open(config)?))?;
-    let rows = super::profiles(&settings)?;
-    // Do not replace a useful snapshot when a provider lookup failed.
-    if rows.iter().any(|row| !profile_has_resources(row)) {
-        return Err(io::Error::other("Profile flavor lookup failed"));
+pub(super) fn add_cached_profile_resources(dir: &Path, rows: &mut [Value]) {
+    let Some(Value::Array(cached)) = read_profiles(dir) else {
+        return;
+    };
+    for row in rows.iter_mut().filter(|row| !profile_has_resources(row)) {
+        if let Some(previous) = cached.iter().find(|previous| {
+            ["name", "provider", "flavor"]
+                .iter()
+                .all(|field| previous[*field] == row[*field])
+                && profile_has_resources(previous)
+        }) {
+            for field in ["vcpus", "ram_gb", "ram_mib"] {
+                if let Some(value) = previous.get(field) {
+                    row[field] = value.clone();
+                }
+            }
+        }
     }
+}
+
+fn refresh_profiles(config: &str, dir: &Path) -> io::Result<bool> {
+    let settings = serde_json::from_reader(BufReader::new(File::open(config)?))?;
+    let mut rows = super::profiles(&settings)?;
+    super::add_profile_resources(&settings, &mut rows);
+    let complete = rows.iter().all(profile_has_resources);
+    add_cached_profile_resources(dir, &mut rows);
     replace(dir, "profiles.json", |file| {
         serde_json::to_writer(file, &rows).map_err(io::Error::other)
-    })
+    })?;
+    Ok(complete)
 }
 
 fn profile_has_resources(row: &Value) -> bool {
@@ -250,17 +270,15 @@ pub(super) fn refresh_forever(config: &str, dir: &Path) -> Result<(), Box<dyn st
     let profile_dir = dir.to_owned();
     thread::spawn(move || {
         loop {
-            let age = fs::metadata(profile_dir.join("profiles.json"))
-                .and_then(|metadata| metadata.modified())
-                .and_then(|modified| modified.elapsed().map_err(io::Error::other));
-            if (age.is_err() || age.is_ok_and(|age| age >= Duration::from_secs(86400)))
-                && let Err(error) = refresh_profiles(&profile_config, &profile_dir)
-            {
-                eprintln!("Refresh profiles: {error}");
-                thread::sleep(Duration::from_secs(60));
-                continue;
-            }
-            thread::sleep(Duration::from_secs(60));
+            let interval = match refresh_profiles(&profile_config, &profile_dir) {
+                Ok(true) => Duration::from_secs(86400),
+                Ok(false) => Duration::from_secs(60),
+                Err(error) => {
+                    eprintln!("Refresh profiles: {error}");
+                    Duration::from_secs(60)
+                }
+            };
+            thread::sleep(interval);
         }
     });
     let binary = std::env::current_exe()?;

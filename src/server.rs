@@ -206,13 +206,10 @@ pub fn run(ctx: &crate::ctx::Ctx, args: &[String]) -> R {
             if action == "ls" {
                 inventory::list(&settings)?
             } else {
-                let mut rows = match cache
-                    .as_ref()
-                    .and_then(|dir| inventory_cache::read_profiles(dir))
-                {
-                    Some(Value::Array(rows)) => rows,
-                    _ => profiles(&settings)?,
-                };
+                let mut rows = profiles(&settings)?;
+                if let Some(dir) = &cache {
+                    inventory_cache::add_cached_profile_resources(dir, &mut rows);
+                }
                 add_gitlab_profiles(&settings, &mut rows);
                 github_leases::add_disk_observations(&settings, &mut rows);
                 if !rest.is_empty() {
@@ -221,8 +218,6 @@ pub fn run(ctx: &crate::ctx::Ctx, args: &[String]) -> R {
                     }
                     if let Some(dir) = &cache {
                         inventory_cache::add_cached_profile_images(dir, &settings, &mut rows);
-                    } else {
-                        add_profile_images(&settings, &mut rows);
                     }
                 }
                 Value::Array(rows)
@@ -436,9 +431,26 @@ fn profiles(settings: &Value) -> io::Result<Vec<Value>> {
             }))
         })
         .collect::<io::Result<Vec<_>>>()?;
+    let gha = &settings["githubActions"];
+    if gha["repository"].is_string() {
+        rows.extend(crate::github_profiles::PROFILES.iter().map(|profile| {
+            json!({
+                "name": profile.name,
+                "provider": "github",
+                "system": profile.system,
+                "flavor": profile.label,
+                "image_tags": ["github-actions"],
+                "default": false,
+            })
+        }));
+    }
+    Ok(rows)
+}
+
+fn add_profile_resources(settings: &Value, rows: &mut [Value]) {
     if let Ok(compute) = openstack::OpenStack::from_settings(settings) {
         let mut flavors = HashMap::new();
-        for profile in &mut rows {
+        for profile in rows.iter_mut().filter(|row| row["provider"].is_null()) {
             let Some(flavor) = profile["flavor"].as_str() else {
                 continue;
             };
@@ -465,20 +477,13 @@ fn profiles(settings: &Value) -> io::Result<Vec<Value>> {
             })
             // GitHub's standard public and private Ubuntu runner specifications.
             .map(|public| if public { (4, 16) } else { (2, 8) });
-        rows.extend(crate::github_profiles::PROFILES.iter().map(|profile| {
-            json!({
-                "name": profile.name,
-                "provider": "github",
-                "system": profile.system,
-                "flavor": profile.label,
-                "vcpus": specs.map(|(cpus, _)| cpus),
-                "ram_gb": specs.map(|(_, ram)| ram),
-                "image_tags": ["github-actions"],
-                "default": false,
-            })
-        }));
+        if let Some((vcpus, ram_gb)) = specs {
+            for row in rows.iter_mut().filter(|row| row["provider"] == "github") {
+                row["vcpus"] = json!(vcpus);
+                row["ram_gb"] = json!(ram_gb);
+            }
+        }
     }
-    Ok(rows)
 }
 
 fn add_gitlab_profiles(settings: &Value, rows: &mut Vec<Value>) {

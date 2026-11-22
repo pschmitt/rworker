@@ -17,3 +17,7 @@ cache credentials as sensitive; use role names and placeholders
 - Before changing GitHub Actions, check whether
   [pschmitt/ci-workflows](https://github.com/pschmitt/ci-workflows) provides a
   reusable workflow or action, and use `@main` for its references.
+
+- Keep profile reads, including `profiles -o wide`, off the network. Build
+  rows from configuration and local snapshots. Refresh provider data in the
+  background and cache successful rows when individual lookups fail.

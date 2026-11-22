@@ -4,6 +4,8 @@
 
 The Rust client and controller replace the original Bash client.
 
+- Keep profile listing fast when provider data is missing or unavailable.
+
 - Lease regular GitLab CI jobs with the `gl-x86_64` worker profile.
 - Show the GitLab CI profile immediately when it is configured.
 

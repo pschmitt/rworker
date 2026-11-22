@@ -117,9 +117,8 @@ def record(event):
         check=True,
     )
     [profile] = json.loads(detailed.stdout)
-    assert (profile["image_id"], profile["image_name"], profile["image_created_at"]) == (
-        "image", "rworker-abcdef123456", "2026-01-01",
-    )
+    assert profile["name"] == "standard" and "image_id" not in profile
+    assert "vcpus" not in profile
 
     console_key = "ssh-ed25519 " + base64.b64encode(bytes([1]) * 32).decode()
     (root / "rworker-web-worker-public-key").write_text(console_key + "\n")

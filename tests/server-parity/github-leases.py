@@ -115,15 +115,11 @@ else:
             [*command, "profiles"],
             env=dict(environment, RWORKER_INVENTORY_DIRECTORY=str(cache)),
         ))
-        assert [row["name"] for row in cached] == ["standard", profile]
+        assert [row["name"] for row in cached] == [profile]
     else:
-        for resource_spec in ((4, 16), (2, 8)):
-            profiles = control("profiles")
-            assert {profile["name"] for profile in profiles} == {"gh-aarch64", "gh-x86_64"}
-            for row in profiles:
-                assert (row["vcpus"], row["ram_gb"]) == resource_spec
-                assert row["image_tags"] == ["github-actions"]
-            (root / "private").touch()
+        profiles = control("profiles", "--details")
+        assert {row["name"] for row in profiles} == {"gh-aarch64", "gh-x86_64"}
+        assert all("vcpus" not in row and row["image_tags"] == ["github-actions"] for row in profiles)
 
     public_key = "ssh-ed25519 " + base64.b64encode(bytes(32)).decode()
     lease = control(f"{provider}-up", runner, "2m", public_key, "operator@fixture", "fixture")
