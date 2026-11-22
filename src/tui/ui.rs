@@ -23,6 +23,24 @@ fn dim() -> Style {
     Style::new().fg(Color::DarkGray)
 }
 
+fn worker_name(name: &str, icon: Option<&str>) -> Line<'static> {
+    let mut label = Line::default();
+    if let Some(glyph) = icon {
+        label.push_span(Span::styled(glyph.to_owned(), provider_icon_style(glyph)));
+        label.push_span(" ");
+    }
+    label.push_span(Span::styled(name.to_owned(), Style::new().fg(ACCENT)));
+    label
+}
+
+fn provider_icon_style(glyph: &str) -> Style {
+    if glyph == crate::pool_icon::GITLAB {
+        Style::new().fg(Color::Rgb(226, 67, 41))
+    } else {
+        Style::new().fg(ACCENT)
+    }
+}
+
 fn agent_cell(agent: &str, icons: bool) -> Line<'static> {
     if agent.is_empty() {
         return Line::styled("-", dim());
@@ -441,14 +459,7 @@ impl App {
                     Span::raw(w.topic.clone())
                 };
                 let mut cells = vec![
-                    Cell::from(Span::styled(
-                        if self.icons {
-                            format!("{} {}", w.glyph, w.name)
-                        } else {
-                            w.name.clone()
-                        },
-                        Style::new().fg(ACCENT),
-                    )),
+                    Cell::from(worker_name(&w.name, self.icons.then_some(&w.glyph))),
                     Cell::from(Span::styled(
                         status.to_owned(),
                         if w.retired {
@@ -763,7 +774,12 @@ fn draw_profiles(f: &mut Frame, area: Rect, profiles: &mut Profiles, icons: bool
         let name = profile["name"].as_str().unwrap_or("-");
         let mut label = Line::default();
         if icons {
-            label.push_span(crate::pool_icon::profile_glyph(profile));
+            let glyph = crate::pool_icon::profile_glyph(profile);
+            if glyph == crate::pool_icon::GITLAB {
+                label.push_span(Span::styled(glyph, provider_icon_style(glyph)));
+            } else {
+                label.push_span(glyph);
+            }
             label.push_span(" ");
         }
         label.push_span(Span::styled(name, Style::new().fg(ACCENT)));

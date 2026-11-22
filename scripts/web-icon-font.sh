@@ -8,8 +8,8 @@
 #     -c bash scripts/web-icon-font.sh
 set -euo pipefail
 
-# nf-md-tools, nf-md-robot, nf-md-server, nf-md-tent, nf-md-web, nf-fa-github, nf-dev-openstack
-WORKER_GLYPHS=(U+F1064 U+F06A9 U+F048B U+F0508 U+F059F U+F09B U+E856)
+# nf-md-tools, nf-md-robot, nf-md-server, nf-md-tent, nf-md-web, nf-fa-github, nf-fa-gitlab, nf-dev-openstack
+WORKER_GLYPHS=(U+F1064 U+F06A9 U+F048B U+F0508 U+F059F U+F09B U+F296 U+E856)
 
 usage() {
   echo "usage: $(basename "$0") [SYMBOLS_FONT]" >&2

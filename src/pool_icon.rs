@@ -7,13 +7,15 @@ use serde_json::Value;
 
 /// nf-fa-github: GitHub Actions workers and profiles.
 pub(crate) const GITHUB: &str = "\u{f09b}";
+/// nf-fa-gitlab: GitLab CI workers and profiles.
+pub(crate) const GITLAB: &str = "\u{f296}";
 /// nf-dev-openstack: OpenStack profiles.
 pub(crate) const OPENSTACK: &str = "\u{e856}";
 
 pub fn profile_glyph(profile: &Value) -> &'static str {
     match profile["provider"].as_str() {
         Some("github") => GITHUB,
-        Some("gitlab") => ADHOC,
+        Some("gitlab") => GITLAB,
         _ => OPENSTACK,
     }
 }
@@ -31,6 +33,13 @@ pub fn glyph(worker: &Value) -> &str {
         .is_some_and(|name| name.starts_with("gha-"))
     {
         return GITHUB;
+    }
+    if worker["provider"] == "gitlab"
+        || worker["name"]
+            .as_str()
+            .is_some_and(|name| name.starts_with("glci-"))
+    {
+        return GITLAB;
     }
     if let Some(icon) = worker["icon"].as_str().filter(|icon| !icon.is_empty()) {
         return icon;
@@ -81,6 +90,11 @@ mod tests {
     #[test]
     fn profile_glyphs_follow_the_provider() {
         assert_eq!(profile_glyph(&json!({"provider": "github"})), GITHUB);
+        assert_eq!(profile_glyph(&json!({"provider": "gitlab"})), GITLAB);
+        assert_eq!(
+            glyph(&json!({"name": "glci-example", "kind": "adhoc"})),
+            GITLAB
+        );
         assert_eq!(profile_glyph(&json!({"provider": "openstack"})), OPENSTACK);
         assert_eq!(profile_glyph(&json!({"name": "standard"})), OPENSTACK);
     }

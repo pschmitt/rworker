@@ -125,7 +125,7 @@ const agentIcons = new Map([
 // the bundled font has it, else one for its kind. Keep in sync with
 // scripts/web-icon-font.sh, which builds agents.woff2 from these.
 const githubGlyph = "\u{f09b}";
-const gitlabGlyph = "\u{f1064}";
+const gitlabGlyph = "\u{f296}";
 const ciProviders = { github: "GitHub Actions", gitlab: "GitLab CI" };
 const openstackGlyph = "\u{e856}";
 const workerGlyphs = new Set(["\u{f1064}", "\u{f06a9}", "\u{f048b}", "\u{f0508}", "\u{f059f}", githubGlyph]);
@@ -136,7 +136,7 @@ function isPool(row) {
 
 function workerGlyph(row) {
   if (row.name?.startsWith("gha-")) return githubGlyph;
-  if (row.name?.startsWith("glci-")) return gitlabGlyph;
+  if (row.provider === "gitlab" || row.name?.startsWith("glci-")) return gitlabGlyph;
   if (row.icon && workerGlyphs.has(row.icon)) return row.icon;
   if (row.kind === "adhoc") return "\u{f1064}";
   if (row.kind === "nixbot" || row.kind === "pool") return "\u{f06a9}";
@@ -159,7 +159,8 @@ function profileIcon(row, className = "agent-icon") {
 function workerName(row) {
   const link = element("a", null, "worker-link");
   link.href = workerHash(row);
-  const glyph = element("span", workerGlyph(row), "agent-icon worker-icon");
+  const icon = workerGlyph(row);
+  const glyph = element("span", icon, `agent-icon worker-icon${icon === gitlabGlyph ? " profile-icon-gitlab" : ""}`);
   glyph.setAttribute("aria-hidden", "true");
   const identity = element("span", row.name, "worker-identity");
   const label = row.label || (isPool(row) ? row.kind + " pool" : "");

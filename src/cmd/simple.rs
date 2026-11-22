@@ -333,6 +333,9 @@ pub fn cmd_profiles(ctx: &Ctx, args: &[String]) -> R {
                         Some((glyph @ crate::pool_icon::GITHUB, name)) if ctx.icons.get() => {
                             (paint::paint(ctx, "38;2;0;0;0", glyph), name)
                         }
+                        Some((glyph @ crate::pool_icon::GITLAB, name)) if ctx.icons.get() => {
+                            (paint::paint(ctx, "38;2;226;67;41", glyph), name)
+                        }
                         Some((glyph @ crate::pool_icon::OPENSTACK, name)) if ctx.icons.get() => {
                             (paint::paint(ctx, "38;2;218;26;50", glyph), name)
                         }

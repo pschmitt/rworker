@@ -199,7 +199,7 @@ struct Sub {
 static COLOR_RULES: LazyLock<Vec<Sub>> = LazyLock::new(|| {
     let (bold_green, green, yellow) = ("\x1b[1;32m", "\x1b[32m", "\x1b[33m");
     let (red, bold_red, reset) = ("\x1b[31m", "\x1b[1;31m", "\x1b[0m");
-    let (cyan, warn, urgent) = ("\x1b[36m", "\x1b[38;5;208m", "\x1b[1;31m");
+    let (warn, urgent) = ("\x1b[38;5;208m", "\x1b[1;31m");
     let s = |re: &str, rep: String| Sub {
         re: Regex::new(re).expect("valid table regex"),
         rep,
@@ -231,7 +231,6 @@ static COLOR_RULES: LazyLock<Vec<Sub>> = LazyLock::new(|| {
             r" ([3-5][0-9]m)( +[0-9]+[mhd])",
             format!(" {warn}${{1}}{reset}${{2}}"),
         ),
-        s(r"^([^ ]+)", format!("{cyan}${{1}}{reset}")),
     ]
 });
 
@@ -249,7 +248,14 @@ pub fn colorize(table: &str) -> String {
             for r in COLOR_RULES.iter() {
                 l = r.re.replacen(&l, 1, r.rep.as_str()).into_owned();
             }
-            l
+            let end = l.find(' ').unwrap_or(l.len());
+            let (first, rest) = l.split_at(end);
+            let color = if first == crate::pool_icon::GITLAB {
+                "\x1b[38;2;226;67;41m"
+            } else {
+                "\x1b[36m"
+            };
+            format!("{color}{first}\x1b[0m{rest}")
         })
         .collect();
     crate::paint::agents(&lines.join("\n"))
