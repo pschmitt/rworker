@@ -12,7 +12,7 @@ use axum::routing::post;
 use serde::Deserialize;
 use serde_json::Value;
 
-use super::github_leases::{self, Endpoint};
+use super::github_leases::{self, Disk, Endpoint};
 
 #[derive(Deserialize)]
 struct Claim {
@@ -20,6 +20,7 @@ struct Claim {
     architecture: String,
     #[serde(default)]
     capabilities: Vec<String>,
+    disk: Option<Disk>,
 }
 
 pub(super) fn serve(config: &str, socket: &str) -> io::Result<()> {
@@ -70,6 +71,7 @@ async fn claim(
                 .capabilities
                 .iter()
                 .any(|capability| capability == "kvm"),
+            request.disk,
         )
     })
     .await

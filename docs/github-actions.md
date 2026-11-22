@@ -90,3 +90,7 @@ Both profiles carry the `github-actions` tag. `gh` is shorthand for
 The lease deadline includes queue time. A queued run can wait for capacity
 on its selected architecture. The CLI reports when GitHub starts the run,
 waits for SSH readiness, and requests cancellation if the lease expires.
+
+Disk in `rworker profiles` shows the most recent filesystem measurement for
+each profile, including free space at startup. Before the first measurement,
+the table labels GitHub’s published estimate.

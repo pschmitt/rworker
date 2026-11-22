@@ -203,13 +203,15 @@ pub fn run(ctx: &crate::ctx::Ctx, args: &[String]) -> R {
             if action == "ls" {
                 inventory::list(&settings)?
             } else {
-                match cache
+                let mut rows = match cache
                     .as_ref()
                     .and_then(|dir| inventory_cache::read_profiles(dir))
                 {
-                    Some(rows) => rows,
-                    None => Value::Array(profiles(&settings)?),
-                }
+                    Some(Value::Array(rows)) => rows,
+                    _ => profiles(&settings)?,
+                };
+                github_leases::add_disk_observations(&settings, &mut rows);
+                Value::Array(rows)
             }
         };
         let mut stdout = io::stdout().lock();

@@ -262,7 +262,8 @@ const sortFields = {
   events: [(row) => row.kind, (row) => row.target, (row) => timestamp(row.timestamp)],
   profiles: [(row) => row.name, (row) => row.vcpus,
     (row) => row.ram_gb == null ? row.ram_mib : row.ram_gb * 1e9 / 2 ** 20,
-    (row) => row.disk_gb == null ? Number(row.disk) || null : row.disk_gb * 1e9 / 2 ** 30, (row) => row.flavor, (row) => (row.image_tags || []).join(", ")],
+    (row) => row.disk_observed?.total_bytes != null ? row.disk_observed.total_bytes / 2 ** 30 :
+      row.disk_gb == null ? Number(row.disk) || null : row.disk_gb * 1e9 / 2 ** 30, (row) => row.flavor, (row) => (row.image_tags || []).join(", ")],
 };
 const sortLabels = new Intl.Collator(undefined, { numeric: true, sensitivity: "base" });
 
@@ -438,7 +439,9 @@ function render() {
         if (tags) profile.append(element("span", tags, "secondary profile-context"));
         const ram = row.ram_gb != null ? row.ram_gb + " GB" : row.ram_mib == null ? "—" :
           row.ram_mib % 1024 === 0 ? row.ram_mib / 1024 + " GiB" : row.ram_mib + " MiB";
-        const disk = row.disk_gb != null ? row.disk_gb + " GB" : row.disk ? row.disk + " GiB" : "—";
+        const disk = row.disk_observed
+          ? `${(row.disk_observed.total_bytes / 2 ** 30).toFixed(1)} GiB (${(row.disk_observed.available_bytes / 2 ** 30).toFixed(1)} free at startup)`
+          : row.disk_gb != null ? row.disk_gb + " GB (published)" : row.disk ? row.disk + " GiB" : "—";
         return {
           cells: [profile, row.vcpus, ram, disk, row.flavor, tags || "—"],
         };

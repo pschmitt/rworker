@@ -6,6 +6,8 @@ The Rust client and controller replace the original Bash client.
 
 ### GitHub Actions
 
+- Report the latest observed GitHub runner disk size and free space at startup.
+
 - Show GitHub queue and SSH startup progress with a clickable workflow link,
   report workflow failures, and retry brief controller interruptions.
 

@@ -4,6 +4,7 @@ import grp
 import json
 import os
 import platform
+import pwd
 import re
 import subprocess
 import sys
@@ -174,6 +175,14 @@ Subsystem sftp internal-sftp
                         ["sudo", "-n", "pkill", "-KILL", "-u", BUILD_USER], check=False
                     )
 
+def build_disk():
+    storage = os.statvfs(pwd.getpwnam(BUILD_USER).pw_dir)
+    return {
+        "total_bytes": storage.f_blocks * storage.f_frsize,
+        "available_bytes": storage.f_bavail * storage.f_frsize,
+    }
+
+
 def main():
     profile = os.environ["RWORKER_PROFILE"]
     architecture = platform.machine()
@@ -189,7 +198,12 @@ def main():
     with request(
         f"{url}/claim",
         oidc_token(),
-        {"profile": profile, "architecture": architecture, "capabilities": capabilities},
+        {
+            "profile": profile,
+            "architecture": architecture,
+            "capabilities": capabilities,
+            "disk": build_disk(),
+        },
     ) as response:
         assignment = json.load(response)
     start_ssh_worker(url, assignment["token"], assignment)

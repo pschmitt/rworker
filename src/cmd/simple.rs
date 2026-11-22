@@ -253,6 +253,18 @@ pub fn cmd_profiles(ctx: &Ctx, args: &[String]) -> R {
                 "-".to_owned()
             }
         };
+        let observed = &p["disk_observed"];
+        let disk = if let Some((total, free)) = observed["total_bytes"]
+            .as_u64()
+            .zip(observed["available_bytes"].as_u64())
+        {
+            let gib = |bytes| bytes as f64 / (1_u64 << 30) as f64;
+            format!("{:.1} GiB ({:.1} free at startup)", gib(total), gib(free))
+        } else if let Some(published) = p["disk_gb"].as_u64() {
+            format!("{published} GB (published)")
+        } else {
+            size("disk_gb", "disk", "GiB")
+        };
         rows.push(
             [
                 jq::tsv(&json!(format!("{}{star}", jq::raw(get(p, "name"))))),
@@ -263,7 +275,7 @@ pub fn cmd_profiles(ctx: &Ctx, args: &[String]) -> R {
                         .map_or_else(|| "-".to_owned(), jq::raw)
                 )),
                 size("ram_gb", "ram_mib", "MiB"),
-                size("disk_gb", "disk", "GiB"),
+                disk,
                 jq::tsv(&json!(tags.join(", "))),
             ]
             .join("\t"),

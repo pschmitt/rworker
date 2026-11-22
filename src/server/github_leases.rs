@@ -41,6 +41,14 @@ struct Lease {
     archive_logs: bool,
     #[serde(default)]
     workflow: Option<RunStatus>,
+    #[serde(default)]
+    disk: Option<Disk>,
+}
+
+#[derive(Deserialize, Serialize, Clone, Copy)]
+pub(super) struct Disk {
+    total_bytes: u64,
+    available_bytes: u64,
 }
 
 #[derive(Deserialize, Serialize)]
@@ -107,6 +115,7 @@ pub(super) fn run(settings: &Value, action: &str, args: &[String]) -> Result<Val
                     topic: topic.into(),
                     archive_logs: settings["logCollectorOperator"].is_string(),
                     workflow: None,
+                    disk: None,
                 },
             )
         }
@@ -152,6 +161,7 @@ pub(super) fn claim(
     profile: &str,
     architecture: &str,
     kvm: bool,
+    disk: Option<Disk>,
 ) -> Result<Value, String> {
     let config = &settings["githubActions"];
     let repository = config["repository"]
@@ -189,6 +199,8 @@ pub(super) fn claim(
     lease.token_hash = Some(STANDARD.encode(hash.as_ref()));
     lease.state = LeaseState::Claimed;
     lease.kvm = kvm;
+    lease.disk =
+        disk.filter(|disk| disk.total_bytes != 0 && disk.available_bytes <= disk.total_bytes);
     write_lease(&dir, &lease).map_err(|error| error.to_string())?;
     Ok(json!({"token": token, "expires_at": lease.expires_at, "public_key": lease.public_key}))
 }
@@ -234,6 +246,47 @@ pub(super) fn inventory(settings: &Value) -> Result<Vec<Value>, String> {
             })
         })
         .collect())
+}
+
+pub(super) fn add_disk_observations(settings: &Value, rows: &mut [Value]) {
+    let config = &settings["githubActions"];
+    let Some(root) = config["stateDirectory"]
+        .as_str()
+        .map(Path::new)
+        .filter(|path| path.is_absolute())
+    else {
+        return;
+    };
+    let Ok(dirs) = directories(root) else {
+        return;
+    };
+    let mut latest = std::collections::BTreeMap::new();
+    for lease in dirs.into_iter().filter_map(|dir| read_lease(&dir).ok()) {
+        if Some(lease.repository.as_str()) != config["repository"].as_str() {
+            continue;
+        }
+        if let Some(disk) = lease.disk {
+            let entry = latest
+                .entry(lease.profile)
+                .or_insert((lease.created_at, disk));
+            if lease.created_at > entry.0 {
+                *entry = (lease.created_at, disk);
+            }
+        }
+    }
+    for row in rows {
+        let Some(profile) = row["name"]
+            .as_str()
+            .and_then(crate::github_profiles::from_name)
+        else {
+            continue;
+        };
+        if row["provider"] == "github"
+            && let Some((_, disk)) = latest.get(profile.runner)
+        {
+            row["disk_observed"] = json!(disk);
+        }
+    }
 }
 
 fn directories(root: &Path) -> Result<Vec<PathBuf>, String> {
