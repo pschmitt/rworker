@@ -563,6 +563,37 @@ async function openProfile(row) {
   }
 }
 
+const actionIcons = {
+  ssh: "m4 6 5 5-5 5m9 0h7",
+  start: "M8 5v14l11-7z",
+  more: "M5 12h.01M12 12h.01M19 12h.01",
+  extend: "M12 8v4l3 2m6-2a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z",
+  topic: "m14 6 4 4M5 19l1-5L16 4l4 4-10 10z",
+  claim: "M5 21v-3a4 4 0 0 1 4-4h4a4 4 0 0 1 4 4v3m-2-14a4 4 0 1 1-8 0 4 4 0 0 1 8 0z",
+  register: "M6 3h8l4 4v14H6zm8 0v5h4M9 13h6m-6 4h6",
+  "renew-token": "M16 10a4 4 0 1 0-4-4 4 4 0 0 0 4 4zm-3 0-8 8v3h3v-3h3v-3l4-5",
+  copy: "M8 8h12v12H8zM4 16V4h12",
+  delete: "M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13m-8 4v5m4-5v5",
+};
+
+function actionIcon(name) {
+  const namespace = "http://www.w3.org/2000/svg";
+  const icon = document.createElementNS(namespace, "svg");
+  icon.setAttribute("viewBox", "0 0 24 24");
+  icon.setAttribute("aria-hidden", "true");
+  icon.classList.add("action-icon");
+  const path = document.createElementNS(namespace, "path");
+  path.setAttribute("d", actionIcons[name]);
+  icon.append(path);
+  return icon;
+}
+
+function workerAction(label, icon, click, variant = "") {
+  const control = button(label, click, "worker-action" + (variant ? " " + variant : ""));
+  control.prepend(actionIcon(icon));
+  return control;
+}
+
 function detailPanel() {
   const row = state.selected;
   $("detail").hidden = !row;
@@ -585,7 +616,10 @@ function detailPanel() {
     const datum = element("div");
     const description = element("dd", key === "Agent" ? null : value);
     if (key === "Agent") description.append(agentLabel(value));
-    if (key === "Profile") description.prepend(profileIcon(row), " ");
+    if (key === "Profile") {
+      description.classList.add("profile-value");
+      description.prepend(profileIcon(row));
+    }
     datum.append(element("dt", key), description);
     $("metadata").append(datum);
   }
@@ -593,19 +627,35 @@ function detailPanel() {
   const actions = $("worker-actions");
   actions.replaceChildren();
   if (!row.retired) {
-    actions.append(button("SSH", () => openTerminal(row)),
-      button("Start job", () => form("start", row)));
-    const menu = element("details");
-    menu.append(element("summary", "Actions"));
+    actions.append(workerAction("SSH", "ssh", () => openTerminal(row), "primary"),
+      workerAction("Start job", "start", () => form("start", row)));
+    const menu = element("details", null, "worker-action-menu");
+    const trigger = element("summary", null, "worker-action");
+    trigger.append(actionIcon("more"), "More");
+    trigger.setAttribute("aria-label", "More worker actions");
+    const items = element("div", null, "worker-action-items");
     for (const [label, action] of [["Extend", "extend"], ["Edit topic", "topic"], ["Claim", "claim"],
-      ["Register log", "register"], ["Renew token", "renew-token"], ["Delete", "delete"]]) {
-      menu.append(button(label, () => { menu.open = false; form(action, row); }));
+      ["Register log", "register"], ["Renew token", "renew-token"]]) {
+      items.append(workerAction(label, action, () => { menu.open = false; form(action, row); }));
     }
-    menu.append(button("Copy SSH command", () => copy("rworker ssh " + row.name)),
-      button("Copy builder entry", async () => {
+    items.append(workerAction("Copy SSH command", "copy", () => {
+      menu.open = false;
+      copy("rworker ssh " + row.name);
+    }), workerAction("Copy builder entry", "copy", async () => {
+        menu.open = false;
         try { await copy(await request("builder/" + encodeURIComponent(row.name))); }
         catch (error) { notice(error.message, true); }
-      }));
+      }), workerAction("Delete worker", "delete", () => {
+        menu.open = false;
+        form("delete", row);
+      }, "destructive"));
+    menu.append(trigger, items);
+    menu.addEventListener("keydown", (event) => {
+      if (event.key === "Escape" && menu.open) {
+        menu.open = false;
+        trigger.focus();
+      }
+    });
     actions.append(menu);
   }
 
@@ -792,6 +842,10 @@ async function updateDetail(reset = false) {
       }))) : element("p", "No jobs on this worker.", "empty"));
       return;
     }
+    if (tab === "processes" && data.trim().split("\n").length <= 1) {
+      destination.replaceChildren(element("p", "No running job processes.", "empty"));
+      return;
+    }
     const old = destination.querySelector("pre");
     const stayAtEnd = !old || old.scrollHeight - old.clientHeight - old.scrollTop < 8;
     const previousScroll = old?.scrollTop || 0;
@@ -824,7 +878,14 @@ async function updateDetail(reset = false) {
       followLogs(view + "/" + target + (job ? "/" + encodeURIComponent(job) : ""), content, indicator);
     }
   } catch (error) {
-    if (id === detailRequest) destination.replaceChildren(element("p", error.message, "empty"));
+    if (id === detailRequest) {
+      if (tab === "processes" && state.authenticated) {
+        const unavailable = element("div", null, "empty process-unavailable");
+        unavailable.append(element("p", error.message),
+          workerAction("Copy CLI command", "copy", () => copy("rworker ps " + row.name)));
+        destination.replaceChildren(unavailable);
+      } else destination.replaceChildren(element("p", error.message, "empty"));
+    }
   } finally {
     if (id === detailRequest) detailLoading = false;
   }
@@ -1031,6 +1092,10 @@ $("action-form").addEventListener("submit", async (event) => {
   }
 });
 window.addEventListener("hashchange", navigate);
+document.addEventListener("click", (event) => {
+  const menu = document.querySelector(".worker-action-menu[open]");
+  if (menu && !menu.contains(event.target)) menu.open = false;
+});
 setInterval(() => { if (state.authenticated && !document.hidden && state.view !== "profiles") refresh(); }, 5000);
 setInterval(() => { if (state.authenticated && !document.hidden && state.selected && state.tab === "logs" && state.follow && !logSocket) updateDetail(); }, 2500);
 navigate();

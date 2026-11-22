@@ -318,7 +318,17 @@ async fn read(headers: HeaderMap, command: Result<(Vec<String>, bool), Failure>)
     let result = async {
         authorized(&headers)?;
         let (args, structured) = command?;
-        let output = run(args, 20).await?;
+        let processes = args.first().is_some_and(|arg| arg == "ps");
+        let output = run(args, 20).await.map_err(|error| {
+            if processes && error.0 == StatusCode::BAD_GATEWAY {
+                (
+                    error.0,
+                    "Could not read job processes over SSH from the controller.",
+                )
+            } else {
+                error
+            }
+        })?;
         if structured {
             serde_json::from_str(&output)
                 .map_err(|_| (StatusCode::BAD_GATEWAY, "Invalid controller response."))
