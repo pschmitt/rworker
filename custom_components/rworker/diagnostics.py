@@ -7,7 +7,7 @@ async def async_get_config_entry_diagnostics(hass, entry):
     inventory = runtime.coordinator.data
     return {
         "connected": runtime.connected.data,
-        "last_snapshot": inventory.received.isoformat(),
-        "worker_count": len(inventory.workers),
+        "last_snapshot": inventory.received.isoformat() if inventory else None,
+        "worker_count": len(inventory.workers) if inventory else None,
         "inventory_available": runtime.coordinator.last_update_success,
     }

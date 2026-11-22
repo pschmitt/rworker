@@ -7,7 +7,6 @@ import logging
 
 from aiohttp import ClientError, ClientResponseError
 from homeassistant.const import CONF_TOKEN, CONF_URL, Platform
-from homeassistant.exceptions import ConfigEntryAuthFailed, ConfigEntryNotReady
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 from homeassistant.util import dt as dt_util
@@ -98,18 +97,9 @@ async def async_setup(hass, config):
 async def async_setup_entry(hass, entry):
     """Set up one controller."""
     runtime = Runtime(hass, entry)
-    try:
-        workers = await runtime.client.probe()
-    except ClientResponseError as err:
-        if err.status in (401, 403):
-            raise ConfigEntryAuthFailed("Controller token rejected") from None
-        raise ConfigEntryNotReady("Controller unavailable") from None
-    except (ClientError, OSError, TimeoutError, ValueError):
-        raise ConfigEntryNotReady("Controller unavailable") from None
-
     entry.runtime_data = runtime
-    runtime.coordinator.async_set_updated_data(Inventory(workers, dt_util.utcnow()))
-    runtime.connected.async_set_updated_data(True)
+    runtime.coordinator.async_set_update_error(UpdateFailed("Waiting for inventory"))
+    runtime.connected.async_set_updated_data(False)
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
     runtime.task = entry.async_create_background_task(
         hass, runtime.listen(), "rworker inventory WebSocket"

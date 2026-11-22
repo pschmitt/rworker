@@ -29,6 +29,8 @@ class InventorySensor(RworkerEntity, SensorEntity):
     def native_value(self):
         """Return the count or the time of the snapshot."""
         data = self.coordinator.data
+        if data is None:
+            return None
         key = self.translation_key
         if key == "last_snapshot":
             return data.received
