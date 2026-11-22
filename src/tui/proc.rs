@@ -7,7 +7,7 @@ use serde_json::Value;
 use std::io::{BufRead, BufReader, Read};
 use std::os::unix::process::CommandExt;
 use std::path::PathBuf;
-use std::process::{Child, Command, Stdio};
+use std::process::{Child, Command, Output, Stdio};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{Receiver, RecvTimeoutError, Sender};
@@ -29,6 +29,10 @@ pub enum Msg {
     },
     Exit {
         id: u64,
+    },
+    Progress {
+        id: u64,
+        stage: String,
     },
     Done {
         id: u64,
@@ -150,10 +154,39 @@ impl Drop for Stream {
     }
 }
 
+fn provision_output(id: u64, args: &[String], tx: &Sender<Msg>) -> std::io::Result<Output> {
+    let mut child = command(args, false).spawn()?;
+    let mut reader = BufReader::new(child.stderr.take().expect("piped stderr"));
+    thread::scope(|scope| {
+        let progress = scope.spawn(|| -> std::io::Result<Vec<u8>> {
+            let mut line = Vec::new();
+            let mut errors = Vec::new();
+            while reader.read_until(b'\n', &mut line)? != 0 {
+                if let Some(stage) = line.strip_prefix(b"rworker-progress ") {
+                    let stage = String::from_utf8_lossy(stage).trim_end().to_string();
+                    let _ = tx.send(Msg::Progress { id, stage });
+                } else {
+                    errors.extend_from_slice(&line);
+                }
+                line.clear();
+            }
+            Ok(errors)
+        });
+        let mut output = child.wait_with_output()?;
+        output.stderr = progress.join().expect("progress reader")?;
+        Ok(output)
+    })
+}
+
 /// Run `rworker ARGS...` to its end in the background and report it.
 pub fn action(id: u64, args: Vec<String>, tx: Sender<Msg>) {
     thread::spawn(move || {
-        let msg = match command(&args, false).output() {
+        let output = if args.first().is_some_and(|arg| arg == "__tui-provision-ssh") {
+            provision_output(id, &args, &tx)
+        } else {
+            command(&args, false).output()
+        };
+        let msg = match output {
             Ok(o) => Msg::Done {
                 id,
                 ok: o.status.success(),

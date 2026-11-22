@@ -41,6 +41,8 @@ The Rust client and controller replace the original Bash client.
 
 ### TUI
 
+- Show live SSH worker provisioning stages and elapsed time in the footer.
+
 - Provision SSH workers in the background with a status spinner, then open SSH when ready.
 
 - Keep worker status under the table when logs are shown alongside it.

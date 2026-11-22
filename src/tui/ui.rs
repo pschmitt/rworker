@@ -318,10 +318,11 @@ impl App {
                 Style::new().fg(Color::Yellow),
             ));
         }
-        let right = if self.provisioning_ssh() {
+        let right = if let Some((stage, elapsed)) = self.provisioning_ssh() {
+            let style = status_style(stage.split_once(" · ").map_or(stage, |(state, _)| state));
             Span::styled(
-                format!("{spinner} provisioning for SSH "),
-                Style::new().fg(Color::Yellow),
+                format!("{spinner} {stage} ({}s) ", elapsed.as_secs()),
+                style.fg(style.fg.unwrap_or(Color::Yellow)),
             )
         } else if let Some(flash) = self.flash_live() {
             let color = if flash.error {
@@ -366,7 +367,12 @@ impl App {
         ])
         .areas(area);
         f.render_widget(Line::from(left), l);
-        f.render_widget(Line::from(right).alignment(Alignment::Right), r);
+        let alignment = if right.width() > usize::from(r.width) {
+            Alignment::Left
+        } else {
+            Alignment::Right
+        };
+        f.render_widget(Line::from(right).alignment(alignment), r);
     }
 
     fn draw_workers(&mut self, f: &mut Frame, area: Rect, status: Rect) -> Rect {

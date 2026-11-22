@@ -224,6 +224,8 @@ enum Pending {
     Profiles,
     ProvisionSsh {
         remove: bool,
+        stage: String,
+        started: Instant,
     },
     LogPreview(u64),
     PreviewJobs(u64),
@@ -313,10 +315,13 @@ impl App {
             .count()
     }
 
-    pub(super) fn provisioning_ssh(&self) -> bool {
-        self.pending
-            .values()
-            .any(|action| matches!(action, Pending::ProvisionSsh { .. }))
+    pub(super) fn provisioning_ssh(&self) -> Option<(&str, Duration)> {
+        self.pending.values().find_map(|action| match action {
+            Pending::ProvisionSsh { stage, started, .. } => {
+                Some((stage.as_str(), started.elapsed()))
+            }
+            _ => None,
+        })
     }
 
     pub fn flash_live(&self) -> Option<&Flash> {
@@ -688,6 +693,13 @@ impl App {
                     v.stream = None;
                 }
             }
+            Msg::Progress { id, stage } => {
+                if let Some(Pending::ProvisionSsh { stage: current, .. }) =
+                    self.pending.get_mut(&id)
+                {
+                    *current = stage;
+                }
+            }
             Msg::Done { id, ok, out, err } => match self.pending.remove(&id) {
                 Some(Pending::Status { label, .. }) => {
                     if ok {
@@ -730,7 +742,7 @@ impl App {
                         view.no_jobs = ok && out.trim().is_empty();
                     }
                 }
-                Some(Pending::ProvisionSsh { remove }) => {
+                Some(Pending::ProvisionSsh { remove, .. }) => {
                     let ready = serde_json::from_str::<Value>(&out)
                         .ok()
                         .filter(|_| ok)
@@ -909,7 +921,7 @@ impl App {
             self.help_top = 0;
             return;
         }
-        let ssh_busy = self.provisioning_ssh() || self.ready_ssh.is_some();
+        let ssh_busy = self.provisioning_ssh().is_some() || self.ready_ssh.is_some();
         if let Some(form) = &mut self.create_worker {
             match k.code {
                 KeyCode::Esc => self.create_worker = None,
@@ -925,7 +937,14 @@ impl App {
                         self.create_worker = None;
                         let id = self.id();
                         let remove = after == After::SshAndDelete;
-                        self.pending.insert(id, Pending::ProvisionSsh { remove });
+                        self.pending.insert(
+                            id,
+                            Pending::ProvisionSsh {
+                                remove,
+                                stage: "REQUESTING".into(),
+                                started: Instant::now(),
+                            },
+                        );
                         args[0] = "__tui-provision-ssh".into();
                         if remove {
                             args.insert(1, "--rm".into());

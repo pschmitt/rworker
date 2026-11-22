@@ -42,7 +42,7 @@ pub fn epoch(v: &Value) -> i64 {
 /// lines become a spinner with the stage and elapsed time, redrawn in place
 /// on a terminal and gone once the worker is ready or failed; anything
 /// else is printed above it. Without a terminal only the other lines pass.
-fn render_progress(ctx: &Ctx, stderr: impl Read + Send + 'static) {
+fn render_progress(ctx: &Ctx, stderr: impl Read + Send + 'static, emit_stages: bool) {
     let (tx, rx) = mpsc::channel::<String>();
     std::thread::spawn(move || {
         let mut reader = BufReader::new(stderr);
@@ -62,10 +62,16 @@ fn render_progress(ctx: &Ctx, stderr: impl Read + Send + 'static) {
             }
         }
     });
-    render_progress_lines(rx, ctx.no_color);
+    render_progress_lines(rx, ctx.no_color, emit_stages);
 }
 
-fn render_progress_lines(rx: mpsc::Receiver<String>, no_color: bool) {
+fn render_progress_lines(rx: mpsc::Receiver<String>, no_color: bool, emit_stages: bool) {
+    if emit_stages {
+        for line in rx {
+            eprintln!("{line}");
+        }
+        return;
+    }
     let frames: Vec<char> = "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏".chars().collect();
     let tty = std::io::stderr().is_terminal();
     let esc = tty && !no_color;
@@ -310,13 +316,13 @@ fn github_up(
 }
 
 pub fn up(ctx: &Ctx, args: &[String], capture: bool) -> R<Option<String>> {
-    up_inner(ctx, args, capture, false)
+    up_inner(ctx, args, capture, false, false)
 }
 
 pub fn ssh_create(ctx: &Ctx, args: &[String], remove_after_ssh: bool) -> R {
     let mut args = args.to_vec();
     args.push("--ssh".into());
-    up_inner(ctx, &args, false, remove_after_ssh).map(|_| ())
+    up_inner(ctx, &args, false, remove_after_ssh, false).map(|_| ())
 }
 
 fn up_inner(
@@ -324,6 +330,7 @@ fn up_inner(
     args: &[String],
     capture: bool,
     remove_after_ssh: bool,
+    emit_stages: bool,
 ) -> R<Option<String>> {
     let cleanup = |name: &str| {
         remove_after_ssh.then(|| {
@@ -401,7 +408,7 @@ fn up_inner(
         let mut output = std::thread::scope(|scope| {
             let (tx, rx) = mpsc::channel();
             let no_color = ctx.no_color;
-            scope.spawn(move || render_progress_lines(rx, no_color));
+            scope.spawn(move || render_progress_lines(rx, no_color, emit_stages));
             let result = github_up(ctx, profile, ttl, &key_file, &topic, &tx);
             drop(tx);
             result
@@ -489,7 +496,7 @@ fn up_inner(
         let _ = stdout.read_to_end(&mut s);
         s
     });
-    render_progress(ctx, stderr);
+    render_progress(ctx, stderr, emit_stages);
     let st = child.wait().map_err(|_| Fail(1))?;
     let out = reader.join().unwrap_or_default();
     if !st.success() {
@@ -643,7 +650,7 @@ fn print_summary(ctx: &Ctx, name: &str, started: i64, rows: &[(&str, String)]) {
 
 /// Provision in the background and wait for SSH before handing back the terminal.
 pub fn provision_for_ssh(ctx: &Ctx, args: &[String], remove: bool) -> R {
-    let info = up(ctx, args, true)?.ok_or(Fail(1))?;
+    let info = up_inner(ctx, args, true, false, true)?.ok_or(Fail(1))?;
     let metadata: Value = serde_json::from_str(&info).map_err(|_| Fail(1))?;
     let name = need(&metadata, "name")?;
     let user = metadata["ssh_user"]
@@ -653,6 +660,7 @@ pub fn provision_for_ssh(ctx: &Ctx, args: &[String], remove: bool) -> R {
     if remove {
         crate::signals::trap();
     }
+    eprintln!("rworker-progress ACTIVE · checking SSH");
     let ready = ssh_target(ctx, &name, user)
         .and_then(|(opts, login)| wait_for_ssh(ctx, &name, &opts, &login));
     if !matches!(ready, Ok(true)) {
