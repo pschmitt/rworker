@@ -1,8 +1,8 @@
 """Authenticated controller transport."""
 
 import asyncio
-from contextlib import aclosing
 import json
+from contextlib import aclosing
 
 from aiohttp import ClientSession, ClientTimeout, WSMsgType
 

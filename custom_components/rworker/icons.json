@@ -1,0 +1,34 @@
+{
+  "entity": {
+    "binary_sensor": {
+      "connection": {
+        "default": "mdi:lan-connect",
+        "state": {
+          "off": "mdi:lan-disconnect"
+        }
+      }
+    },
+    "event": {
+      "worker_events": {
+        "default": "mdi:timeline-clock-outline"
+      }
+    },
+    "sensor": {
+      "active_workers": {
+        "default": "mdi:play-circle-outline"
+      },
+      "ad_hoc_workers": {
+        "default": "mdi:server-plus"
+      },
+      "last_snapshot": {
+        "default": "mdi:clock-outline"
+      },
+      "pool_workers": {
+        "default": "mdi:server-network"
+      },
+      "workers": {
+        "default": "mdi:server"
+      }
+    }
+  }
+}

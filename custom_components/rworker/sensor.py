@@ -1,6 +1,10 @@
 """Worker counts and inventory diagnostics."""
 
-from homeassistant.components.sensor import SensorDeviceClass, SensorEntity, SensorStateClass
+from homeassistant.components.sensor import (
+    SensorDeviceClass,
+    SensorEntity,
+    SensorStateClass,
+)
 from homeassistant.const import EntityCategory
 
 from .entity import RworkerEntity
@@ -10,7 +14,13 @@ async def async_setup_entry(hass, entry, async_add_entities):
     """Add aggregate sensors for the controller."""
     async_add_entities(
         InventorySensor(entry, key)
-        for key in ("workers", "ad_hoc_workers", "pool_workers", "active_workers", "last_snapshot")
+        for key in (
+            "workers",
+            "ad_hoc_workers",
+            "pool_workers",
+            "active_workers",
+            "last_snapshot",
+        )
     )
 
 
@@ -38,7 +48,9 @@ class InventorySensor(RworkerEntity, SensorEntity):
         if key == "ad_hoc_workers":
             return sum(row.get("kind") == "adhoc" for row in live)
         if key == "pool_workers":
-            return sum(row.get("kind") not in (None, "", "adhoc", "unknown") for row in live)
+            return sum(
+                row.get("kind") not in (None, "", "adhoc", "unknown") for row in live
+            )
         if key == "active_workers":
             return sum(row.get("status") == "ACTIVE" for row in live)
         return len(live)

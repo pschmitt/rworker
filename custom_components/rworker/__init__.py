@@ -1,9 +1,9 @@
 """Push inventory and worker actions for Home Assistant."""
 
 import asyncio
+import logging
 from dataclasses import dataclass
 from datetime import datetime
-import logging
 
 from aiohttp import ClientError, ClientResponseError
 from homeassistant.const import CONF_TOKEN, CONF_URL, Platform
@@ -41,7 +41,10 @@ class Runtime:
             hass, LOGGER, config_entry=entry, name="rworker inventory"
         )
         self.connected = DataUpdateCoordinator(
-            hass, LOGGER, config_entry=entry, name="rworker connection",
+            hass,
+            LOGGER,
+            config_entry=entry,
+            name="rworker connection",
             always_update=False,
         )
         self.task = None
@@ -62,16 +65,22 @@ class Runtime:
                                 was_live = old is not None and not old.get("retired")
                                 is_live = new is not None and not new.get("retired")
                                 if is_live and not was_live:
-                                    events.append({"event_type": "worker_added", "worker": name})
+                                    events.append(
+                                        {"event_type": "worker_added", "worker": name}
+                                    )
                                 elif was_live and not is_live:
-                                    events.append({"event_type": "worker_removed", "worker": name})
+                                    events.append(
+                                        {"event_type": "worker_removed", "worker": name}
+                                    )
                                 elif is_live and old.get("status") != new.get("status"):
-                                    events.append({
-                                        "event_type": "worker_status_changed",
-                                        "worker": name,
-                                        "previous_status": old.get("status"),
-                                        "status": new.get("status"),
-                                    })
+                                    events.append(
+                                        {
+                                            "event_type": "worker_status_changed",
+                                            "worker": name,
+                                            "previous_status": old.get("status"),
+                                            "status": new.get("status"),
+                                        }
+                                    )
                         previous = workers
                         self.coordinator.async_set_updated_data(
                             Inventory(workers, dt_util.utcnow(), tuple(events))
@@ -80,7 +89,9 @@ class Runtime:
                         delay = 1
             except (ClientError, OSError, TimeoutError, ValueError) as err:
                 self.connected.async_set_updated_data(False)
-                self.coordinator.async_set_update_error(UpdateFailed("Inventory stream disconnected"))
+                self.coordinator.async_set_update_error(
+                    UpdateFailed("Inventory stream disconnected")
+                )
                 if isinstance(err, ClientResponseError) and err.status in (401, 403):
                     self.entry.async_start_reauth(self.hass)
                     return

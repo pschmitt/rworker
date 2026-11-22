@@ -5,7 +5,11 @@ from aiohttp import ClientError, ClientResponseError
 from homeassistant import config_entries
 from homeassistant.const import CONF_TOKEN, CONF_URL
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
-from homeassistant.helpers.selector import TextSelector, TextSelectorConfig, TextSelectorType
+from homeassistant.helpers.selector import (
+    TextSelector,
+    TextSelectorConfig,
+    TextSelectorType,
+)
 from yarl import URL
 
 from .api import Controller
@@ -46,16 +50,19 @@ class RworkerConfigFlow(config_entries.ConfigFlow, domain="rworker"):
                 errors["base"] = "cannot_connect"
             else:
                 return self.async_create_entry(
-                    title=url.host, data={CONF_URL: str(url).rstrip("/"), CONF_TOKEN: token}
+                    title=url.host,
+                    data={CONF_URL: str(url).rstrip("/"), CONF_TOKEN: token},
                 )
         return self.async_show_form(
             step_id="user",
-            data_schema=vol.Schema({
-                vol.Required(CONF_URL): str,
-                vol.Required(CONF_TOKEN): TextSelector(
-                    TextSelectorConfig(type=TextSelectorType.PASSWORD)
-                ),
-            }),
+            data_schema=vol.Schema(
+                {
+                    vol.Required(CONF_URL): str,
+                    vol.Required(CONF_TOKEN): TextSelector(
+                        TextSelectorConfig(type=TextSelectorType.PASSWORD)
+                    ),
+                }
+            ),
             errors=errors,
         )
 
@@ -85,10 +92,12 @@ class RworkerConfigFlow(config_entries.ConfigFlow, domain="rworker"):
                 )
         return self.async_show_form(
             step_id="reauth_confirm",
-            data_schema=vol.Schema({
-                vol.Required(CONF_TOKEN): TextSelector(
-                    TextSelectorConfig(type=TextSelectorType.PASSWORD)
-                )
-            }),
+            data_schema=vol.Schema(
+                {
+                    vol.Required(CONF_TOKEN): TextSelector(
+                        TextSelectorConfig(type=TextSelectorType.PASSWORD)
+                    )
+                }
+            ),
             errors=errors,
         )

@@ -2,10 +2,14 @@
 
 from functools import partial
 
+import voluptuous as vol
 from aiohttp import ClientError, ClientResponseError
 from homeassistant.core import SupportsResponse
-from homeassistant.exceptions import HomeAssistantError, ServiceValidationError, Unauthorized
-import voluptuous as vol
+from homeassistant.exceptions import (
+    HomeAssistantError,
+    ServiceValidationError,
+    Unauthorized,
+)
 
 DOMAIN = "rworker"
 ACTIONS = {
@@ -29,15 +33,21 @@ async def _call(hass, action, call):
     loaded = hass.config_entries.async_loaded_entries(DOMAIN)
     fields = dict(call.data)
     selected = fields.pop("config_entry_id", None)
-    entries = [entry for entry in loaded if selected is None or entry.entry_id == selected]
+    entries = [
+        entry for entry in loaded if selected is None or entry.entry_id == selected
+    ]
     if len(entries) != 1:
         raise ServiceValidationError("Select exactly one connected rworker controller")
     try:
         result = await entries[0].runtime_data.client.action(action, fields)
     except ClientResponseError as err:
-        raise HomeAssistantError(f"Controller rejected the action (HTTP {err.status})") from None
+        raise HomeAssistantError(
+            f"Controller rejected the action (HTTP {err.status})"
+        ) from None
     except (ClientError, OSError, TimeoutError, ValueError):
-        raise HomeAssistantError("Controller response unavailable. Check before retrying.") from None
+        raise HomeAssistantError(
+            "Controller response unavailable. Check before retrying."
+        ) from None
     if call.return_response:
         return result
     return None
@@ -49,11 +59,13 @@ def async_register_actions(hass):
         schema = {vol.Optional("config_entry_id"): str}
         schema.update({vol.Required(key): str for key in required})
         if provision:
-            schema.update({
-                vol.Optional("profile", default="standard"): str,
-                vol.Optional("ttl", default="2h"): str,
-                vol.Optional("topic", default="Home Assistant"): str,
-            })
+            schema.update(
+                {
+                    vol.Optional("profile", default="standard"): str,
+                    vol.Optional("ttl", default="2h"): str,
+                    vol.Optional("topic", default="Home Assistant"): str,
+                }
+            )
         hass.services.async_register(
             DOMAIN,
             service,

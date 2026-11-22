@@ -1,6 +1,9 @@
 """WebSocket connectivity diagnostic."""
 
-from homeassistant.components.binary_sensor import BinarySensorDeviceClass, BinarySensorEntity
+from homeassistant.components.binary_sensor import (
+    BinarySensorDeviceClass,
+    BinarySensorEntity,
+)
 from homeassistant.const import EntityCategory
 
 from .entity import RworkerEntity
