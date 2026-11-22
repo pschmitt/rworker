@@ -1,12 +1,13 @@
 """Run one controller assignment on a Linux CI runner."""
 
-from contextlib import contextmanager
+from contextlib import ExitStack, contextmanager
 import grp
 import json
 import os
 import platform
 import pwd
 import re
+import signal
 import shlex
 import shutil
 import socket
@@ -98,6 +99,11 @@ def run_as_build_user(command, **kwargs):
     )
 
 
+def encryption_enabled(profile):
+    opt_out = os.getenv("RWORKER_UNENCRYPTED_PROFILES", "").split(",")
+    return profile not in {item.strip() for item in opt_out}
+
+
 def prepare_build_user():
     if not LEASE_IMAGE:
         subprocess.run(
@@ -148,16 +154,8 @@ def prepare_gitlab_nix():
 
 
 @contextmanager
-def build_environment(profile):
-    capabilities = prepare_build_user()
-    if profile not in GITLAB_PROFILES:
-        yield capabilities
-        return
-    if not LEASE_IMAGE:
-        prepare_gitlab_nix()
-        yield capabilities
-        return
-    with subprocess.Popen(["nix-daemon"], stdin=subprocess.DEVNULL) as daemon:
+def gitlab_nix_daemon():
+    with subprocess.Popen(["nix-daemon"], stdin=subprocess.DEVNULL, start_new_session=True) as daemon:
         try:
             ready = Path("/nix/var/nix/daemon-socket/socket")
             deadline = time.monotonic() + 10
@@ -165,10 +163,26 @@ def build_environment(profile):
                 if daemon.poll() is not None or time.monotonic() >= deadline:
                     raise RuntimeError("Nix daemon did not start")
                 time.sleep(0.05)
-            yield capabilities
+            yield
         finally:
-            if daemon.poll() is None:
-                daemon.terminate()
+            try:
+                os.killpg(daemon.pid, signal.SIGTERM)
+            except ProcessLookupError:
+                pass
+
+
+@contextmanager
+def build_environment(profile):
+    capabilities = prepare_build_user()
+    with ExitStack() as stack:
+        if encryption_enabled(profile):
+            stack.enter_context(encrypted_build_storage(profile))
+        if profile in GITLAB_PROFILES:
+            if LEASE_IMAGE:
+                stack.enter_context(gitlab_nix_daemon())
+            else:
+                prepare_gitlab_nix()
+        yield capabilities
 
 
 def prepare_sshd(paths, public_key):
@@ -218,7 +232,7 @@ def start_ssh_worker(url, token, assignment):
     gateway = os.environ["RWORKER_GATEWAY"]
     if not re.fullmatch(r"[a-z_][a-z0-9_-]*@[a-zA-Z0-9][a-zA-Z0-9.-]*", gateway):
         raise ValueError("Invalid SSH gateway address")
-    with tempfile.TemporaryDirectory(prefix="rworker-ssh-") as directory:
+    with tempfile.TemporaryDirectory(prefix="rworker-ssh-", dir="/tmp") as directory:
         paths = Path(directory)
         identity = paths / "gateway-key"
         identity.write_text(os.environ.pop("RWORKER_GATEWAY_KEY").strip() + "\n")
@@ -287,22 +301,76 @@ def encrypted_volume(parent, size):
         device = f"/dev/mapper/{name}"
         key = os.urandom(64)
         options = ["--batch-mode", "--type", "luks2", "--key-file", "-"]
-        subprocess.run(
-            privileged("cryptsetup", "luksFormat", *options, backing), input=key, check=True,
-        )
+        # A uniformly random 512-bit input needs no memory-hard password stretching.
+        subprocess.run(privileged(
+            "cryptsetup", "luksFormat", *options, "--pbkdf", "pbkdf2",
+            "--pbkdf-force-iterations", "10000", backing,
+        ), input=key, check=True)
         subprocess.run(
             privileged("cryptsetup", "open", *options, backing, name), input=key, check=True,
         )
         del key
+        deferred = False
         try:
-            subprocess.run(privileged("mkfs.ext4", "-q", device), check=True)
-            subprocess.run(privileged("mount", "-o", "nodev,nosuid", device, mountpoint), check=True)
-            try:
+            with ExitStack() as stack:
+                subprocess.run(privileged("mkfs.ext4", "-q", "-m", "0", "-E", "nodiscard", device), check=True)
+                mount_volume(stack, mountpoint, "-o", "nodev,nosuid", device)
+                # The kernel drops the key after the last reference closes.
+                subprocess.run(privileged("cryptsetup", "close", "--deferred", name), check=True)
+                deferred = True
+                backing.unlink()
                 yield mountpoint
-            finally:
-                subprocess.run(privileged("umount", mountpoint), check=True)
         finally:
-            subprocess.run(privileged("cryptsetup", "close", name), check=True)
+            if not deferred:
+                subprocess.run(privileged("cryptsetup", "close", name), check=True)
+
+
+def unmount(path):
+    if subprocess.run(privileged("umount", path), check=False).returncode:
+        subprocess.run(privileged("umount", "-l", path), check=True)
+
+
+def mount_volume(stack, path, *arguments):
+    subprocess.run(privileged("mount", *arguments, path), check=True)
+    stack.callback(unmount, path)
+
+
+@contextmanager
+def encrypted_build_storage(profile):
+    for program in ("cryptsetup", "mkfs.ext4", "mount", "umount"):
+        if not shutil.which(program):
+            raise RuntimeError(f"Encrypted lease storage requires {program}")
+    parent = Path(os.environ.get("RUNNER_TEMP", os.environ.get("CI_PROJECT_DIR", ".")))
+    space = os.statvfs(parent)
+    size = min((space.f_bavail * space.f_frsize) - 1024**3, 256 * 1024**3)
+    if size < 1024**3:
+        raise RuntimeError("Encrypted lease storage requires at least 2 GiB free")
+    github = profile not in GITLAB_PROFILES
+    with ExitStack() as stack:
+        volume = stack.enter_context(encrypted_volume(parent, size))
+        nix = Path("/nix")
+        subprocess.run(privileged("mkdir", "-p", nix), check=True)
+        upper, work = volume / "nix-upper", volume / "nix-work"
+        subprocess.run(privileged("mkdir", upper, work), check=True)
+        home = pwd.getpwnam(BUILD_USER)
+        for name, path, mode, uid, gid in (
+            ("home", home.pw_dir, "0700", home.pw_uid, home.pw_gid),
+            ("tmp", "/tmp", "1777", 0, 0),
+            ("var-tmp", "/var/tmp", "1777", 0, 0),
+        ):
+            subprocess.run(privileged("mkdir", "-p", path), check=True)
+            directory = volume / name
+            subprocess.run(privileged("install", "-d", "-m", mode, "-o", str(uid), "-g", str(gid), directory), check=True)
+            mount_volume(stack, path, "--bind", directory)
+        if github:
+            subprocess.run(privileged("systemctl", "stop", "nix-daemon.socket", "nix-daemon.service"), check=True)
+            stack.callback(subprocess.run, privileged("systemctl", "start", "nix-daemon.socket"), check=True)
+        mount_volume(stack, nix, "-t", "overlay", "overlay", "-o", f"lowerdir={nix},upperdir={upper},workdir={work},index=off")
+        if github:
+            subprocess.run(privileged("systemctl", "start", "nix-daemon.socket"), check=True)
+            stack.callback(subprocess.run, privileged("systemctl", "stop", "nix-daemon.socket", "nix-daemon.service"), check=True)
+        print("rworker lease storage: encrypted with LUKS2", flush=True)
+        yield
 
 
 def check_runtime(profile):
@@ -321,14 +389,12 @@ def check_runtime(profile):
         ["stat", "-f", "-c", "Storage probe %n: %T", ".", "/nix", "/dev/shm"],
         check=False,
     )
-    if shutil.which("cryptsetup"):
-        with encrypted_volume(Path.cwd(), 128 * 1024**2) as volume:
-            marker = volume / "storage-probe"
-            marker.write_text("ready")
-            if marker.read_text() != "ready":
-                raise RuntimeError("Encrypted volume readback failed")
-        print("Storage probe LUKS2: mount, write, read and close passed", flush=True)
-    with build_environment(profile), tempfile.TemporaryDirectory() as directory:
+    with build_environment(profile) as capabilities, tempfile.TemporaryDirectory(dir="/tmp") as directory:
+        print(f"rworker runtime KVM: {'kvm' in capabilities}", flush=True)
+        if encryption_enabled(profile):
+            for mount in (pwd.getpwnam(BUILD_USER).pw_dir, "/tmp", "/var/tmp", "/nix"):
+                if not os.path.ismount(mount):
+                    raise RuntimeError(f"Missing encrypted storage mount at {mount}")
         paths = Path(directory)
         key = paths / "client"
         subprocess.run(["ssh-keygen", "-q", "-t", "ed25519", "-N", "", "-f", key], check=True)
@@ -385,7 +451,7 @@ def main():
         raise ValueError("Runner architecture does not match the requested profile")
     if (profile == "gl-linux-x64-lease") != LEASE_IMAGE:
         raise ValueError("Container image does not match the requested profile")
-    if sys.argv[1:] == ["--check-runtime"] and profile in GITLAB_PROFILES:
+    if sys.argv[1:] == ["--check-runtime"]:
         check_runtime(profile)
         return 0
     job_id = os.environ["RWORKER_JOB_ID"]
@@ -413,8 +479,13 @@ def main():
 
 
 if __name__ == "__main__":
+    def terminate(_signum, _frame):
+        raise SystemExit(143)
+
+    signal.signal(signal.SIGTERM, terminate)
     try:
         sys.exit(main())
     except Exception as error:
-        print(f"rworker agent failed ({type(error).__name__})", file=sys.stderr)
+        detail = f": {error}" if type(error) is RuntimeError else ""
+        print(f"rworker agent failed ({type(error).__name__}){detail}", file=sys.stderr)
         sys.exit(1)

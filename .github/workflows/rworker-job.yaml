@@ -5,8 +5,8 @@ on:
   workflow_dispatch:
     inputs:
       job_id:
-        description: Controller assignment ID
-        required: true
+        description: Controller assignment ID (empty runs a local runtime check)
+        required: false
         type: string
       profile:
         description: Native Linux runner profile
@@ -38,4 +38,16 @@ jobs:
           RWORKER_GATEWAY_KNOWN_HOSTS: ${{ vars.RWORKER_GATEWAY_KNOWN_HOSTS }}
           RWORKER_GATEWAY_KEY: ${{ secrets.RWORKER_GATEWAY_KEY }}
           RWORKER_PROFILE: ${{ inputs.profile }}
-        run: python3 scripts/github-job-agent.py
+          RWORKER_UNENCRYPTED_PROFILES: ${{ vars.RWORKER_UNENCRYPTED_PROFILES }}
+        run: |
+          if ! command -v cryptsetup >/dev/null
+          then
+            sudo apt-get update
+            sudo apt-get install -y --no-install-recommends cryptsetup-bin e2fsprogs
+          fi
+          if [[ -z "$RWORKER_JOB_ID" ]]
+          then
+            python3 scripts/github-job-agent.py --check-runtime
+          else
+            python3 scripts/github-job-agent.py
+          fi

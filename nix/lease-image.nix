@@ -2,8 +2,10 @@
   bashInteractive,
   cacert,
   coreutils,
+  cryptsetup,
   curl,
   dockerTools,
+  e2fsprogs,
   git,
   gnugrep,
   nix,
@@ -12,6 +14,7 @@
   procps,
   python3,
   rsync,
+  util-linux,
 }:
 dockerTools.buildLayeredImage {
   name = "ghcr.io/pschmitt/rworker-lease";
@@ -21,9 +24,11 @@ dockerTools.buildLayeredImage {
     bashInteractive
     cacert
     coreutils
+    cryptsetup
     curl
     dockerTools.binSh
     dockerTools.usrBinEnv
+    e2fsprogs
     git
     gnugrep
     nix
@@ -40,6 +45,8 @@ dockerTools.buildLayeredImage {
     chmod 1777 tmp
     chmod 0555 var/empty
     ln -s ${openssh}/bin/sshd usr/sbin/sshd
+    ln -s ${util-linux}/bin/mount bin/mount
+    ln -s ${util-linux}/bin/umount bin/umount
     ln -s ca-bundle.crt etc/ssl/certs/ca-certificates.crt
     cat > etc/passwd <<'USERS'
     root:x:0:0:root:/root:/bin/bash

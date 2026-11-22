@@ -31,12 +31,28 @@ script. The configuration only creates pipelines for API requests on
 protected `main`.
 
 The job uses the project's regular untagged runners. It needs a Linux x86-64
-container executor that starts a fresh, unprivileged container with a
-root bootstrap user, no host Docker socket, and private build storage. Allow
+container executor with a root bootstrap user, no host Docker socket, and
+private build storage. Allow
 HTTPS access to GitLab, Ubuntu package mirrors, Nix caches, and the
 controller, plus SSH access to the controller. The runner also needs to pull
 the selected image from Docker Hub or GHCR. Commands run under an
 unprivileged local account with a job-local Nix store.
+
+## Lease storage
+
+Both profiles default to a file-backed LUKS2 volume with a random per-lease
+key. The build user's home, temporary directories, and writable Nix store
+and database use this volume. The runner must permit loop devices,
+device-mapper, and ext4 and overlay mounts. Lease startup fails if setup
+fails. To opt out on a runner without those capabilities, set the project
+CI/CD variable `RWORKER_UNENCRYPTED_PROFILES` to `gl-linux-x64`,
+`gl-linux-x64-lease`, or both separated by a comma.
+
+Encryption runs in the original job and has no KVM dependency. Nix VM
+tests can still use `/dev/kvm` when the runner makes it available to the
+build user. Use a trusted runner with encrypted or disabled swap if build
+data in memory also needs protection. CI logs and uploaded artifacts are
+outside the lease volume.
 
 Configure these protected project CI/CD variables.
 

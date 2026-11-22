@@ -1,5 +1,16 @@
 # GitHub Actions workers
 
+Lease storage is encrypted by default with a file-backed LUKS2 volume and a
+random key generated for each lease. The build user's home, temporary
+directories, and writable Nix store and database use the volume. Setup
+must succeed before the worker accepts SSH. To opt out, set the repository
+Actions variable `RWORKER_UNENCRYPTED_PROFILES` to `linux-x64`,
+`linux-arm64`, or both separated by a comma.
+
+Encryption uses Linux device-mapper and leaves KVM access available to
+builds wherever the runner exposes it. Workflow logs, uploaded artifacts,
+and runner swap are outside the encrypted filesystem.
+
 The workflow lives in the repository associated with the build. The rworker
 workflow provides native Linux ARM64 and x86-64 profiles and installs Nix.
 The agent advertises KVM after the build user successfully opens a VM
