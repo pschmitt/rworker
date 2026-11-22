@@ -6,6 +6,8 @@ The Rust client and controller replace the original Bash client.
 
 ### GitHub Actions
 
+- Keep one-shot build logs after the GitHub worker closes when controller log archiving is enabled.
+
 - Show the GitHub glyph for Actions workers in the CLI, TUI, and web inventory.
 
 - Add a native Linux runner workflow and agent bootstrap for controller-assigned

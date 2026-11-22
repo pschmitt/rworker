@@ -37,6 +37,8 @@ struct Lease {
     owner: String,
     #[serde(default)]
     topic: String,
+    #[serde(default)]
+    archive_logs: bool,
 }
 
 #[derive(Deserialize, Serialize)]
@@ -101,6 +103,7 @@ pub(super) fn run(settings: &Value, action: &str, args: &[String]) -> Result<Val
                     kvm: false,
                     owner: owner.into(),
                     topic: topic.into(),
+                    archive_logs: settings["logCollectorOperator"].is_string(),
                 },
             )
         }

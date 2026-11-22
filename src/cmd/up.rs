@@ -190,6 +190,13 @@ fn github_up(ctx: &Ctx, profile: &str, ttl: &str, key_file: &str, topic: &str) -
     let id = need(&initial, "id")?;
     let name = format!("gha-{id}");
     ctx.err(&format!("Waiting for GitHub worker {name}"));
+    if let (Some(repository), Some(run)) =
+        (initial["repository"].as_str(), initial["run_id"].as_u64())
+    {
+        ctx.err(&format!(
+            "https://github.com/{repository}/actions/runs/{run}"
+        ));
+    }
     let expires = epoch(&initial["expires_at"]);
 
     let ready = (|| {
@@ -204,8 +211,12 @@ fn github_up(ctx: &Ctx, profile: &str, ttl: &str, key_file: &str, topic: &str) -
                         "user": "rworker-build",
                         "kind": "adhoc",
                         "provider": "github",
-                        "profile": profile,
+                        "profile": format!("github-{}", profile.trim_start_matches("linux-")),
                         "expires_at": expires,
+                        "created_at": lease["created_at"],
+                        "topic": lease["topic"],
+                        "archive_logs": lease["archive_logs"],
+                        "run_id": lease["run_id"],
                         "github_port": lease["endpoint"]["port"],
                         "host_key": lease["endpoint"]["host_key"],
                         "kvm": lease["kvm"],

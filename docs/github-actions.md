@@ -59,6 +59,8 @@ to `/v1/agent/jobs/<id>`.
 or `rworker down` cancels the run. During that window, `rworker ssh` opens a
 normal SSH session and `sync` and `cp` use the same route. `rworker exec` owns
 its lease and releases it after collecting the command result and outputs.
+When the controller has log archiving configured, use `rworker logs
+--cached WORKER` to retrieve the archived output after the lease ends.
 
 The agent authenticates the assignment over HTTPS, starts a loopback-only
 SSH server with a freshly generated host key, and establishes an outbound
