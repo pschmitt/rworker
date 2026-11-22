@@ -32,8 +32,12 @@ impl Drop for Cleanup<'_> {
         let ctx = self.ctx;
         let owner = ctx.owner();
         let remote = ["down", &self.name, "--owner", &owner];
-        let request: &[&str] = match state::github_id(&self.name) {
-            Some(id) => &["github-down", id, &owner],
+        let hosted;
+        let request: &[&str] = match state::hosted_id(&self.name) {
+            Some((forge, id)) => {
+                hosted = format!("{}-down", forge.key());
+                &[&hosted, id, &owner]
+            }
             None => &remote,
         };
         if !matches!(ctx.muted(|| state::remote_quiet(ctx, request)), Ok(0)) {

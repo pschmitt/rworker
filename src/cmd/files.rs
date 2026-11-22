@@ -72,7 +72,7 @@ fn ssh_command_with_options(ctx: &Ctx, args: &[String], extra: &[&str]) -> R<Com
     }
     let ip = state::worker_ip(ctx, &t.name)?;
     let web_terminal = !extra.is_empty();
-    let user = if web_terminal && state::github_id(&t.name).is_some() {
+    let user = if web_terminal && state::hosted_id(&t.name).is_some() {
         // The controller may set a default login for its OpenStack workers.
         state::worker_field(ctx, &t.name, "user")?
     } else {

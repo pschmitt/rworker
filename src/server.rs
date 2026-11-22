@@ -4,6 +4,7 @@ mod github;
 mod github_agent_api;
 mod github_leases;
 mod github_oidc;
+mod gitlab;
 mod http;
 mod inventory;
 mod inventory_api;
@@ -128,7 +129,8 @@ pub fn run(ctx: &crate::ctx::Ctx, args: &[String]) -> R {
         None
     };
     let edit = match action.as_str() {
-        "up" | "github-up" | "github-status" | "github-down" | "github-reap" => None,
+        "up" => None,
+        action if github_leases::action(action).is_some() => None,
         "reap" if rest.is_empty() || rest == ["--dry-run"] => None,
         "autoscale" if rest.is_empty() || rest == ["--once"] => None,
         "profiles"
@@ -168,11 +170,8 @@ pub fn run(ctx: &crate::ctx::Ctx, args: &[String]) -> R {
             reap_command::reap(&settings, !rest.is_empty())?;
             return Ok(());
         }
-        let response = if matches!(
-            action.as_str(),
-            "github-up" | "github-status" | "github-down" | "github-reap"
-        ) {
-            github_leases::run(&settings, action, rest)?
+        let response = if let Some((forge, command)) = github_leases::action(action) {
+            github_leases::run(&settings, forge, command, rest)?
         } else if let Some(args) = up {
             up::up(&settings, args)?
         } else if let Some(edit) = edit {
@@ -478,6 +477,19 @@ fn profiles(settings: &Value) -> io::Result<Vec<Value>> {
             })
         }));
     }
+    let gitlab = crate::github_profiles::Forge::GitLab;
+    if settings[gitlab.settings_key()]["projectId"].is_u64() {
+        rows.extend(gitlab.profiles().iter().map(|profile| {
+            json!({
+                "name": profile.name,
+                "provider": gitlab.key(),
+                "system": profile.system,
+                "flavor": profile.label,
+                "image_tags": [gitlab.tag()],
+                "default": false,
+            })
+        }));
+    }
     Ok(rows)
 }
 
@@ -485,7 +497,7 @@ fn add_profile_images(settings: &Value, rows: &mut [Value]) {
     let compute = openstack::OpenStack::from_settings(settings);
     let mut images = provision::Images::default();
     for row in rows {
-        if row["provider"] == "github" {
+        if matches!(row["provider"].as_str(), Some("github" | "gitlab")) {
             continue;
         }
         let Some(name) = row["name"].as_str() else {

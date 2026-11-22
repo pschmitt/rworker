@@ -17,3 +17,7 @@ Actions:
   github-status ID       Reconcile a GitHub Actions lease.
   github-down ID OWNER         Request cancellation of a GitHub Actions lease.
   github-reap             Reconcile all GitHub Actions leases.
+  gitlab-up PROFILE TTL PUBLIC_KEY OWNER TOPIC  Dispatch a GitLab CI lease.
+  gitlab-status ID        Reconcile a GitLab CI lease.
+  gitlab-down ID OWNER    Request cancellation of a GitLab CI lease.
+  gitlab-reap             Reconcile all GitLab CI leases.

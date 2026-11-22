@@ -216,6 +216,7 @@ dialog footer { justify-content: end; border-top: 1px solid var(--line); }
 .profile-select { font-family: "rworker agents", "Instrument Sans", "Segoe UI", system-ui, sans-serif; }
 .worker-icon { display: grid; place-items: center; flex: 0 0 30px; height: 30px; border-radius: 7px; color: var(--cyan); background: #2a3442; }
 .profile-icon-github { color: var(--ink); }
+.profile-icon-gitlab { color: #e24329; }
 .profile-icon-openstack { color: #da1a32; }
 .worker-identity { min-width: 0; }
 .worker-identity .secondary { font-weight: 500; }

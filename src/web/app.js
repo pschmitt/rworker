@@ -125,6 +125,8 @@ const agentIcons = new Map([
 // the bundled font has it, else one for its kind. Keep in sync with
 // scripts/web-icon-font.sh, which builds agents.woff2 from these.
 const githubGlyph = "\u{f09b}";
+const gitlabGlyph = "\u{f1064}";
+const ciProviders = { github: "GitHub Actions", gitlab: "GitLab CI" };
 const openstackGlyph = "\u{e856}";
 const workerGlyphs = new Set(["\u{f1064}", "\u{f06a9}", "\u{f048b}", "\u{f0508}", "\u{f059f}", githubGlyph]);
 
@@ -134,6 +136,7 @@ function isPool(row) {
 
 function workerGlyph(row) {
   if (row.name?.startsWith("gha-")) return githubGlyph;
+  if (row.name?.startsWith("glci-")) return gitlabGlyph;
   if (row.icon && workerGlyphs.has(row.icon)) return row.icon;
   if (row.kind === "adhoc") return "\u{f1064}";
   if (row.kind === "nixbot" || row.kind === "pool") return "\u{f06a9}";
@@ -141,11 +144,13 @@ function workerGlyph(row) {
 }
 
 function profileGlyph(row) {
-  return row.provider === "github" ? githubGlyph : openstackGlyph;
+  if (row.provider === "github") return githubGlyph;
+  if (row.provider === "gitlab") return gitlabGlyph;
+  return openstackGlyph;
 }
 
 function profileIcon(row, className = "agent-icon") {
-  const providerClass = row.provider === "github" ? "profile-icon-github" : "profile-icon-openstack";
+  const providerClass = `profile-icon-${Object.hasOwn(ciProviders, row.provider) ? row.provider : "openstack"}`;
   const icon = element("span", profileGlyph(row), `${className} ${providerClass}`);
   icon.setAttribute("aria-hidden", "true");
   return icon;
@@ -529,10 +534,10 @@ async function openProfile(row) {
     form("create", null, row.name);
   };
   const show = (profile) => {
-    const github = profile.provider === "github";
+    const ciProvider = ciProviders[profile.provider];
     const fields = [
-      ["Provider", github ? "GitHub Actions" : "OpenStack"],
-      [github ? "Runner" : "Flavor", profile.flavor], ["Architecture", profile.system],
+      ["Provider", ciProvider || "OpenStack"],
+      [ciProvider ? "Runner" : "Flavor", profile.flavor], ["Architecture", profile.system],
       ["vCPUs", profile.vcpus], ["RAM", profile.ram_gb != null ? profile.ram_gb + " GB" :
         profile.ram_mib != null ? (profile.ram_mib * 2 ** 20 / 1e9).toFixed(1) + " GB" : null],
       ["Disk", profile.disk_total_bytes != null ? (profile.disk_total_bytes / 1e9).toFixed(1) + " GB" :
@@ -549,9 +554,9 @@ async function openProfile(row) {
   };
   show(row);
   status.textContent = "Loading image details…";
-  status.hidden = row.provider === "github";
+  status.hidden = Object.hasOwn(ciProviders, row.provider);
   dialog.showModal();
-  if (row.provider === "github") return;
+  if (status.hidden) return;
   const create = $("profile-create").onclick;
   try {
     const [profile] = await request("profiles/" + encodeURIComponent(row.name));
@@ -981,10 +986,10 @@ async function form(action, worker, profile) {
     fields.append(options);
     const updateProvider = () => {
       const profile = state.rows.profiles?.find((row) => row.name === profileInput.value);
-      const github = profile?.provider === "github" || /^gh-(aarch64|x86_64)$/.test(profileInput.value);
-      overrides.hidden = overrides.disabled = github;
-      flavor.placeholder = github ? "" : profile?.flavor || "Use profile default";
-      disk.placeholder = github || !profile?.disk ? "Use profile default" : String(profile.disk);
+      const ci = Object.hasOwn(ciProviders, profile?.provider) || /^(gh-(aarch64|x86_64)|gl-x86_64)$/.test(profileInput.value);
+      overrides.hidden = overrides.disabled = ci;
+      flavor.placeholder = ci ? "" : profile?.flavor || "Use profile default";
+      disk.placeholder = ci || !profile?.disk ? "Use profile default" : String(profile.disk);
     };
     profileInput.addEventListener("input", updateProvider);
     updateProvider();

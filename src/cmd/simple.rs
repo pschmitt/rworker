@@ -25,8 +25,8 @@ pub fn cmd_down(ctx: &Ctx, args: &[String]) -> R {
     if args.get(1).map(String::as_str) == Some("--force") {
         remote.push("--force".into());
     }
-    if let Some(id) = state::github_id(name) {
-        remote = vec!["github-down".into(), id.into(), ctx.owner()];
+    if let Some((forge, id)) = state::hosted_id(name) {
+        remote = vec![format!("{}-down", forge.key()), id.into(), ctx.owner()];
     }
     if state::remote_quiet(ctx, &remote)? != 0 {
         return Err(Fail(1));
@@ -298,13 +298,11 @@ pub fn cmd_profiles(ctx: &Ctx, args: &[String]) -> R {
         ]
         .join("\t");
         if wide {
-            let github = p["provider"] == "github";
-            let provider = if github {
-                "GitHub Actions"
-            } else {
-                "OpenStack"
-            };
-            let image = if github {
+            let forge = p["provider"]
+                .as_str()
+                .and_then(crate::github_profiles::Forge::from_key);
+            let provider = forge.map_or("OpenStack", crate::github_profiles::Forge::label);
+            let image = if forge.is_some() {
                 jq::or(&p["flavor"], "-")
             } else {
                 jq::or(&p["image_name"], &jq::or(&p["image_status"], "-"))

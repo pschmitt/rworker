@@ -531,6 +531,9 @@ fn main() {
                     | "github-up"
                     | "github-status"
                     | "github-down"
+                    | "gitlab-up"
+                    | "gitlab-status"
+                    | "gitlab-down"
             ),
             [] => false,
         };

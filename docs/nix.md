@@ -12,6 +12,7 @@ nix flake check                                 # unit tests, inventory API, MCP
 - `packages.<system>.rworker` (also `default`), for x86_64-linux and
   aarch64-linux; `packages.<system>.rworker-mcp` is the MCP server (also
   `rworker.mcp`).
+- `packages.<system>.client-image` builds the [OCI client image](oci-client.md).
 - `overlays.default` adds `pkgs.rworker`.
 - `homeModules.default` (also `homeManagerModules.default`): the
   [Home Manager module](#home-manager-module).
@@ -90,6 +91,13 @@ nginx verifies the client certificate and has access to the read API socket.
 The TUI can use this HTTPS endpoint or its existing authenticated control connection.
 
 
+## CI worker relays
+
+`services.rworker.githubActions` and `services.rworker.gitlabCi` configure
+the HTTPS agent API, SSH relay, and lease reaper. See
+[GitHub Actions workers](github-actions.md) and
+[GitLab CI workers](gitlab-ci.md) for provider settings.
+
 ## On-demand Nix builders
 
 The NixOS module can provision workers on demand through a stable SSH gateway.
@@ -109,7 +117,8 @@ WebSocket upgrades on `/v1/ui/follow/` and `/v1/ui/updates` for live logs and
 inventory notifications. The interactive SSH terminal also uses the
 `/v1/ui/follow/` WebSocket location.
 Set `web.identityFile` and `web.publicKeyFile` to the controller’s SSH key pair.
-New OpenStack and GitHub workers owned by the configured `web.operator` receive
+New OpenStack, GitHub Actions, and GitLab CI workers owned by the configured
+`web.operator` receive
 the console public key alongside the caller’s key, including when created from
 the CLI. The console key added this way disables SSH forwarding and user RC files.
 

@@ -1,4 +1,4 @@
-//! Durable controller records for GitHub-hosted worker leases.
+//! Durable controller records for CI worker leases.
 
 use std::fs::{self, DirBuilder, File, OpenOptions};
 use std::io::{self, Read};
@@ -12,6 +12,8 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
 use super::github::{GitHub, RunStatus};
+use super::gitlab::GitLab;
+use crate::github_profiles::Forge;
 
 const MAX_LEASE_SECONDS: u64 = 7200;
 
@@ -68,30 +70,91 @@ enum LeaseState {
     Ended,
 }
 
-pub(super) fn run(settings: &Value, action: &str, args: &[String]) -> Result<Value, String> {
-    let config = &settings["githubActions"];
+enum Backend<'a> {
+    GitHub(GitHub<'a>),
+    GitLab(GitLab<'a>),
+}
+
+impl Backend<'_> {
+    fn dispatch(&self, id: &str, profile: &str) -> Result<u64, String> {
+        match self {
+            Self::GitHub(api) => api.dispatch(id, profile),
+            Self::GitLab(api) => api.dispatch(id, profile),
+        }
+    }
+
+    fn status(&self, id: u64) -> Result<RunStatus, String> {
+        match self {
+            Self::GitHub(api) => api.status(id),
+            Self::GitLab(api) => api.status(id),
+        }
+    }
+
+    fn cancel(&self, id: u64) -> Result<(), String> {
+        match self {
+            Self::GitHub(api) => api.cancel(id),
+            Self::GitLab(api) => api.cancel(id),
+        }
+    }
+}
+
+fn repository(config: &Value, forge: Forge) -> Option<String> {
+    match forge {
+        Forge::GitHub => config["repository"].as_str().map(str::to_owned),
+        Forge::GitLab => Some(format!(
+            "{}:{}",
+            config["instance"].as_str()?,
+            config["projectId"].as_u64()?
+        )),
+    }
+}
+
+pub(super) fn action(action: &str) -> Option<(Forge, &str)> {
+    let (provider, command) = action.split_once('-')?;
+    let forge = Forge::ALL
+        .into_iter()
+        .find(|forge| forge.key() == provider)?;
+    matches!(command, "up" | "status" | "down" | "reap").then_some((forge, command))
+}
+
+pub(super) fn run(
+    settings: &Value,
+    forge: Forge,
+    command: &str,
+    args: &[String],
+) -> Result<Value, String> {
+    let config = &settings[forge.settings_key()];
     let setting = |key: &str| {
         config[key]
             .as_str()
-            .ok_or_else(|| format!("Missing githubActions.{key}"))
+            .ok_or_else(|| format!("Missing {}.{key}", forge.settings_key()))
     };
-    let repository = setting("repository")?;
+    let repository = repository(config, forge).ok_or("Missing worker pipeline project")?;
     let token = fs::read_to_string(setting("tokenFile")?)
-        .map_err(|error| format!("Read GitHub Actions credential: {error}"))?;
-    let github = GitHub::new(repository, token.trim())?;
+        .map_err(|error| format!("Read worker pipeline credential: {error}"))?;
+    let backend = match forge {
+        Forge::GitHub => Backend::GitHub(GitHub::new(&repository, token.trim())?),
+        Forge::GitLab => Backend::GitLab(GitLab::new(
+            setting("instance")?,
+            config["projectId"]
+                .as_u64()
+                .ok_or("Missing GitLab project ID")?,
+            token.trim(),
+        )?),
+    };
     let root = Path::new(setting("stateDirectory")?);
     if !root.is_absolute() {
-        return Err("GitHub Actions state directory must be absolute".into());
+        return Err("Worker lease state directory must be absolute".into());
     }
 
-    match (action, args) {
-        ("github-up", [profile, ttl, public_key, owner, topic]) => {
-            if crate::github_profiles::from_runner(profile).is_none() {
-                return Err("Unknown GitHub Actions runner profile".into());
+    match (command, args) {
+        ("up", [profile, ttl, public_key, owner, topic]) => {
+            if !forge.profiles().iter().any(|entry| entry.runner == profile) {
+                return Err("Unknown worker runner profile".into());
             }
             let ttl = super::duration_seconds(ttl)
                 .filter(|seconds| (1..=MAX_LEASE_SECONDS).contains(seconds))
-                .ok_or("GitHub Actions lease must be between 1 second and 2 hours")?;
+                .ok_or("Worker lease must be between 1 second and 2 hours")?;
             if !super::worker_ssh::valid_public_key(public_key) {
                 return Err("Expected an Ed25519 or RSA SSH public key".into());
             }
@@ -101,12 +164,12 @@ pub(super) fn run(settings: &Value, action: &str, args: &[String]) -> Result<Val
                 Some(key) => format!("{public_key}\n{key}"),
                 None => public_key.clone(),
             };
-            create(
+            let mut response = create(
                 root,
-                &github,
+                &backend,
                 Lease {
                     id: random_hex::<16>()?,
-                    repository: repository.into(),
+                    repository: repository.clone(),
                     profile: profile.into(),
                     created_at: now(),
                     expires_at: now() + ttl,
@@ -122,40 +185,50 @@ pub(super) fn run(settings: &Value, action: &str, args: &[String]) -> Result<Val
                     workflow: None,
                     disk: None,
                 },
-            )
+            )?;
+            if forge == Forge::GitLab
+                && let Some(run) = response["run_id"].as_u64()
+                && let Some(project) = config["project"].as_str()
+            {
+                response["run_url"] = json!(format!(
+                    "{}/{project}/-/pipelines/{run}",
+                    setting("instance")?
+                ));
+            }
+            Ok(response)
         }
-        ("github-status", [id]) | ("github-down", [id, _]) => {
+        ("status", [id]) | ("down", [id, _]) => {
             let dir = lease_dir(root, id)?;
             let guard = File::open(dir.join("lock")).map_err(|error| error.to_string())?;
             lock(&guard)?;
             let mut lease = read_lease(&dir).map_err(|error| error.to_string())?;
             if lease.repository != repository {
-                return Err("GitHub Actions lease belongs to a different repository".into());
+                return Err("Worker lease belongs to a different repository".into());
             }
-            if action == "github-down" && args[1] != lease.owner {
-                return Err("GitHub Actions lease belongs to a different operator".into());
+            if command == "down" && args[1] != lease.owner {
+                return Err("Worker lease belongs to a different operator".into());
             }
-            reconcile(&dir, &mut lease, &github, action == "github-down")?;
+            reconcile(&dir, &mut lease, &backend, command == "down")?;
             Ok(public_lease(lease))
         }
-        ("github-reap", []) => {
+        ("reap", []) => {
             for dir in directories(root)? {
                 let result = (|| {
                     let guard = File::open(dir.join("lock")).map_err(|error| error.to_string())?;
                     lock(&guard)?;
                     let mut lease = read_lease(&dir).map_err(|error| error.to_string())?;
                     if lease.repository == repository && lease.run_id.is_some() {
-                        reconcile(&dir, &mut lease, &github, false)?;
+                        reconcile(&dir, &mut lease, &backend, false)?;
                     }
                     Ok::<_, String>(())
                 })();
                 if let Err(error) = result {
-                    eprintln!("Reconcile GitHub lease: {error}");
+                    eprintln!("Reconcile worker lease: {error}");
                 }
             }
             Ok(Value::Null)
         }
-        _ => Err("Invalid GitHub Actions lease arguments".into()),
+        _ => Err("Invalid worker lease arguments".into()),
     }
 }
 
@@ -168,21 +241,20 @@ pub(super) fn claim(
     kvm: bool,
     disk: Option<Disk>,
 ) -> Result<Value, String> {
-    let config = &settings["githubActions"];
-    let repository = config["repository"]
-        .as_str()
-        .ok_or("Missing GitHub repository")?;
-    let repository_id = config["repositoryId"]
-        .as_str()
-        .ok_or("Missing GitHub repository ID")?;
-    let root = config["stateDirectory"]
-        .as_str()
-        .ok_or("Missing GitHub state directory")?;
-    let root = Path::new(root);
-    if !root.is_absolute() {
-        return Err("GitHub Actions state directory must be absolute".into());
-    }
-    let run_id = super::github_oidc::verify(oidc_token, repository, repository_id)?;
+    let (forge, id) = agent_lease(id);
+    let config = &settings[forge.settings_key()];
+    let repository = repository(config, forge).ok_or("Missing worker pipeline project")?;
+    let root = state_directory(config).ok_or("Missing worker lease state directory")?;
+    let run_id = match forge {
+        Forge::GitHub => super::github_oidc::verify(
+            oidc_token,
+            &repository,
+            config["repositoryId"]
+                .as_str()
+                .ok_or("Missing GitHub repository ID")?,
+        )?,
+        Forge::GitLab => super::github_oidc::verify_gitlab(oidc_token, config)?,
+    };
     let dir = lease_dir(root, id)?;
     let guard = File::open(dir.join("lock")).map_err(|error| error.to_string())?;
     lock(&guard)?;
@@ -192,12 +264,12 @@ pub(super) fn claim(
         || lease.profile != profile
         || !matches!(
             (profile, architecture),
-            ("linux-arm64", "aarch64") | ("linux-x64", "x86_64")
+            ("linux-arm64", "aarch64") | ("linux-x64" | "gl-linux-x64", "x86_64")
         )
         || lease.state != LeaseState::Queued
         || now() >= lease.expires_at
     {
-        return Err("GitHub workflow cannot claim the lease".into());
+        return Err("Pipeline job cannot claim the lease".into());
     }
     let token = random_hex::<32>()?;
     let hash = ring::digest::digest(&ring::digest::SHA256, token.as_bytes());
@@ -210,30 +282,36 @@ pub(super) fn claim(
 }
 
 pub(super) fn inventory(settings: &Value) -> Result<Vec<Value>, String> {
-    let config = &settings["githubActions"];
-    let Some(root) = config["stateDirectory"].as_str().map(Path::new) else {
+    let mut rows = Vec::new();
+    for forge in Forge::ALL {
+        rows.extend(provider_inventory(settings, forge)?);
+    }
+    Ok(rows)
+}
+
+fn provider_inventory(settings: &Value, forge: Forge) -> Result<Vec<Value>, String> {
+    let config = &settings[forge.settings_key()];
+    let Some(root) = state_directory(config) else {
         return Ok(Vec::new());
     };
-    if !root.is_absolute() {
-        return Err("GitHub Actions state directory must be absolute".into());
-    }
+    let repository = repository(config, forge);
     Ok(directories(root)?
         .into_iter()
         .filter_map(|dir| read_lease(&dir).ok())
         .filter(|lease| {
-            Some(lease.repository.as_str()) == config["repository"].as_str()
+            Some(lease.repository.as_str()) == repository.as_deref()
                 && lease.expires_at > now()
                 && matches!(lease.state, LeaseState::Queued | LeaseState::Claimed | LeaseState::Ready | LeaseState::Cancelling)
         })
         .map(|lease| {
-            let name = format!("gha-{}", lease.id);
+            let name = format!("{}{}", forge.prefix(), lease.id);
             let ready = lease.state == LeaseState::Ready;
             json!({
                 "name": name,
                 "ip": ready.then_some(&name),
-                "provider": "github",
+                "provider": forge.key(),
                 "kind": "adhoc",
-                "profile": crate::github_profiles::from_runner(&lease.profile).map(|profile| profile.name),
+                "profile": forge.profiles().iter().find(|profile| profile.runner == lease.profile).map(|profile| profile.name),
                 "status": match lease.state {
                     LeaseState::Ready => "ACTIVE",
                     LeaseState::Cancelling => "DELETING",
@@ -253,12 +331,15 @@ pub(super) fn inventory(settings: &Value) -> Result<Vec<Value>, String> {
 }
 
 pub(super) fn add_disk_observations(settings: &Value, rows: &mut [Value]) {
-    let config = &settings["githubActions"];
-    let Some(root) = config["stateDirectory"]
-        .as_str()
-        .map(Path::new)
-        .filter(|path| path.is_absolute())
-    else {
+    for forge in Forge::ALL {
+        add_provider_disk_observations(settings, forge, rows);
+    }
+}
+
+fn add_provider_disk_observations(settings: &Value, forge: Forge, rows: &mut [Value]) {
+    let config = &settings[forge.settings_key()];
+    let repository = repository(config, forge);
+    let Some(root) = state_directory(config) else {
         return;
     };
     let Ok(dirs) = directories(root) else {
@@ -266,7 +347,7 @@ pub(super) fn add_disk_observations(settings: &Value, rows: &mut [Value]) {
     };
     let mut latest = std::collections::BTreeMap::new();
     for lease in dirs.into_iter().filter_map(|dir| read_lease(&dir).ok()) {
-        if Some(lease.repository.as_str()) != config["repository"].as_str() {
+        if Some(lease.repository.as_str()) != repository.as_deref() {
             continue;
         }
         if let Some(disk) = lease.disk {
@@ -285,7 +366,7 @@ pub(super) fn add_disk_observations(settings: &Value, rows: &mut [Value]) {
         else {
             continue;
         };
-        if row["provider"] == "github"
+        if row["provider"] == forge.key()
             && let Some((_, disk)) = latest.get(profile.runner)
         {
             row["disk_total_bytes"] = json!(disk.total_bytes);
@@ -318,15 +399,16 @@ pub(super) fn agent_update(
     if token.len() != 64 {
         return Err("Invalid lease credential".into());
     }
-    let root = settings["githubActions"]["stateDirectory"]
-        .as_str()
-        .map(Path::new)
-        .filter(|path| path.is_absolute())
-        .ok_or("Missing GitHub state directory")?;
+    let (forge, id) = agent_lease(id);
+    let config = &settings[forge.settings_key()];
+    let root = state_directory(config).ok_or("Missing worker lease state directory")?;
     let dir = lease_dir(root, id)?;
     let guard = File::open(dir.join("lock")).map_err(|error| error.to_string())?;
     lock(&guard)?;
     let mut lease = read_lease(&dir).map_err(|error| error.to_string())?;
+    if repository(config, forge).as_deref() != Some(lease.repository.as_str()) {
+        return Err("Invalid lease credential".into());
+    }
     let hash = ring::digest::digest(&ring::digest::SHA256, token.as_bytes());
     let expected = lease
         .token_hash
@@ -357,6 +439,20 @@ pub(super) fn agent_update(
     Ok(())
 }
 
+fn agent_lease(id: &str) -> (Forge, &str) {
+    match id.strip_prefix(Forge::GitLab.prefix()) {
+        Some(id) => (Forge::GitLab, id),
+        None => (Forge::GitHub, id),
+    }
+}
+
+fn state_directory(config: &Value) -> Option<&Path> {
+    config["stateDirectory"]
+        .as_str()
+        .map(Path::new)
+        .filter(|path| path.is_absolute())
+}
+
 fn public_lease(mut lease: Lease) -> Value {
     lease.token_hash = None;
     json!(lease)
@@ -385,7 +481,7 @@ fn lease_dir(root: &Path, id: &str) -> Result<PathBuf, String> {
             .bytes()
             .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
     {
-        return Err("Invalid GitHub Actions lease ID".into());
+        return Err("Invalid worker lease ID".into());
     }
     Ok(root.join(id))
 }
@@ -397,7 +493,7 @@ fn now() -> u64 {
         .as_secs()
 }
 
-fn create(root: &Path, github: &GitHub<'_>, mut lease: Lease) -> Result<Value, String> {
+fn create(root: &Path, backend: &Backend<'_>, mut lease: Lease) -> Result<Value, String> {
     let dir = lease_dir(root, &lease.id)?;
     DirBuilder::new()
         .recursive(true)
@@ -418,13 +514,13 @@ fn create(root: &Path, github: &GitHub<'_>, mut lease: Lease) -> Result<Value, S
     lock(&guard)?;
     write_lease(&dir, &lease).map_err(|error| error.to_string())?;
 
-    match github.dispatch(&lease.id, &lease.profile) {
+    match backend.dispatch(&lease.id, &lease.profile) {
         Ok(run_id) => {
             lease.run_id = Some(run_id);
             lease.state = LeaseState::Queued;
             if let Err(error) = write_lease(&dir, &lease) {
                 return Err(format!(
-                    "Save GitHub Actions run {run_id} for lease {}: {error}",
+                    "Save pipeline run {run_id} for lease {}: {error}",
                     lease.id
                 ));
             }
@@ -443,15 +539,16 @@ fn create(root: &Path, github: &GitHub<'_>, mut lease: Lease) -> Result<Value, S
 fn reconcile(
     dir: &Path,
     lease: &mut Lease,
-    github: &GitHub<'_>,
+    backend: &Backend<'_>,
     cancel: bool,
 ) -> Result<(), String> {
     if lease.state == LeaseState::Ended {
         return Ok(());
     }
-    let run_id = lease.run_id.ok_or("GitHub workflow run ID is unknown")?;
-    let workflow = github.status(run_id);
-    if !cancel && now() < lease.expires_at && workflow.is_err() {
+    let run_id = lease.run_id.ok_or("Pipeline run ID is unknown")?;
+    let workflow = backend.status(run_id);
+    let cancel = cancel || lease.state == LeaseState::Cancelling || now() >= lease.expires_at;
+    if !cancel && workflow.is_err() {
         return workflow.map(|_| ());
     }
     let changed = match workflow {
@@ -467,10 +564,10 @@ fn reconcile(
         .is_some_and(|workflow| workflow.status == "completed")
     {
         lease.state = LeaseState::Ended;
-    } else if cancel || now() >= lease.expires_at {
+    } else if cancel {
         lease.state = LeaseState::Cancelling;
         write_lease(dir, lease).map_err(|error| error.to_string())?;
-        return github.cancel(run_id);
+        return backend.cancel(run_id);
     } else if !changed {
         return Ok(());
     }

@@ -140,16 +140,15 @@ impl CreateWorker {
     pub(super) fn fields(&self) -> impl Iterator<Item = Field> {
         FIELDS
             .into_iter()
-            .filter(|field| !self.github() || !matches!(field, Flavor | Disk))
+            .filter(|field| !self.forge().is_some() || !matches!(field, Flavor | Disk))
     }
 
     fn profile(&self) -> Option<&Value> {
         self.profiles.get(self.profile)
     }
 
-    fn github(&self) -> bool {
-        self.profile()
-            .is_some_and(|profile| profile["provider"] == "github")
+    fn forge(&self) -> Option<crate::github_profiles::Forge> {
+        crate::github_profiles::Forge::from_key(self.profile()?["provider"].as_str()?)
     }
 
     pub(super) fn profile_facts(&self) -> String {
@@ -160,11 +159,11 @@ impl CreateWorker {
                 String::new()
             };
         };
-        let mut facts = vec![if self.github() {
-            "GitHub Actions".into()
-        } else {
-            "OpenStack".into()
-        }];
+        let mut facts = vec![
+            self.forge()
+                .map_or("OpenStack", crate::github_profiles::Forge::label)
+                .into(),
+        ];
         if let Some(cpus) = profile["vcpus"].as_u64() {
             facts.push(format!("{cpus} vCPU"));
         }
@@ -218,7 +217,7 @@ impl CreateWorker {
             Topic => Some((&self.topic, "Optional")),
             Lifetime => Some((
                 &self.lifetime,
-                if self.github() {
+                if self.forge().is_some() {
                     "30m default"
                 } else {
                     "Profile default, e.g. 2h"
@@ -304,7 +303,7 @@ impl CreateWorker {
         }
         let mut args = vec!["up".into()];
         args.extend(extra);
-        let disk = if self.github() {
+        let disk = if self.forge().is_some() {
             ""
         } else {
             self.disk.text.trim()
@@ -312,7 +311,7 @@ impl CreateWorker {
         if !disk.is_empty() && !disk.parse::<u64>().is_ok_and(|size| size > 0) {
             return Err("Disk must be a positive whole number of GiB.".into());
         }
-        let flavor = if self.github() {
+        let flavor = if self.forge().is_some() {
             ""
         } else {
             self.flavor.text.trim()

@@ -1,4 +1,4 @@
-"""Run one controller assignment on a GitHub-hosted Linux runner."""
+"""Run one controller assignment on a Linux CI runner."""
 
 import grp
 import json
@@ -15,7 +15,7 @@ import urllib.parse
 import urllib.request
 from pathlib import Path
 
-ARCHITECTURES = {"linux-arm64": "aarch64", "linux-x64": "x86_64"}
+ARCHITECTURES = {"linux-arm64": "aarch64", "linux-x64": "x86_64", "gl-linux-x64": "x86_64"}
 AUDIENCE = "rworker-job"
 BUILD_USER = "rworker-build"
 
@@ -61,7 +61,9 @@ def update_lease(url, token, payload, expires_at):
     raise RuntimeError("Lost contact with the rworker controller")
 
 
-def oidc_token():
+def oidc_token(profile):
+    if profile == "gl-linux-x64":
+        return os.environ.pop("RWORKER_GITLAB_ID_TOKEN")
     url = os.environ["ACTIONS_ID_TOKEN_REQUEST_URL"]
     separator = "&" if "?" in url else "?"
     with request(
@@ -104,6 +106,19 @@ with open('/dev/kvm', 'r+b', buffering=0) as device:
         check=False,
     )
     return ["kvm"] if result.returncode == 0 else []
+
+
+def prepare_gitlab_nix():
+    # Only the build user owns the store in this disposable container.
+    subprocess.run(["install", "-d", "-o", BUILD_USER, "-g", BUILD_USER, "/nix/var/nix"], check=True)
+    subprocess.run(["chown", "-R", f"{BUILD_USER}:{BUILD_USER}", "/nix"], check=True)
+    config_directory = Path("/etc/nix")
+    config_directory.mkdir(exist_ok=True)
+    with (config_directory / "nix.conf").open("a") as config:
+        config.write(
+            "\nexperimental-features = nix-command flakes\nbuild-users-group =\nsandbox = false\n"
+        )
+    subprocess.run(["sudo", "-n", "-u", BUILD_USER, "--", "nix-store", "--init"], check=True)
 
 
 def start_ssh_worker(url, token, assignment):
@@ -212,13 +227,17 @@ def main():
     job_id = os.environ["RWORKER_JOB_ID"]
     if not re.fullmatch(r"[a-f0-9]{32}", job_id):
         raise ValueError("Invalid controller assignment ID")
+    if profile == "gl-linux-x64":
+        job_id = f"glci-{job_id}"
     base_url = os.environ["RWORKER_AGENT_URL"].rstrip("/")
     url = f"{base_url}/v1/agent/jobs/{job_id}"
 
     capabilities = prepare_build_user()
+    if profile == "gl-linux-x64":
+        prepare_gitlab_nix()
     with request(
         f"{url}/claim",
-        oidc_token(),
+        oidc_token(profile),
         {
             "profile": profile,
             "architecture": architecture,

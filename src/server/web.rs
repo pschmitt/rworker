@@ -556,8 +556,8 @@ impl Action {
                 no_niks3_token,
                 agent_id,
             } => {
-                let github = crate::github_profiles::from_name(profile).is_some();
-                if github
+                let ci = crate::github_profiles::from_name(profile).is_some();
+                if ci
                     && (flavor.is_some()
                         || disk.is_some()
                         || *scratch

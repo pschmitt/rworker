@@ -31,7 +31,8 @@ Use `rworker profiles` to list the configured profiles. Select one with
 spent in the GitHub Actions queue. At expiry the controller closes the
 lease and cancels the workflow run. GitHub Actions workers skip the
 automatic Nix cache credentials and private input tokens copied to
-OpenStack workers.
+OpenStack workers. [GitLab CI workers](gitlab-ci.md) use the `gl-x86_64`
+profile and the same 30-minute default, including pipeline queue time.
 
 ## Worker names
 

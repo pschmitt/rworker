@@ -1,0 +1,32 @@
+spec:
+  inputs:
+    job_id:
+      description: Controller assignment ID
+      default: ''
+      regex: '^([a-f0-9]{32})?$'
+    profile:
+      description: Runner profile
+      default: gl-linux-x64
+      options: [gl-linux-x64]
+---
+workflow:
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "api" && $CI_COMMIT_BRANCH == "main" && $CI_COMMIT_REF_PROTECTED == "true"'
+
+rworker-lease:
+  image: ubuntu:24.04
+  tags: [rworker-x86-64]
+  timeout: 2h
+  id_tokens:
+    RWORKER_GITLAB_ID_TOKEN:
+      aud: rworker-job
+  variables:
+    RWORKER_JOB_ID: $[[ inputs.job_id ]]
+    RWORKER_PROFILE: $[[ inputs.profile ]]
+  script:
+    - test -n "$RWORKER_JOB_ID"
+    - test "$(id -u)" = 0
+    - chmod 0700 "$CI_PROJECT_DIR"
+    - apt-get update
+    - DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends ca-certificates git nix-bin openssh-client openssh-server procps python3 rsync sudo
+    - python3 scripts/github-job-agent.py

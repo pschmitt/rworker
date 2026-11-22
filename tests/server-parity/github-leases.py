@@ -1,4 +1,4 @@
-"""Exercise dispatch, signed runner claims and cancellation with fake GitHub."""
+"""Exercise dispatch, signed runner claims and cancellation with fake CI providers."""
 import base64
 import json
 import os
@@ -14,19 +14,32 @@ def b64(data):
     return base64.urlsafe_b64encode(data).rstrip(b"=").decode()
 
 
-def exercise(binary, root):
+def exercise(binary, root, provider):
+    gitlab = provider == "gitlab"
+    runner = "gl-linux-x64" if gitlab else "linux-arm64"
+    profile = "gl-x86_64" if gitlab else "gh-aarch64"
     token_file = root / "token"
     token_file.write_text("fake-provider-credential")
     config = root / "config.json"
     state = root / "leases"
-    config.write_text(json.dumps({
+    settings = {
         "githubActions": {
             "repository": "example/project",
             "repositoryId": "123456",
             "tokenFile": str(token_file),
             "stateDirectory": str(state),
         },
-    }))
+    }
+    if gitlab:
+        settings = {"gitlabCi": {
+            "instance": "https://gitlab.example.com",
+            "project": "example/project",
+            "projectId": 123456,
+            "runnerId": 99,
+            "tokenFile": str(token_file),
+            "stateDirectory": str(state),
+        }}
+    config.write_text(json.dumps(settings))
     key = root / "signing.pem"
     subprocess.run(
         ["openssl", "genpkey", "-algorithm", "RSA", "-pkeyopt", "rsa_keygen_bits:2048", "-out", key],
@@ -49,7 +62,7 @@ config = dict(line.strip().split(" = ", 1) for line in sys.stdin if not line.sta
 url = json.loads(config["url"])
 if url == "https://api.github.com/repos/example/project":
     print(json.dumps({"private": (root / "private").exists()}))
-elif url.endswith("/jwks"):
+elif url.endswith(("/jwks", "/oauth/discovery/keys")):
     print((root / "jwks").read_text())
 elif url.endswith("/dispatches"):
     dispatch = json.loads(json.loads(config["data-raw"]))
@@ -64,7 +77,16 @@ elif url.endswith("/runs/42"):
         "status": "completed" if cancelled else "in_progress" if (root / "started").exists() else "queued",
         "conclusion": "cancelled" if cancelled else None,
     }))
-elif url.endswith("/runs/42/cancel"):
+elif url == "https://gitlab.example.com/api/v4/projects/123456/pipeline":
+    dispatch = json.loads(json.loads(config["data-raw"]))
+    assert dispatch["ref"] == "main"
+    assert dispatch["inputs"]["profile"] == "gl-linux-x64"
+    assert set(dispatch["inputs"]) == {"job_id", "profile"}
+    print('{"id": 42}')
+elif url.endswith("/pipelines/42"):
+    print(json.dumps({"status": "canceled" if (root / "cancelled").exists() else
+                     "running" if (root / "started").exists() else "pending"}))
+elif url.endswith(("/runs/42/cancel", "/pipelines/42/cancel")):
     (root / "cancelled").touch()
 else:
     sys.exit(22)
@@ -81,24 +103,32 @@ else:
     def control(*args):
         return json.loads(subprocess.check_output([*command, *args], env=environment))
 
-    for resource_spec in ((4, 16), (2, 8)):
+    if gitlab:
         profiles = control("profiles")
-        assert {profile["name"] for profile in profiles} == {"gh-aarch64", "gh-x86_64"}
-        for profile in profiles:
-            assert (profile["vcpus"], profile["ram_gb"]) == resource_spec
-            assert profile["image_tags"] == ["github-actions"]
-        (root / "private").touch()
+        assert [row["name"] for row in profiles] == [profile]
+        assert profiles[0]["image_tags"] == ["gitlab-ci"]
+    else:
+        for resource_spec in ((4, 16), (2, 8)):
+            profiles = control("profiles")
+            assert {profile["name"] for profile in profiles} == {"gh-aarch64", "gh-x86_64"}
+            for row in profiles:
+                assert (row["vcpus"], row["ram_gb"]) == resource_spec
+                assert row["image_tags"] == ["github-actions"]
+            (root / "private").touch()
 
     public_key = "ssh-ed25519 " + base64.b64encode(bytes(32)).decode()
-    lease = control("github-up", "linux-arm64", "2m", public_key, "operator@fixture", "fixture")
+    lease = control(f"{provider}-up", runner, "2m", public_key, "operator@fixture", "fixture")
     assert lease["run_id"] == 42 and lease["state"] == "queued"
     ident = lease["id"]
-    assert control("github-status", ident)["workflow"]["status"] == "queued"
+    agent_id = f"glci-{ident}" if gitlab else ident
+    if gitlab:
+        assert lease["run_url"] == "https://gitlab.example.com/example/project/-/pipelines/42"
+    assert control(f"{provider}-status", ident)["workflow"]["status"] == "queued"
     (root / "started").touch()
-    assert control("github-status", ident)["workflow"]["status"] == "in_progress"
+    assert control(f"{provider}-status", ident)["workflow"]["status"] == "in_progress"
     api = root / "agent.sock"
 
-    def jwt(run_id):
+    def jwt(run_id, **overrides):
         now = int(time.time())
         claims = dict(
             iss="https://token.actions.githubusercontent.com", aud="rworker-job",
@@ -107,6 +137,16 @@ else:
             ref="refs/heads/main", event_name="workflow_dispatch", runner_environment="github-hosted",
             run_id=str(run_id), run_attempt="1",
         )
+        if gitlab:
+            claims = dict(
+                iss="https://gitlab.example.com", aud="rworker-job",
+                nbf=now - 30, exp=now + 60, job_project_id="123456",
+                job_project_path="example/project", pipeline_id=str(run_id),
+                pipeline_source="api", ref_path="refs/heads/main", ref_protected="true",
+                runner_id=99,
+                ci_config_ref_uri="gitlab.example.com/example/project//.gitlab-ci.yml@refs/heads/main",
+            )
+        claims.update(overrides)
         data = ".".join(b64(json.dumps(value).encode()) for value in (
             {"alg": "RS256", "kid": "fixture"}, claims,
         ))
@@ -118,7 +158,7 @@ else:
     def post(route, bearer, data):
         body = json.dumps(data).encode()
         request = (
-            f"POST /v1/agent/jobs/{ident}/{route} HTTP/1.1\r\n"
+            f"POST /v1/agent/jobs/{agent_id}/{route} HTTP/1.1\r\n"
             f"Host: localhost\r\nConnection: close\r\nAuthorization: Bearer {bearer}\r\n"
             f"Content-Length: {len(body)}\r\n\r\n"
         ).encode() + body
@@ -137,10 +177,15 @@ else:
                     break
                 assert server.poll() is None
                 time.sleep(0.05)
-            details = {"profile": "linux-arm64", "architecture": "aarch64", "capabilities": ["kvm"]}
+            details = {"profile": runner, "architecture": "x86_64" if gitlab else "aarch64",
+                       "capabilities": ["kvm"]}
             disk = {"total_bytes": 145 << 30}
             details["disk"] = disk
             assert post("claim", jwt(41), details)[0] == 403
+            if gitlab:
+                for wrong in ({"runner_id": 100}, {"job_project_id": "9876"},
+                              {"ref_protected": "false"}, {"pipeline_source": "push"}):
+                    assert post("claim", jwt(42, **wrong), details)[0] == 403
             status, result = post("claim", jwt(42), details)
             assert status == 200
             assert result["public_key"].splitlines() == [
@@ -148,24 +193,36 @@ else:
                 "no-agent-forwarding,no-port-forwarding,no-X11-forwarding,no-user-rc " + console_key,
             ]
             profiles = {profile["name"]: profile for profile in control("profiles")}
-            assert profiles["gh-aarch64"]["disk_total_bytes"] == disk["total_bytes"]
-            assert "disk_total_bytes" not in profiles["gh-x86_64"]
+            assert profiles[profile]["disk_total_bytes"] == disk["total_bytes"]
+            if not gitlab:
+                assert "disk_total_bytes" not in profiles["gh-x86_64"]
             bearer = result["token"]
             assert post("claim", jwt(42), details)[0] == 403
             endpoint = {"port": 22223, "host_key": public_key}
             assert post("ready", "0" * 64, endpoint)[0] == 403
             assert post("ready", bearer, endpoint)[0] == 204
-            ready = control("github-status", ident)
+            ready = control(f"{provider}-status", ident)
             assert ready["state"] == "ready" and ready["endpoint"] == endpoint and ready["kvm"]
             assert "token_hash" not in ready
-            assert control("github-down", ident, "operator@fixture")["state"] == "cancelling"
+            assert control(f"{provider}-down", ident, "operator@fixture")["state"] == "cancelling"
             assert post("heartbeat", bearer, {})[0] == 403
-            ended = control("github-status", ident)
-            assert ended["state"] == "ended" and ended["workflow"]["conclusion"] == "cancelled"
+            ended = control(f"{provider}-status", ident)
+            assert ended["state"] == "ended" and ended["workflow"]["conclusion"] == ("canceled" if gitlab else "cancelled")
+
+            (root / "cancelled").unlink()
+            (root / "started").unlink()
+            queued = control(f"{provider}-up", runner, "2m", public_key, "operator@fixture", "queued")
+            record = state / queued["id"] / "lease.json"
+            queued["expires_at"] = 1
+            record.write_text(json.dumps(queued))
+            control(f"{provider}-reap")
+            assert (root / "cancelled").exists()
+            assert control(f"{provider}-status", queued["id"])["state"] == "ended"
         finally:
             server.terminate()
 
 
 if __name__ == "__main__":
-    with tempfile.TemporaryDirectory() as directory:
-        exercise(str(Path(sys.argv[1]).resolve()), Path(directory))
+    for provider in ("github", "gitlab"):
+        with tempfile.TemporaryDirectory() as directory:
+            exercise(str(Path(sys.argv[1]).resolve()), Path(directory), provider)

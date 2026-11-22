@@ -189,7 +189,7 @@ fn need(info: &Value, field: &str) -> R<String> {
 
 /// Create a worker. With `capture` (exec), the JSON is returned instead of
 /// printed, as `JSON=1 cmd_up` in a command substitution.
-fn github_up(
+fn hosted_up(
     ctx: &Ctx,
     profile: &crate::github_profiles::Profile,
     ttl: &str,
@@ -202,17 +202,29 @@ fn github_up(
         Fail(2)
     })?;
     let owner = ctx.owner();
+    let forge = profile.forge;
+    let action = |command| format!("{}-{command}", forge.key());
     let raw = state::remote(
         ctx,
-        &["github-up", profile.runner, ttl, key.trim(), &owner, topic],
+        &[
+            &action("up"),
+            profile.runner,
+            ttl,
+            key.trim(),
+            &owner,
+            topic,
+        ],
     )?;
     let initial: Value = serde_json::from_str(&raw).map_err(|_| Fail(1))?;
     let id = need(&initial, "id")?;
-    let name = format!("gha-{id}");
-    let run_url = initial["repository"]
-        .as_str()
-        .zip(initial["run_id"].as_u64())
-        .map(|(repository, run)| format!("https://github.com/{repository}/actions/runs/{run}"));
+    let name = format!("{}{id}", forge.prefix());
+    let run_url = initial["run_url"].as_str().map(str::to_owned).or_else(|| {
+        initial["repository"]
+            .as_str()
+            .zip(initial["run_id"].as_u64())
+            .filter(|_| forge == crate::github_profiles::Forge::GitHub)
+            .map(|(repository, run)| format!("https://github.com/{repository}/actions/runs/{run}"))
+    });
     let link = run_url.as_deref().map_or_else(String::new, |url| {
         format!(" · {}", workflow_link(url, std::io::stderr().is_terminal()))
     });
@@ -220,14 +232,14 @@ fn github_up(
         "creating {name} ({}) from image {}{link}",
         profile.name, profile.label
     ));
-    let _ = progress.send("rworker-progress QUEUED · GitHub Actions".into());
+    let _ = progress.send(format!("rworker-progress QUEUED · {}", forge.label()));
     let expires = epoch(&initial["expires_at"]);
     let mut runner_started = false;
     let mut disconnected = false;
 
     let ready = (|| {
         while crate::time::now() < expires {
-            let reply = ctx.muted(|| state::remote(ctx, &["github-status", &id]));
+            let reply = ctx.muted(|| state::remote(ctx, &[&action("status"), &id]));
             let Ok(lease) =
                 reply.and_then(|raw| serde_json::from_str::<Value>(&raw).map_err(|_| Fail(1)))
             else {
@@ -242,11 +254,8 @@ fn github_up(
                 || lease["workflow"]["status"] == "in_progress"
                 || lease["state"] == "claimed";
             if started != runner_started || disconnected {
-                let stage = if started {
-                    "STARTING · SSH"
-                } else {
-                    "QUEUED · GitHub Actions"
-                };
+                let queued = format!("QUEUED · {}", forge.label());
+                let stage = if started { "STARTING · SSH" } else { &queued };
                 let _ = progress.send(format!("rworker-progress {stage}"));
             }
             runner_started = started;
@@ -258,11 +267,11 @@ fn github_up(
                         "ip": name,
                         "user": "rworker-build",
                         "kind": "adhoc",
-                        "provider": "github",
+                        "provider": forge.key(),
                         "profile": profile.name,
                         "flavor": profile.label,
                         "system": profile.system,
-                        "image_tags": ["github-actions"],
+                        "image_tags": [forge.tag()],
                         "run_url": run_url,
                         "expires_at": expires,
                         "created_at": lease["created_at"],
@@ -273,19 +282,19 @@ fn github_up(
                         "host_key": lease["endpoint"]["host_key"],
                         "kvm": lease["kvm"],
                     });
-                    state::remember_github(ctx, &name, &output)?;
+                    state::remember_hosted(ctx, &name, &output)?;
                     return Ok(output);
                 }
                 Some("ended") => {
                     let conclusion = jq::or(&lease["workflow"]["conclusion"], "unknown");
                     let _ = progress.send(format!(
-                        "GitHub workflow for {name} ended before SSH was ready ({conclusion}){link}"
+                        "Pipeline for {name} ended before SSH was ready ({conclusion}){link}"
                     ));
                     return Err(Fail(1));
                 }
                 Some("cancelling" | "dispatch_unknown") if crate::time::now() < expires => {
                     let _ = progress.send(format!(
-                        "GitHub lease {name} ended before SSH was ready{link}"
+                        "Worker lease {name} ended before SSH was ready{link}"
                     ));
                     return Err(Fail(1));
                 }
@@ -295,7 +304,7 @@ fn github_up(
         let stage = if runner_started {
             "SSH readiness"
         } else {
-            "GitHub to assign a runner"
+            "runner assignment"
         };
         let _ = progress.send(format!(
             "Lease expired while waiting for {stage} on {name}{link}"
@@ -304,7 +313,7 @@ fn github_up(
     })();
     if ready.is_err()
         && !matches!(
-            state::remote_quiet(ctx, &["github-down", &id, &owner]),
+            state::remote_quiet(ctx, &[&action("down"), &id, &owner]),
             Ok(0)
         )
     {
@@ -385,16 +394,16 @@ fn up_inner(
     if topic.is_empty() && !quiet_topic_warning {
         ctx.err(&format!("{} no topic provided", paint::warn_mark(ctx)));
     }
-    let github_profile = rest
+    let hosted_profile = rest
         .windows(2)
         .filter(|pair| pair[0] == "--profile")
         .map(|pair| pair[1].as_str())
         .chain(rest.iter().filter_map(|arg| arg.strip_prefix("--profile=")))
         .last()
         .and_then(crate::github_profiles::from_name);
-    if let Some(profile) = github_profile {
+    if let Some(profile) = hosted_profile {
         if nix_cache == Some(true) || nix_auth == Some(true) {
-            ctx.err("GitHub workers do not accept Nix cache credentials");
+            ctx.err("CI workers do not accept Nix cache credentials");
             return Err(Fail(2));
         }
         let ttl = rest
@@ -409,7 +418,7 @@ fn up_inner(
             let (tx, rx) = mpsc::channel();
             let no_color = ctx.no_color;
             scope.spawn(move || render_progress_lines(rx, no_color, emit_stages));
-            let result = github_up(ctx, profile, ttl, &key_file, &topic, &tx);
+            let result = hosted_up(ctx, profile, ttl, &key_file, &topic, &tx);
             drop(tx);
             result
         })?;
@@ -435,7 +444,7 @@ fn up_inner(
                 &name,
                 started,
                 &[
-                    ("Provider", "GitHub Actions".to_owned()),
+                    ("Provider", profile.forge.label().to_owned()),
                     ("User", user),
                     ("Profile", profile.name.to_owned()),
                     ("Flavor", paint::flavor(ctx, profile.label)),
@@ -616,7 +625,7 @@ fn up_inner(
 
 fn workflow_link(url: &str, terminal: bool) -> String {
     if terminal {
-        format!("\x1b]8;;{url}\x1b\\GitHub workflow\x1b]8;;\x1b\\")
+        format!("\x1b]8;;{url}\x1b\\CI run\x1b]8;;\x1b\\")
     } else {
         url.to_owned()
     }

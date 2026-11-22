@@ -37,7 +37,7 @@ fn refresh_profiles(config: &str, dir: &Path) -> io::Result<()> {
 }
 
 fn profile_has_resources(row: &Value) -> bool {
-    let ram_field = if row["provider"] == "github" {
+    let ram_field = if matches!(row["provider"].as_str(), Some("github" | "gitlab")) {
         "ram_gb"
     } else {
         "ram_mib"
@@ -59,7 +59,7 @@ fn read_profile_images(dir: &Path) -> Value {
 pub(super) fn add_cached_profile_images(dir: &Path, settings: &Value, rows: &mut [Value]) {
     let cached = read_profile_images(dir);
     for row in rows {
-        if row["provider"] == "github" {
+        if matches!(row["provider"].as_str(), Some("github" | "gitlab")) {
             continue;
         }
         let Some(name) = row["name"].as_str() else {

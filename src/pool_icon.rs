@@ -11,10 +11,10 @@ pub(crate) const GITHUB: &str = "\u{f09b}";
 pub(crate) const OPENSTACK: &str = "\u{e856}";
 
 pub fn profile_glyph(profile: &Value) -> &'static str {
-    if profile["provider"] == "github" {
-        GITHUB
-    } else {
-        OPENSTACK
+    match profile["provider"].as_str() {
+        Some("github") => GITHUB,
+        Some("gitlab") => ADHOC,
+        _ => OPENSTACK,
     }
 }
 

@@ -19,6 +19,11 @@ let
             serverName = "runner.example.com";
             authorizedKeysFile = "/run/secrets/github-relay-authorized-keys";
           };
+          gitlabCi = {
+            enable = true;
+            serverName = "gitlab-runner.example.com";
+            authorizedKeysFile = "/run/secrets/gitlab-relay-authorized-keys";
+          };
           builderGateway = {
             enable = true;
             authorizedKeysFile = "/run/secrets/builder-authorized-keys";
@@ -84,6 +89,8 @@ assert pkgs.lib.hasSuffix ''"7200" "300" "-"'' services."rworker-builder@".servi
 assert timers.rworker-builder-reap.timerConfig.OnUnitInactiveSec == "1m";
 assert services.rworker-github-api.serviceConfig.StateDirectory == "rworker-github";
 assert timers.rworker-github-reap.timerConfig.OnUnitInactiveSec == "1m";
+assert services.rworker-gitlab-api.serviceConfig.StateDirectory == "rworker-gitlab";
+assert timers.rworker-gitlab-reap.timerConfig.OnUnitInactiveSec == "1m";
 assert config.services.nginx.virtualHosts."runner.example.com".forceSSL;
 assert pkgs.lib.hasInfix "PermitListen 127.0.0.1:*" config.services.openssh.extraConfig;
 assert config.nix.distributedBuilds;

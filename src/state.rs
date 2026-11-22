@@ -43,7 +43,12 @@ pub fn control_ssh_cmd<S: AsRef<str>>(ctx: &Ctx, args: &[S]) -> Command {
         action.as_ref().starts_with("__cached-")
             || matches!(
                 action.as_ref(),
-                "github-up" | "github-status" | "github-down"
+                "github-up"
+                    | "github-status"
+                    | "github-down"
+                    | "gitlab-up"
+                    | "gitlab-status"
+                    | "gitlab-down"
             )
     }) {
         cmd.args([
@@ -193,18 +198,20 @@ pub fn remember_created(ctx: &Ctx, name: &str, info: &Value) -> R {
     append_known_host(ctx, &format!("{ip} {key}"))
 }
 
-pub fn remember_github(ctx: &Ctx, name: &str, info: &Value) -> R {
+pub fn remember_hosted(ctx: &Ctx, name: &str, info: &Value) -> R {
     fs::create_dir_all(&ctx.state_dir).map_err(|_| Fail(1))?;
     write_state(ctx, name, info)
 }
 
-pub fn github_id(name: &str) -> Option<&str> {
-    let id = name.strip_prefix("gha-")?;
+pub fn hosted_id(name: &str) -> Option<(crate::github_profiles::Forge, &str)> {
+    let (forge, id) = crate::github_profiles::Forge::ALL
+        .into_iter()
+        .find_map(|forge| name.strip_prefix(forge.prefix()).map(|id| (forge, id)))?;
     (id.len() == 32
         && id
             .bytes()
             .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b)))
-    .then_some(id)
+    .then_some((forge, id))
 }
 
 /// Fetch a worker this host did not create (another host's, or nixbot's
@@ -229,8 +236,8 @@ pub fn adopt(ctx: &Ctx, name: &str) -> R {
         );
         return Err(Fail(1));
     }
-    if info["provider"] == "github" {
-        return remember_github(ctx, name, info);
+    if hosted_id(name).is_some() {
+        return remember_hosted(ctx, name, info);
     }
     // agent's keys are the creator's; everyone else logs in as themselves.
     let mut user = ctx.user.clone();
@@ -326,7 +333,7 @@ fn ssh_port_open(ip: &str, timeout: Duration) -> bool {
 pub fn worker_ip(ctx: &Ctx, name: &str) -> R<String> {
     worker_field(ctx, name, "ip").map_err(|_| Fail(1))?;
     let mut state = read_state(ctx, name).map_err(|_| Fail(1))?;
-    if state["provider"] == "github" {
+    if hosted_id(name).is_some() {
         return Ok(name.to_owned());
     }
     // A state file from before the overlays has only the recorded address:
@@ -408,7 +415,7 @@ pub fn ssh_opts_with_relay(ctx: &Ctx, name: &str, local_relay: bool) -> Vec<Stri
         "-o".to_string(),
         "BatchMode=yes".to_string(),
     ];
-    if github_id(name).is_some() {
+    if hosted_id(name).is_some() {
         let port = read_state(ctx, name)
             .ok()
             .and_then(|state| state["github_port"].as_u64())

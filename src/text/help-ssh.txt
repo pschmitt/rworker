@@ -16,6 +16,7 @@ new worker when SSH exits, including after an unsuccessful login.
 Examples:
   __ME__ ssh --create --ttl 4h
   __ME__ ssh --create --rm --profile gh-aarch64
+  __ME__ ssh --create --rm --profile gl-x86_64
   __ME__ ssh adhoc-1234abcd
   __ME__ ssh pschmitt@adhoc-1234abcd sudo journalctl -b
   __ME__ ssh --create -l pschmitt
