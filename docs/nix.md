@@ -139,7 +139,8 @@ management, profiles, events, inspection, process lists, and optionally redacted
 logs. Follow streams over a WebSocket and sends updated archive snapshots when
 the controller cannot follow a worker directly. Open **SSH** from a live
 worker’s detail page to start an interactive terminal using the console’s
-operator identity. The console can also copy an SSH command or a Nix builder
+operator identity. The worker must authorize that identity’s public key.
+The console can also copy an SSH command or a Nix builder
 entry. Use the CLI for local file transfers and image workflows.
 
 The HTML, styles and scripts are embedded in the rworker binary and the browser

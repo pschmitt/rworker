@@ -71,8 +71,14 @@ fn ssh_command_with_options(ctx: &Ctx, args: &[String], extra: &[&str]) -> R<Com
         t.user = login_user;
     }
     let ip = state::worker_ip(ctx, &t.name)?;
-    let user = target_user(ctx, &t).map_err(|_| Fail(1))?;
-    let mut opts = state::ssh_opts_with_relay(ctx, &t.name, !extra.is_empty());
+    let web_terminal = !extra.is_empty();
+    let user = if web_terminal && state::github_id(&t.name).is_some() {
+        // The controller may set a default login for its OpenStack workers.
+        state::worker_field(ctx, &t.name, "user")?
+    } else {
+        target_user(ctx, &t).map_err(|_| Fail(1))?
+    };
+    let mut opts = state::ssh_opts_with_relay(ctx, &t.name, web_terminal);
     if let Ok(identity) = std::env::var("RWORKER_LOG_CACHE_IDENTITY") {
         if opts.is_empty() {
             return Err(Fail(1));
@@ -113,7 +119,7 @@ fn ssh_command_with_options(ctx: &Ctx, args: &[String], extra: &[&str]) -> R<Com
             ],
         );
     }
-    if !extra.is_empty() {
+    if web_terminal {
         if opts.is_empty() {
             ctx.err("Worker SSH host key or relay unavailable");
             return Err(Fail(1));
