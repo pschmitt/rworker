@@ -43,7 +43,10 @@ unprivileged local account with a job-local Nix store.
 Both profiles default to a file-backed LUKS2 volume with a random per-lease
 key. The build user's home, temporary directories, and writable Nix store
 and database use this volume. The runner must permit loop devices,
-device-mapper, and ext4 and overlay mounts. Lease startup fails if setup
+device-mapper, and ext4, bind, and overlay mounts. The bootstrap needs
+`CAP_SYS_ADMIN` and access to the loop and device-mapper devices inside
+the job container. The Ubuntu job installs the storage tools with APT,
+and the prebuilt image includes them. Lease startup fails if setup
 fails. To opt out on a runner without those capabilities, set the project
 CI/CD variable `RWORKER_UNENCRYPTED_PROFILES` to `gl-linux-x64`,
 `gl-linux-x64-lease`, or both separated by a comma.
@@ -53,6 +56,9 @@ tests can still use `/dev/kvm` when the runner makes it available to the
 build user. Use a trusted runner with encrypted or disabled swap if build
 data in memory also needs protection. CI logs and uploaded artifacts are
 outside the lease volume.
+
+See [CI lease storage](usage.md#ci-lease-storage) for the common layout and
+operator commands.
 
 Configure these protected project CI/CD variables.
 

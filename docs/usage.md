@@ -34,6 +34,48 @@ automatic Nix cache credentials and private input tokens copied to
 OpenStack workers. [GitLab CI workers](gitlab-ci.md) offer both `gl-x86_64` and
 `gl-x86_64-lease`, with the same 30-minute default including pipeline queue time.
 
+## CI lease storage
+
+GitHub Actions and GitLab CI workers encrypt lease storage by default.
+Use the usual commands to start a worker, sync a source tree, or run a build.
+
+```sh
+rworker ssh --create --rm --profile gh-x86_64 --topic "interactive build"
+rworker exec --profile gl-x86_64-lease --topic "Nix build" --sync .:src -- 'cd src && nix build'
+```
+
+Before accepting SSH, the runner agent creates a sparse file on the runner
+disk, opens it as a LUKS2 block device, and mounts an ext4 filesystem.
+The agent generates a new random key for every lease and gives it to
+`cryptsetup` over stdin. The backing file is unlinked once the kernel
+holds it open. After the last mount reference closes, the kernel removes
+the mapping and its key.
+
+The build user's home, `/tmp`, and `/var/tmp` are bind-mounted from this
+filesystem. An overlay at `/nix` retains the runner's existing Nix store
+as a read-only lower layer. New store objects and database changes go to
+the encrypted upper layer. The runner needs at least 2 GiB free at setup.
+The sparse volume is sized from free space with 1 GiB reserved and a
+256 GiB cap.
+
+Builds run in the original job and can use any KVM access the runner gives
+the build user. The CI checkout, logs, uploaded artifacts, and runner swap
+are outside the encrypted lease filesystem. Use the runner log to confirm
+setup succeeded. Encrypted jobs report `rworker lease storage: encrypted
+with LUKS2` before worker registration.
+
+To opt out, set `RWORKER_UNENCRYPTED_PROFILES` in the workflow's GitHub
+Actions repository variables or GitLab project's CI/CD variables. Use a
+comma-separated list of the CI profile IDs below. Remove a profile from
+the list to enable encryption for its next lease.
+
+| Worker profile | CI profile ID |
+| --- | --- |
+| `gh-x86_64` | `linux-x64` |
+| `gh-aarch64` | `linux-arm64` |
+| `gl-x86_64` | `gl-linux-x64` |
+| `gl-x86_64-lease` | `gl-linux-x64-lease` |
+
 ## Worker names
 
 New GitHub Actions and GitLab CI workers use the same eight-character

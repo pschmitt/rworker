@@ -11,6 +11,13 @@ Encryption uses Linux device-mapper and leaves KVM access available to
 builds wherever the runner exposes it. Workflow logs, uploaded artifacts,
 and runner swap are outside the encrypted filesystem.
 
+The hosted Ubuntu job uses passwordless `sudo` to set up the loop device,
+LUKS2 mapping and mounts. The workflow installs the storage tools if
+`cryptsetup` is missing. The agent restarts the Nix daemon socket after
+mounting the writable store so daemon builds use the encrypted filesystem.
+See [CI lease storage](usage.md#ci-lease-storage) for the layout and
+operator commands.
+
 The workflow lives in the repository associated with the build. The rworker
 workflow provides native Linux ARM64 and x86-64 profiles and installs Nix.
 The agent advertises KVM after the build user successfully opens a VM
