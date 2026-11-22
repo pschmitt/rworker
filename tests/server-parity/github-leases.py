@@ -81,7 +81,6 @@ else:
         assert {profile["name"] for profile in profiles} == {"gh-aarch64", "gh-x86_64"}
         for profile in profiles:
             assert (profile["vcpus"], profile["ram_gb"]) == resource_spec
-            assert profile["disk_gb"] == 14
             assert profile["image_tags"] == ["github-actions"]
         (root / "private").touch()
 
@@ -134,14 +133,14 @@ else:
                 assert server.poll() is None
                 time.sleep(0.05)
             details = {"profile": "linux-arm64", "architecture": "aarch64", "capabilities": ["kvm"]}
-            disk = {"total_bytes": 145 << 30, "available_bytes": 106 << 30}
+            disk = {"total_bytes": 145 << 30}
             details["disk"] = disk
             assert post("claim", jwt(41), details)[0] == 403
             status, result = post("claim", jwt(42), details)
             assert status == 200 and result["public_key"] == public_key
             profiles = {profile["name"]: profile for profile in control("profiles")}
-            assert profiles["gh-aarch64"]["disk_observed"] == disk
-            assert "disk_observed" not in profiles["gh-x86_64"]
+            assert profiles["gh-aarch64"]["disk_total_bytes"] == disk["total_bytes"]
+            assert "disk_total_bytes" not in profiles["gh-x86_64"]
             bearer = result["token"]
             assert post("claim", jwt(42), details)[0] == 403
             endpoint = {"port": 22223, "host_key": public_key}

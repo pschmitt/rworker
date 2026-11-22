@@ -183,7 +183,6 @@ def build_disk():
     storage = os.statvfs(pwd.getpwnam(BUILD_USER).pw_dir)
     return {
         "total_bytes": storage.f_blocks * storage.f_frsize,
-        "available_bytes": storage.f_bavail * storage.f_frsize,
     }
 
 

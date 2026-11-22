@@ -459,7 +459,6 @@ fn profiles(settings: &Value) -> io::Result<Vec<Value>> {
                 "flavor": profile.label,
                 "vcpus": specs.map(|(cpus, _)| cpus),
                 "ram_gb": specs.map(|(_, ram)| ram),
-                "disk_gb": 14,
                 "image_tags": ["github-actions"],
                 "default": false,
             })

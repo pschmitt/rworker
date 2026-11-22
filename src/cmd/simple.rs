@@ -233,7 +233,7 @@ pub fn cmd_profiles(ctx: &Ctx, args: &[String]) -> R {
         crate::ctx::json_out(ctx, &jq::pretty(&Value::Array(list)));
         return Ok(());
     }
-    let mut rows = vec!["PROFILE\tFLAVOR\tVCPU\tRAM\tDISK\tIMAGE TAGS".to_string()];
+    let mut rows = vec!["PROFILE\tFLAVOR\tVCPU\tRAM\tDISK (GiB)\tIMAGE TAGS".to_string()];
     for p in &list {
         let star = if jq::truthy(get(p, "default")) {
             "*"
@@ -253,17 +253,10 @@ pub fn cmd_profiles(ctx: &Ctx, args: &[String]) -> R {
                 "-".to_owned()
             }
         };
-        let observed = &p["disk_observed"];
-        let disk = if let Some((total, free)) = observed["total_bytes"]
-            .as_u64()
-            .zip(observed["available_bytes"].as_u64())
-        {
-            let gib = |bytes| bytes as f64 / (1_u64 << 30) as f64;
-            format!("{:.1} GiB ({:.1} free at startup)", gib(total), gib(free))
-        } else if let Some(published) = p["disk_gb"].as_u64() {
-            format!("{published} GB (published)")
+        let disk = if let Some(bytes) = p["disk_total_bytes"].as_u64() {
+            format!("{:.1}", bytes as f64 / (1_u64 << 30) as f64)
         } else {
-            size("disk_gb", "disk", "GiB")
+            jq::or(&p["disk"], "-")
         };
         rows.push(
             [

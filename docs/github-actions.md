@@ -91,6 +91,6 @@ The lease deadline includes queue time. A queued run can wait for capacity
 on its selected architecture. The CLI reports when GitHub starts the run,
 waits for SSH readiness, and requests cancellation if the lease expires.
 
-Disk in `rworker profiles` shows the most recent filesystem measurement for
-each profile, including free space at startup. Before the first measurement,
-the table labels GitHub’s published estimate.
+Disk in `rworker profiles` shows total filesystem size in GiB for the most
+recent worker on each GitHub profile. The field is blank until the first
+measurement.

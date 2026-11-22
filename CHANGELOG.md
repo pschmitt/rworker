@@ -6,6 +6,9 @@ The Rust client and controller replace the original Bash client.
 
 ### GitHub Actions
 
+- Cache profile lookups for GitHub runners and display only the observed
+  total disk size.
+
 - Give SSH sessions their own Nix configuration path and enough stack for
   Nix evaluation on GitHub runners.
 

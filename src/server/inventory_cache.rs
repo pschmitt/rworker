@@ -25,15 +25,21 @@ fn refresh_profiles(config: &str, dir: &Path) -> io::Result<()> {
     let settings = serde_json::from_reader(BufReader::new(File::open(config)?))?;
     let rows = super::profiles(&settings)?;
     // Do not replace a useful snapshot when a provider lookup failed.
-    if rows
-        .iter()
-        .any(|row| row.get("vcpus").is_none() || row.get("ram_mib").is_none())
-    {
+    if rows.iter().any(|row| !profile_has_resources(row)) {
         return Err(io::Error::other("Profile flavor lookup failed"));
     }
     replace(dir, "profiles.json", |file| {
         serde_json::to_writer(file, &rows).map_err(io::Error::other)
     })
+}
+
+fn profile_has_resources(row: &Value) -> bool {
+    let ram_field = if row["provider"] == "github" {
+        "ram_gb"
+    } else {
+        "ram_mib"
+    };
+    row["vcpus"].as_u64().is_some() && row[ram_field].as_u64().is_some()
 }
 
 fn generation(dir: &Path, marker: &str) -> io::Result<String> {
@@ -225,6 +231,16 @@ pub(super) fn refresh_forever(config: &str, dir: &Path) -> Result<(), Box<dyn st
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn github_profile_sizes_can_be_cached() {
+        assert!(super::profile_has_resources(&serde_json::json!({
+            "provider": "github", "vcpus": 4, "ram_gb": 16
+        })));
+        assert!(!super::profile_has_resources(&serde_json::json!({
+            "provider": "github", "vcpus": null, "ram_gb": null
+        })));
+    }
 
     #[test]
     fn profile_snapshot_rejects_invalid_data() -> io::Result<()> {

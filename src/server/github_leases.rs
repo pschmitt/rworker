@@ -48,7 +48,6 @@ struct Lease {
 #[derive(Deserialize, Serialize, Clone, Copy)]
 pub(super) struct Disk {
     total_bytes: u64,
-    available_bytes: u64,
 }
 
 #[derive(Deserialize, Serialize)]
@@ -199,8 +198,7 @@ pub(super) fn claim(
     lease.token_hash = Some(STANDARD.encode(hash.as_ref()));
     lease.state = LeaseState::Claimed;
     lease.kvm = kvm;
-    lease.disk =
-        disk.filter(|disk| disk.total_bytes != 0 && disk.available_bytes <= disk.total_bytes);
+    lease.disk = disk.filter(|disk| disk.total_bytes != 0);
     write_lease(&dir, &lease).map_err(|error| error.to_string())?;
     Ok(json!({"token": token, "expires_at": lease.expires_at, "public_key": lease.public_key}))
 }
@@ -284,7 +282,7 @@ pub(super) fn add_disk_observations(settings: &Value, rows: &mut [Value]) {
         if row["provider"] == "github"
             && let Some((_, disk)) = latest.get(profile.runner)
         {
-            row["disk_observed"] = json!(disk);
+            row["disk_total_bytes"] = json!(disk.total_bytes);
         }
     }
 }
