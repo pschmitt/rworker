@@ -8,6 +8,8 @@ The Rust client and controller replace the original Bash client.
 
 - Use GitHub black and OpenStack red for profile icons in the web console.
 
+- Use the same provider colors for the icons in `rworker profiles`.
+
 - Add `rworker ssh --create --rm` to delete the new worker when SSH exits.
 
 ### GitHub Actions

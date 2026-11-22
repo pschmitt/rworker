@@ -6,9 +6,9 @@
 use serde_json::Value;
 
 /// nf-fa-github: GitHub Actions workers and profiles.
-const GITHUB: &str = "\u{f09b}";
+pub(crate) const GITHUB: &str = "\u{f09b}";
 /// nf-dev-openstack: OpenStack profiles.
-const OPENSTACK: &str = "\u{e856}";
+pub(crate) const OPENSTACK: &str = "\u{e856}";
 
 pub fn profile_glyph(profile: &Value) -> &'static str {
     if profile["provider"] == "github" {
