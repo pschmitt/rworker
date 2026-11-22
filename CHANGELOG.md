@@ -28,6 +28,7 @@ The Rust client and controller replace the original Bash client.
 
 - Give web worker actions an icon toolbar and clarify process lookup failures.
 - Render provider glyphs directly on the dark web console surfaces.
+- Put the worker details back chevron beside the worker name.
 
 - Add `rworker ssh --create --rm` to delete the new worker when SSH exits.
 

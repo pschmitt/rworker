@@ -600,6 +600,7 @@ function detailPanel() {
   $("inventory").hidden = Boolean(row);
   $("summary").hidden = Boolean(row) || state.view !== "workers";
   $("create").hidden = Boolean(row) || !state.authenticated;
+  $("worker-back").hidden = !row;
   $("heading").textContent = row?.name || views[state.view];
   document.title = $("heading").textContent + " · rworker";
   if (!row) {

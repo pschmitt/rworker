@@ -26,7 +26,12 @@
     </header>
     <main id="main">
       <header class="page-head">
-        <div><h1 id="heading" tabindex="-1">Workers</h1></div>
+        <div class="page-title">
+          <a id="worker-back" class="worker-back" href="#workers" aria-label="Back to workers" title="Back to workers" hidden>
+            <svg class="action-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="m15 18-6-6 6-6"/></svg>
+          </a>
+          <h1 id="heading" tabindex="-1">Workers</h1>
+        </div>
         <button class="primary" id="create" type="button" hidden><span aria-hidden="true">＋</span> New worker</button>
       </header>
       <div id="notice" class="notice" aria-live="polite" hidden></div>
@@ -60,7 +65,6 @@
           <section id="detail" class="detail" aria-label="Worker details" hidden>
             <div class="detail-head">
               <div id="detail-state"></div>
-              <a href="#workers">Back to workers</a>
             </div>
             <dl id="metadata" class="metadata"></dl>
             <div id="worker-actions" class="worker-actions"></div>
