@@ -180,14 +180,13 @@ def gitlab_nix_daemon():
 def build_environment(profile):
     prepare_build_user()
     with ExitStack() as stack:
-        if encryption_enabled(profile):
-            stack.enter_context(encrypted_build_storage(profile))
+        volume = stack.enter_context(encrypted_build_storage(profile)) if encryption_enabled(profile) else None
         if profile in GITLAB_PROFILES:
             if LEASE_IMAGE:
                 stack.enter_context(gitlab_nix_daemon())
             else:
                 prepare_gitlab_nix()
-        yield kvm_capabilities()
+        yield kvm_capabilities(), volume
 
 
 def prepare_sshd(paths, public_key):
@@ -375,7 +374,36 @@ def encrypted_build_storage(profile):
             subprocess.run(privileged("systemctl", "start", "nix-daemon.socket"), check=True)
             stack.callback(subprocess.run, privileged("systemctl", "stop", "nix-daemon.socket", "nix-daemon.service"), check=True)
         print("rworker lease storage: encrypted with LUKS2", flush=True)
-        yield
+        yield volume
+
+
+def verify_encrypted_writes(volume, output, marker):
+    probe = """
+import os
+from pathlib import Path
+import sqlite3
+import sys
+
+volume, output = map(Path, sys.argv[1:3])
+marker = sys.argv[3]
+device = volume.stat().st_dev
+dm_uuid = Path(f"/sys/dev/block/{os.major(device)}:{os.minor(device)}/dm/uuid")
+if not dm_uuid.read_text().startswith("CRYPT-LUKS2-"):
+    raise SystemExit("Storage probe filesystem is not backed by LUKS2")
+
+upper = volume / "nix-upper"
+database = upper / "var/nix/db/db.sqlite"
+for path in (upper / output.relative_to("/nix"), *(volume / name / marker for name in ("home", "tmp", "var-tmp"))):
+    if path.stat().st_dev != device or path.read_text().strip() != "ready":
+        raise SystemExit("Storage probe write missing from the LUKS2 filesystem")
+if database.stat().st_dev != device:
+    raise SystemExit("Nix database is outside the LUKS2 filesystem")
+with sqlite3.connect(database.as_uri() + "?mode=ro", uri=True) as connection:
+    if connection.execute("SELECT 1 FROM ValidPaths WHERE path = ?", (str(output),)).fetchone() is None:
+        raise SystemExit("New Nix store path is missing from the encrypted database")
+"""
+    subprocess.run(privileged(sys.executable, "-c", probe, volume, output, marker), check=True)
+    print("Storage probe verified LUKS2 backing for new Nix output, database entry, home and temp files", flush=True)
 
 
 def check_runtime(profile):
@@ -400,12 +428,12 @@ def check_runtime(profile):
         ["stat", "-f", "-c", "Storage probe %n: %T", ".", "/nix", "/dev/shm"],
         check=False,
     )
-    with build_environment(profile) as capabilities, tempfile.TemporaryDirectory(dir="/tmp") as directory:
+    with build_environment(profile) as (capabilities, volume), tempfile.TemporaryDirectory(dir="/tmp") as directory:
         if benchmark != "off":
             elapsed = time.monotonic() - started
             print(f"rworker benchmark {profile} {benchmark} setup_s={elapsed:.3f}", flush=True)
         print(f"rworker runtime KVM: {'kvm' in capabilities}", flush=True)
-        if encryption_enabled(profile):
+        if volume is not None:
             for mount in (pwd.getpwnam(BUILD_USER).pw_dir, "/tmp", "/var/tmp", "/nix"):
                 if not os.path.ismount(mount):
                     raise RuntimeError(f"Missing encrypted storage mount at {mount}")
@@ -431,8 +459,9 @@ def check_runtime(profile):
                     "-o", "BatchMode=yes", "-o", "StrictHostKeyChecking=yes",
                     "-o", f"UserKnownHostsFile={known_hosts}", f"{BUILD_USER}@127.0.0.1",
                 ]
+                marker = f"rworker-runtime-check-{uuid4().hex}"
                 expression = (
-                    'builtins.derivation { name = "rworker-runtime-check"; '
+                    f'builtins.derivation {{ name = "{marker}"; '
                     'system = builtins.currentSystem; builder = "/bin/sh"; '
                     'args = [ "-c" "echo ready > $out" ]; }'
                 )
@@ -445,6 +474,12 @@ def check_runtime(profile):
                     raise RuntimeError("Runtime SSH user mismatch")
                 if Path(output[1]).read_text().strip() != "ready":
                     raise RuntimeError("Runtime Nix build produced unexpected output")
+                if volume is not None:
+                    subprocess.run([
+                        *ssh, f'printf ready > "$HOME/{marker}" && '
+                        f"printf ready > /tmp/{marker} && printf ready > /var/tmp/{marker}",
+                    ], check=True, timeout=30)
+                    verify_encrypted_writes(volume, output[1], marker)
                 if benchmark != "off":
                     lock = json.loads(Path("flake.lock").read_text())
                     revision = lock["nodes"]["nixpkgs"]["locked"]["rev"]
@@ -484,7 +519,7 @@ def main():
     base_url = os.environ["RWORKER_AGENT_URL"].rstrip("/")
     url = f"{base_url}/v1/agent/jobs/{job_id}"
 
-    with build_environment(profile) as capabilities:
+    with build_environment(profile) as (capabilities, _):
         with request(
             f"{url}/claim",
             oidc_token(profile),
