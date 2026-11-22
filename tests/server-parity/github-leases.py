@@ -14,7 +14,7 @@ def b64(data):
     return base64.urlsafe_b64encode(data).rstrip(b"=").decode()
 
 
-def exercise(binary, root, provider):
+def exercise(binary, root, provider, runner_pin=None):
     gitlab = provider == "gitlab"
     runner = "gl-linux-x64" if gitlab else "linux-arm64"
     profile = "gl-x86_64" if gitlab else "gh-aarch64"
@@ -35,10 +35,11 @@ def exercise(binary, root, provider):
             "instance": "https://gitlab.example.com",
             "project": "example/project",
             "projectId": 123456,
-            "runnerId": 99,
             "tokenFile": str(token_file),
             "stateDirectory": str(state),
         }}
+    if runner_pin is not None:
+        settings["gitlabCi"]["runnerId"] = runner_pin
     config.write_text(json.dumps(settings))
     key = root / "signing.pem"
     subprocess.run(
@@ -183,10 +184,13 @@ else:
             details["disk"] = disk
             assert post("claim", jwt(41), details)[0] == 403
             if gitlab:
-                for wrong in ({"runner_id": 100}, {"job_project_id": "9876"},
+                for wrong in ({"runner_id": 0}, {"job_project_id": "9876"},
                               {"ref_protected": "false"}, {"pipeline_source": "push"}):
                     assert post("claim", jwt(42, **wrong), details)[0] == 403
-            status, result = post("claim", jwt(42), details)
+                if runner_pin is not None:
+                    assert post("claim", jwt(42, runner_id=100), details)[0] == 403
+            runner_id = 100 if gitlab and runner_pin is None else 99
+            status, result = post("claim", jwt(42, runner_id=runner_id) if gitlab else jwt(42), details)
             assert status == 200
             assert result["public_key"].splitlines() == [
                 public_key,
@@ -223,6 +227,6 @@ else:
 
 
 if __name__ == "__main__":
-    for provider in ("github", "gitlab"):
+    for provider, runner_pin in (("github", None), ("gitlab", None), ("gitlab", 99)):
         with tempfile.TemporaryDirectory() as directory:
-            exercise(str(Path(sys.argv[1]).resolve()), Path(directory), provider)
+            exercise(str(Path(sys.argv[1]).resolve()), Path(directory), provider, runner_pin)

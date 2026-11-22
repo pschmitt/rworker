@@ -20,7 +20,7 @@ remote builds.
 
 - **GitHub Actions workers** offer native Linux ARM64 and x86-64 with
   interactive SSH and Nix. See [GitHub Actions workers](docs/github-actions.md).
-- **GitLab CI workers** lease an isolated Linux x86-64 runner with SSH and
+- **GitLab CI workers** lease an isolated Linux x86-64 CI job with SSH and
   Nix. See [GitLab CI workers](docs/gitlab-ci.md).
 - **One-shot builds**: `exec` creates a worker, copies directories to it,
   runs the command, copies results back and deletes the worker, also on
@@ -86,7 +86,7 @@ rworker down "$w"                                    # delete it
 | --- | --- |
 | [Usage](docs/usage.md) | Actions, worker names, environment variables |
 | [GitHub Actions workers](docs/github-actions.md) | Controller setup, hosted runner profiles, and SSH leases |
-| [GitLab CI workers](docs/gitlab-ci.md) | Dedicated runner setup, pipeline authentication, and SSH leases |
+| [GitLab CI workers](docs/gitlab-ci.md) | Runner requirements, pipeline authentication, and SSH leases |
 | [OCI client image](docs/oci-client.md) | Run the rworker client from a CI job |
 | [Nix](docs/nix.md) | Flake outputs, overlay options, the web console and MCP server |
 | [On-demand Nix builders](docs/nix-builders.md) | Gateway, machines entry and worker leases |

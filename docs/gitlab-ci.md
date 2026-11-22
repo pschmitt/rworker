@@ -1,6 +1,6 @@
 # GitLab CI workers
 
-The `gl-x86_64` profile leases a dedicated Linux x86-64 GitLab runner.
+The `gl-x86_64` profile leases a Linux x86-64 GitLab CI job.
 `gl` is an alias. The 30-minute default lease includes queue time, and the
 maximum is two hours.
 
@@ -25,9 +25,9 @@ The project must contain the root `.gitlab-ci.yml` and the runner agent
 script. The configuration only creates pipelines for API requests on
 protected `main`.
 
-Register a dedicated, protected project runner tagged `rworker-x86-64`.
-Use a fresh, unprivileged Ubuntu container per job with a root bootstrap
-user, no host Docker socket and no shared writable build volumes. Allow
+The job uses the project's regular untagged runners. It needs a Linux x86-64
+container executor that starts a fresh, unprivileged Ubuntu container with a
+root bootstrap user, no host Docker socket, and private build storage. Allow
 HTTPS access to GitLab, Ubuntu package mirrors, Nix caches, and the
 controller, plus SSH access to the controller. The job installs its
 dependencies and runs builds under an unprivileged local account with its
@@ -57,7 +57,6 @@ Add the GitLab project to the controller runtime JSON.
     "instance": "https://gitlab.example.com",
     "project": "owner/project",
     "projectId": 12345,
-    "runnerId": 67890,
     "tokenFile": "/run/secrets/rworker-gitlab-token",
     "stateDirectory": "/var/lib/rworker-gitlab"
   }
@@ -68,6 +67,9 @@ Use an API credential with permission to create and cancel pipelines on
 protected `main`. The controller and reaper need read access to the token
 file. The controller stores the pipeline ID before accepting a runner
 claim. It checks the GitLab ID token's issuer, audience, validity, project,
-pipeline, protected ref, CI configuration path, and runner ID before
+pipeline, protected ref, and CI configuration path before
 issuing a lease token. The runner uses that token for SSH readiness and
 heartbeats.
+
+Set `gitlabCi.runnerId` only if you want to restrict claims to a specific
+runner. In that case, ensure the project's job can be assigned to that runner.

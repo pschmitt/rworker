@@ -175,10 +175,10 @@ pub(super) fn verify_gitlab(token: &str, config: &serde_json::Value) -> Result<u
     let host = super::gitlab::instance_host(issuer).ok_or(invalid)?;
     let project = config["project"].as_str().ok_or(invalid)?;
     let project_id = config["projectId"].as_u64().ok_or(invalid)?;
-    let runner_id = config["runnerId"]
-        .as_u64()
-        .filter(|id| *id != 0)
-        .ok_or(invalid)?;
+    let runner_id = config
+        .get("runnerId")
+        .map(|value| value.as_u64().filter(|id| *id != 0).ok_or(invalid))
+        .transpose()?;
     let cache = CACHES
         .lock()
         .map_err(|_| invalid)?
@@ -206,7 +206,8 @@ pub(super) fn verify_gitlab(token: &str, config: &serde_json::Value) -> Result<u
         || claims.pipeline_source != "api"
         || claims.ref_path != "refs/heads/main"
         || claims.ref_protected != "true"
-        || claims.runner_id != runner_id
+        || claims.runner_id == 0
+        || runner_id.is_some_and(|id| claims.runner_id != id)
         || claims.ci_config_ref_uri != format!("{host}/{project}//.gitlab-ci.yml@refs/heads/main")
     {
         return Err(invalid);

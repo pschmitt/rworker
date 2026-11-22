@@ -15,7 +15,6 @@ workflow:
 
 rworker-lease:
   image: ubuntu:24.04
-  tags: [rworker-x86-64]
   timeout: 2h
   id_tokens:
     RWORKER_GITLAB_ID_TOKEN:
@@ -25,7 +24,9 @@ rworker-lease:
     RWORKER_PROFILE: $[[ inputs.profile ]]
   script:
     - test -n "$RWORKER_JOB_ID"
+    - test "$(uname -m)" = x86_64
     - test "$(id -u)" = 0
+    - ': "${RWORKER_AGENT_URL:?Set RWORKER_AGENT_URL}" "${RWORKER_GATEWAY:?Set RWORKER_GATEWAY}" "${RWORKER_GATEWAY_KNOWN_HOSTS:?Set RWORKER_GATEWAY_KNOWN_HOSTS}" "${RWORKER_GATEWAY_KEY:?Set RWORKER_GATEWAY_KEY}"'
     - chmod 0700 "$CI_PROJECT_DIR"
     - apt-get update
     - DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends ca-certificates git nix-bin openssh-client openssh-server procps python3 rsync sudo
