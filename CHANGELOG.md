@@ -10,6 +10,8 @@ The Rust client and controller replace the original Bash client.
 
 - Use the same provider colors for the icons in `rworker profiles`.
 
+- Show profile RAM and disk in decimal GB across providers in the CLI.
+
 - Add `rworker ssh --create --rm` to delete the new worker when SSH exits.
 
 ### GitHub Actions

@@ -233,7 +233,13 @@ pub fn cmd_profiles(ctx: &Ctx, args: &[String]) -> R {
         crate::ctx::json_out(ctx, &jq::pretty(&Value::Array(list)));
         return Ok(());
     }
-    let mut rows = vec!["PROFILE\tFLAVOR\tVCPU\tRAM\tDISK (GiB)\tIMAGE TAGS".to_string()];
+    let mut rows = vec!["PROFILE\tFLAVOR\tVCPU\tRAM (GB)\tDISK (GB)\tIMAGE TAGS".to_string()];
+    let format_gb = |size: Option<f64>| {
+        size.map_or_else(
+            || "-".to_owned(),
+            |gb| format!("{gb:.1}").trim_end_matches(".0").to_owned(),
+        )
+    };
     for p in &list {
         let star = if jq::truthy(get(p, "default")) {
             "*"
@@ -244,20 +250,13 @@ pub fn cmd_profiles(ctx: &Ctx, args: &[String]) -> R {
             .as_array()
             .map(|a| a.iter().map(jq::raw).collect())
             .unwrap_or_default();
-        let size = |decimal: &str, binary: &str, unit: &str| {
-            if let Some(gb) = p[decimal].as_u64() {
-                format!("{gb} GB")
-            } else if !p[binary].is_null() {
-                format!("{} {unit}", jq::raw(&p[binary]))
-            } else {
-                "-".to_owned()
-            }
-        };
-        let disk = if let Some(bytes) = p["disk_total_bytes"].as_u64() {
-            format!("{:.1}", bytes as f64 / (1_u64 << 30) as f64)
-        } else {
-            jq::or(&p["disk"], "-")
-        };
+        let ram = p["ram_gb"]
+            .as_f64()
+            .or_else(|| p["ram_mib"].as_f64().map(|mib| mib * 1_048_576.0 / 1e9));
+        let disk = p["disk_total_bytes"]
+            .as_f64()
+            .map(|bytes| bytes / 1e9)
+            .or_else(|| p["disk"].as_f64().map(|gib| gib * 1_073_741_824.0 / 1e9));
         let name = jq::raw(get(p, "name"));
         let label = if ctx.icons.get() {
             format!("{} {name}{star}", crate::pool_icon::profile_glyph(p))
@@ -273,8 +272,8 @@ pub fn cmd_profiles(ctx: &Ctx, args: &[String]) -> R {
                         .filter(|value| !value.is_null())
                         .map_or_else(|| "-".to_owned(), jq::raw)
                 )),
-                size("ram_gb", "ram_mib", "MiB"),
-                disk,
+                format_gb(ram),
+                format_gb(disk),
                 jq::tsv(&json!(tags.join(", "))),
             ]
             .join("\t"),
