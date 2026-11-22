@@ -385,6 +385,10 @@ pub fn worker_ip(ctx: &Ctx, name: &str) -> R<String> {
 /// rather than reach whichever worker holds that IP now. A failure leaves
 /// no options if the host key is unavailable.
 pub fn ssh_opts(ctx: &Ctx, name: &str) -> Vec<String> {
+    ssh_opts_with_relay(ctx, name, false)
+}
+
+pub fn ssh_opts_with_relay(ctx: &Ctx, name: &str, local_relay: bool) -> Vec<String> {
     let Ok(key) = worker_field(ctx, name, "host_key") else {
         return Vec::new();
     };
@@ -404,25 +408,38 @@ pub fn ssh_opts(ctx: &Ctx, name: &str) -> Vec<String> {
         "-o".to_string(),
         "BatchMode=yes".to_string(),
     ];
-    if github_id(name).is_some()
-        && let Ok(state) = read_state(ctx, name)
-        && let Some(port) = state["github_port"]
-            .as_u64()
-            .filter(|port| (1024..=65535).contains(port))
-    {
-        let target = format!("127.0.0.1:{port}");
-        let proxy = proc::quote_words(&[
-            "ssh",
-            "-q",
-            "-o",
-            "BatchMode=yes",
-            "-W",
-            &target,
-            "--",
-            &ctx.control_host,
-        ])
-        .replace('%', "%%");
-        options.extend(["-o".into(), format!("ProxyCommand={proxy}")]);
+    if github_id(name).is_some() {
+        let port = read_state(ctx, name)
+            .ok()
+            .and_then(|state| state["github_port"].as_u64())
+            .filter(|port| (1024..=65535).contains(port));
+        if local_relay {
+            let Some(port) = port else {
+                return Vec::new();
+            };
+            options.extend([
+                "-o".into(),
+                "Hostname=127.0.0.1".into(),
+                "-o".into(),
+                "ProxyCommand=none".into(),
+                "-p".into(),
+                port.to_string(),
+            ]);
+        } else if let Some(port) = port {
+            let target = format!("127.0.0.1:{port}");
+            let proxy = proc::quote_words(&[
+                "ssh",
+                "-q",
+                "-o",
+                "BatchMode=yes",
+                "-W",
+                &target,
+                "--",
+                &ctx.control_host,
+            ])
+            .replace('%', "%%");
+            options.extend(["-o".into(), format!("ProxyCommand={proxy}")]);
+        }
     }
     if let Some(identity) =
         std::env::var_os("RWORKER_IDENTITY_FILE").filter(|path| !path.is_empty())

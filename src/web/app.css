@@ -233,3 +233,9 @@ th[aria-sort] .sort-arrow { color: var(--cyan); }
 }
 
 #detail-output pre { min-height: 220px; max-height: 65vh; }
+
+#terminal-dialog { width: min(92vw, 1160px); }
+#terminal-title, #terminal-status { margin: 0; }
+#terminal-status { color: var(--muted); font-size: .85rem; }
+#terminal-close { flex-shrink: 0; }
+#terminal-screen { height: min(66dvh, 720px); padding: 8px; background: #101419; }

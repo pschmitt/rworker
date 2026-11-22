@@ -66,6 +66,7 @@ async function request(path, data) {
 
 function lock() {
   closeLogStream();
+  if ($("terminal-dialog").open) $("terminal-dialog").close();
   state.authenticated = false;
   state.token = "";
   try { sessionStorage.removeItem("rworker.operator"); } catch { /* Storage disabled. */ }
@@ -531,7 +532,8 @@ function detailPanel() {
   const actions = $("worker-actions");
   actions.replaceChildren();
   if (!row.retired) {
-    actions.append(button("Start job", () => form("start", row)));
+    actions.append(button("SSH", () => openTerminal(row)),
+      button("Start job", () => form("start", row)));
     const menu = element("details");
     menu.append(element("summary", "Actions"));
     for (const [label, action] of [["Extend", "extend"], ["Edit topic", "topic"], ["Claim", "claim"],
@@ -559,6 +561,83 @@ function detailPanel() {
     tabs.append(tab);
   }
 }
+
+function openTerminal(row) {
+  const dialog = $("terminal-dialog");
+  const screen = $("terminal-screen");
+  const status = $("terminal-status");
+  const terminal = new Terminal({
+    fontFamily: '"IBM Plex Mono", ui-monospace, monospace',
+    cursorBlink: true,
+    scrollback: 2000,
+    theme: { background: "#101419", foreground: "#e8ecf5", cursor: "#9dcfff" },
+  });
+  const fit = new FitAddon.FitAddon();
+  terminal.loadAddon(fit);
+  $("terminal-title").textContent = "SSH · " + row.name;
+  status.textContent = "Connecting…";
+  dialog.showModal();
+  terminal.open(screen);
+  fit.fit();
+
+  const url = new URL("/v1/ui/follow/ssh/" + encodeURIComponent(row.name), location.href);
+  url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
+  const socket = new WebSocket(url);
+  socket.binaryType = "arraybuffer";
+  let ready = false;
+  const dimensions = () => ({ cols: Math.min(terminal.cols, 512), rows: Math.min(terminal.rows, 256) });
+  socket.onopen = () => {
+    socket.send(JSON.stringify({ token: state.token, size: dimensions() }));
+  };
+  let failed = false;
+  socket.onmessage = ({data}) => {
+    if (typeof data === "string") {
+      status.textContent = data;
+      ready = data === "SSH session opened.";
+      failed = !ready;
+      if (ready) socket.send(JSON.stringify(dimensions()));
+    } else {
+      terminal.write(new Uint8Array(data));
+    }
+  };
+  socket.onerror = () => {
+    failed = true;
+    status.textContent = "Could not connect to the SSH terminal.";
+  };
+  socket.onclose = () => {
+    if (!failed) status.textContent = ready ? "Disconnected" : "SSH connection closed.";
+    ready = false;
+    terminal.options.disableStdin = true;
+  };
+
+  const encode = new TextEncoder();
+  function input(bytes) {
+    if (!ready || socket.readyState !== WebSocket.OPEN) return;
+    if (socket.bufferedAmount + bytes.length > 512 * 1024) {
+      status.textContent = "SSH connection is too slow.";
+      failed = true;
+      socket.close();
+      return;
+    }
+    for (let i = 0; i < bytes.length; i += 16384) socket.send(bytes.subarray(i, i + 16384));
+  }
+  terminal.onData(data => input(encode.encode(data)));
+  terminal.onBinary(data => input(Uint8Array.from(data, char => char.charCodeAt(0))));
+  terminal.onResize(() => {
+    if (ready && socket.readyState === WebSocket.OPEN) socket.send(JSON.stringify(dimensions()));
+  });
+  const resize = new ResizeObserver(() => fit.fit());
+  resize.observe(screen);
+  dialog.addEventListener("close", () => {
+    resize.disconnect();
+    socket.onopen = socket.onmessage = socket.onerror = socket.onclose = null;
+    socket.close();
+    terminal.dispose();
+  }, { once: true });
+  terminal.focus();
+}
+
+$("terminal-close").addEventListener("click", () => $("terminal-dialog").close());
 
 function checkbox(label, checked, change) {
   const node = element("label", null, "toggle");

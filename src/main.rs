@@ -484,6 +484,15 @@ fn main() {
     signals::default_sigpipe();
     let argv: Vec<String> = std::env::args().skip(1).collect();
     let ctx = Ctx::from_env();
+    #[cfg(feature = "web")]
+    if let [action, worker] = argv.as_slice()
+        && action == "__web-ssh"
+    {
+        std::process::exit(match cmd::files::web_ssh(&ctx, worker) {
+            Ok(()) => 0,
+            Err(Fail(code)) => code,
+        });
+    }
     let remote_command = std::env::var_os("RWORKER_CONTROL_SSH_COMPAT").is_some()
         && std::env::var_os("SSH_CONNECTION").is_some()
         && std::env::var_os("SSH_TTY").is_none()

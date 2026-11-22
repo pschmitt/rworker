@@ -46,6 +46,10 @@ pub fn target_user(ctx: &Ctx, t: &Target) -> R<String> {
 
 /// The ssh command for `cmd_ssh TARGET ARGS...`, ready to run.
 pub fn ssh_command(ctx: &Ctx, args: &[String]) -> R<Command> {
+    ssh_command_with_options(ctx, args, &[])
+}
+
+fn ssh_command_with_options(ctx: &Ctx, args: &[String], extra: &[&str]) -> R<Command> {
     let mut args = args;
     let mut login_user = String::new();
     // -l USER (like ssh's), before the name.
@@ -68,7 +72,7 @@ pub fn ssh_command(ctx: &Ctx, args: &[String]) -> R<Command> {
     }
     let ip = state::worker_ip(ctx, &t.name)?;
     let user = target_user(ctx, &t).map_err(|_| Fail(1))?;
-    let mut opts = state::ssh_opts(ctx, &t.name);
+    let mut opts = state::ssh_opts_with_relay(ctx, &t.name, !extra.is_empty());
     if let Ok(identity) = std::env::var("RWORKER_LOG_CACHE_IDENTITY") {
         if opts.is_empty() {
             return Err(Fail(1));
@@ -109,9 +113,44 @@ pub fn ssh_command(ctx: &Ctx, args: &[String]) -> R<Command> {
             ],
         );
     }
+    if !extra.is_empty() {
+        if opts.is_empty() {
+            ctx.err("Worker SSH host key or relay unavailable");
+            return Err(Fail(1));
+        }
+        opts.retain(|option| option != "-q");
+        opts.splice(0..0, extra.iter().map(|option| (*option).to_owned()));
+    }
     let mut cmd = state::worker_ssh(&opts, &format!("{user}@{ip}"));
     cmd.args(&args[1..]);
     Ok(cmd)
+}
+
+#[cfg(feature = "web")]
+pub fn web_ssh(ctx: &Ctx, worker: &str) -> R {
+    use std::os::unix::process::CommandExt;
+    let error = ssh_command_with_options(
+        ctx,
+        &[worker.to_owned()],
+        &[
+            "-tt",
+            "-e",
+            "none",
+            "-o",
+            "ConnectTimeout=10",
+            "-o",
+            "ClearAllForwardings=yes",
+            "-o",
+            "ForwardAgent=no",
+            "-o",
+            "ForwardX11=no",
+            "-o",
+            "ControlPath=none",
+        ],
+    )?
+    .exec();
+    ctx.err(&format!("ssh: {error}"));
+    Err(Fail(1))
 }
 
 pub fn cmd_ssh(ctx: &Ctx, args: &[String]) -> R {

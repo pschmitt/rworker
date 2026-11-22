@@ -5,7 +5,11 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Workers · rworker</title>
   <link rel="icon" href="/assets/favicon.svg" type="image/svg+xml">
+  <!-- Vendored xterm.js 6.0.0 and addon-fit 0.11.0, distributed under MIT. -->
+  <link rel="stylesheet" href="/assets/xterm.css">
   <link rel="stylesheet" href="/assets/app.css">
+  <script defer src="/assets/xterm.js"></script>
+  <script defer src="/assets/xterm-fit.js"></script>
   <script defer src="/assets/app.js"></script>
 </head>
 <body>
@@ -74,6 +78,13 @@
       <p id="form-error" role="alert" hidden></p>
       <footer><button type="button" id="dismiss">Cancel</button><button id="confirm" class="primary">Save</button></footer>
     </form>
+  </dialog>
+  <dialog id="terminal-dialog" aria-labelledby="terminal-title">
+    <header>
+      <div><h2 id="terminal-title"></h2><p id="terminal-status" role="status"></p></div>
+      <button type="button" id="terminal-close">Close SSH</button>
+    </header>
+    <div id="terminal-screen"></div>
   </dialog>
 </body>
 </html>

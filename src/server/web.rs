@@ -14,6 +14,7 @@ use std::process::{Command, Stdio};
 use tokio::sync::Semaphore;
 
 mod log_stream;
+mod terminal;
 
 const MAX_OUTPUT: u64 = 2 * 1024 * 1024;
 static REQUESTS: Semaphore = Semaphore::const_new(8);
@@ -63,6 +64,29 @@ pub(super) fn routes(router: Router<PathBuf>) -> Router<PathBuf> {
             get(|| async { asset("image/svg+xml", include_str!("../web/favicon.svg")) }),
         )
         .merge(log_stream::routes())
+        .merge(terminal::routes())
+        .route(
+            "/assets/xterm.js",
+            get(|| async {
+                asset(
+                    "text/javascript; charset=utf-8",
+                    include_str!("../web/xterm.js"),
+                )
+            }),
+        )
+        .route(
+            "/assets/xterm-fit.js",
+            get(|| async {
+                asset(
+                    "text/javascript; charset=utf-8",
+                    include_str!("../web/xterm-fit.js"),
+                )
+            }),
+        )
+        .route(
+            "/assets/xterm.css",
+            get(|| async { asset("text/css; charset=utf-8", include_str!("../web/xterm.css")) }),
+        )
         .route("/v1/automation/workers", get(automation_workers))
         .route(
             "/v1/automation/action",
@@ -136,7 +160,7 @@ fn asset(content_type: &'static str, body: &'static str) -> Response {
     ([
         (header::CONTENT_TYPE, content_type),
         (header::CACHE_CONTROL, "no-cache"),
-        (header::CONTENT_SECURITY_POLICY, "default-src 'none'; script-src 'self'; style-src 'self'; font-src 'self'; img-src 'self'; connect-src 'self'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'"),
+        (header::CONTENT_SECURITY_POLICY, "default-src 'none'; script-src 'self'; style-src 'self'; style-src-elem 'self' 'unsafe-inline'; font-src 'self'; img-src 'self'; connect-src 'self'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'"),
         (header::X_CONTENT_TYPE_OPTIONS, "nosniff"),
         (header::REFERRER_POLICY, "no-referrer"),
     ], body).into_response()

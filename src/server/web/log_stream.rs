@@ -99,6 +99,10 @@ async fn authenticate(socket: &mut WebSocket) -> bool {
     else {
         return false;
     };
+    authorize_token(&token)
+}
+
+pub(super) fn authorize_token(token: &str) -> bool {
     let Ok(value) = HeaderValue::from_str(&format!("Bearer {token}")) else {
         return false;
     };

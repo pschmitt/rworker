@@ -64,6 +64,8 @@ The Rust client and controller replace the original Bash client.
 
 ### Web console
 
+- Open an interactive SSH terminal from a live worker’s detail view.
+
 - Cache profile flavor resources on the controller and refresh them daily;
   show CPU and memory in the CLI and TUI profile list too.
 - Show profile vCPU counts and RAM from the configured OpenStack flavors,

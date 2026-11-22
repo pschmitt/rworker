@@ -106,7 +106,8 @@ own authentication check. Only the proxy and trusted local accounts should have
 access to the Unix socket. Optionally set `web.signOutUrl` to the sign-out page
 of the identity provider. If you configure your own reverse proxy, enable
 WebSocket upgrades on `/v1/ui/follow/` and `/v1/ui/updates` for live logs and
-inventory notifications.
+inventory notifications. The interactive SSH terminal also uses the
+`/v1/ui/follow/` WebSocket location.
 Set `web.identityFile` and `web.publicKeyFile` to the matching SSH key pair when
 the operator needs a dedicated identity.
 
@@ -136,9 +137,10 @@ Open the configured HTTPS hostname in a browser with its client certificate,
 then enter the operator token. The console provides workers and history, job
 management, profiles, events, inspection, process lists, and optionally redacted
 logs. Follow streams over a WebSocket and sends updated archive snapshots when
-the controller cannot follow a worker directly. It can copy an SSH command or a Nix builder entry.
-Use the CLI for local file transfers, image workflows, interactive SSH, and
-one-shot commands that need terminal I/O.
+the controller cannot follow a worker directly. Open **SSH** from a live
+worker’s detail page to start an interactive terminal using the console’s
+operator identity. The console can also copy an SSH command or a Nix builder
+entry. Use the CLI for local file transfers and image workflows.
 
 The HTML, styles and scripts are embedded in the rworker binary and the browser
 loads them from the controller.
