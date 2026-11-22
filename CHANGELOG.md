@@ -6,6 +6,8 @@ The Rust client and controller replace the original Bash client.
 
 ### GitHub Actions
 
+- Show the GitHub glyph for Actions workers in the CLI, TUI, and web inventory.
+
 - Add a native Linux runner workflow and agent bootstrap for controller-assigned
   build jobs, with KVM enabled where the runner supports it.
 

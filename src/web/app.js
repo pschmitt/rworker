@@ -123,13 +123,14 @@ const agentIcons = new Map([
 // Worker glyphs: the `icon` of the worker's Glance image (rworker_icon) when
 // the bundled font has it, else one for its kind. Keep in sync with
 // scripts/web-icon-font.sh, which builds agents.woff2 from these.
-const workerGlyphs = new Set(["\u{f1064}", "\u{f06a9}", "\u{f048b}", "\u{f0508}", "\u{f059f}"]);
+const workerGlyphs = new Set(["\u{f1064}", "\u{f06a9}", "\u{f048b}", "\u{f0508}", "\u{f059f}", "\u{f09b}"]);
 
 function isPool(row) {
   return Boolean(row.kind) && !["adhoc", "unknown"].includes(row.kind);
 }
 
 function workerGlyph(row) {
+  if (row.name?.startsWith("gha-")) return "\u{f09b}";
   if (row.icon && workerGlyphs.has(row.icon)) return row.icon;
   if (row.kind === "adhoc") return "\u{f1064}";
   if (row.kind === "nixbot" || row.kind === "pool") return "\u{f06a9}";

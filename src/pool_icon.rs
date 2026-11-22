@@ -5,6 +5,9 @@
 
 use serde_json::Value;
 
+/// nf-fa-github: GitHub Actions workers.
+const GITHUB: &str = "\u{f09b}";
+
 /// nf-md-tools: ad-hoc workers on an image without an icon.
 const ADHOC: &str = "\u{f1064}";
 /// nf-md-robot: nixbot's pool on an image without an icon.
@@ -13,6 +16,12 @@ const NIXBOT: &str = "\u{f06a9}";
 const GENERIC: &str = "\u{f048b}";
 
 pub fn glyph(worker: &Value) -> &str {
+    if worker["name"]
+        .as_str()
+        .is_some_and(|name| name.starts_with("gha-"))
+    {
+        return GITHUB;
+    }
     if let Some(icon) = worker["icon"].as_str().filter(|icon| !icon.is_empty()) {
         return icon;
     }
@@ -49,6 +58,14 @@ mod tests {
         assert_eq!(glyph(&json!({"icon": "", "kind": "adhoc"})), ADHOC);
         assert_eq!(glyph(&json!({"kind": "nixbot"})), NIXBOT);
         assert_eq!(glyph(&json!({"kind": "circus"})), GENERIC);
+    }
+
+    #[test]
+    fn github_workers_use_the_github_glyph() {
+        assert_eq!(
+            glyph(&json!({"name": "gha-example", "kind": "adhoc"})),
+            GITHUB
+        );
     }
 
     #[test]
