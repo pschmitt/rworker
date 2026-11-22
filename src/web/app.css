@@ -190,10 +190,10 @@ dialog footer { justify-content: end; border-top: 1px solid var(--line); }
 .agent-icon.codex { color: #c8c8c8; }
 .agent-icon.nix { color: #7ebae4; }
 .worker-link { display: flex; align-items: center; gap: 9px; color: var(--accent); text-decoration: none; font-weight: 650; }
-.worker-link:hover .profile-name { display: flex; align-items: center; gap: 9px; }
+.worker-link:hover .worker-identity { text-decoration: underline; }
+.profile-name { display: flex; align-items: center; gap: 9px; }
 .profile-icon { color: var(--cyan); }
 .profile-select { font-family: "rworker agents", "Instrument Sans", "Segoe UI", system-ui, sans-serif; }
-.worker-identity { text-decoration: underline; }
 .worker-icon { display: grid; place-items: center; flex: 0 0 30px; height: 30px; border-radius: 7px; color: var(--cyan); background: #2a3442; }
 .worker-identity { min-width: 0; }
 .worker-identity .secondary { font-weight: 500; }
@@ -233,6 +233,8 @@ th[aria-sort] .sort-arrow { color: var(--cyan); }
   .worker-context, .profile-context { display: block; }
   .worker-link { gap: 7px; }
   .worker-icon { flex-basis: 24px; height: 24px; }
+  .profile-name { align-items: flex-start; gap: 6px; }
+  .profile-name > .worker-icon { flex-basis: 18px; height: 18px; margin-top: 2px; border-radius: 4px; font-size: 12px; }
 }
 
 #detail-output pre { min-height: 220px; max-height: 65vh; }

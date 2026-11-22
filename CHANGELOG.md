@@ -80,6 +80,8 @@ The Rust client and controller replace the original Bash client.
 
 ### Web console
 
+- Keep profile badges compact and beside the profile name on mobile.
+
 - Authorize the controller’s console key when provisioning workers owned by the web operator.
 
 - Keep the console running when a browser SSH terminal opens or closes.
