@@ -75,6 +75,7 @@ pub(super) fn list(cfg: &Value) -> Result<Value, String> {
         }
         workers.push(worker);
     }
+    workers.extend(super::github_leases::inventory(cfg)?);
     Ok(Value::Array(workers))
 }
 

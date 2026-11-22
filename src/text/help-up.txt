@@ -40,3 +40,5 @@ in /run/rworker/metadata.json.
 
 Example:
   w=$(__ME__ up --ttl 3h --flavor s1.2xlarge | jq -r .name)
+
+GitHub-hosted profiles: --profile github-arm64 or --profile github-x64.

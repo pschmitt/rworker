@@ -4,6 +4,11 @@
 
 The Rust client and controller replace the original Bash client.
 
+### GitHub Actions
+
+- Add a native Linux runner workflow and agent bootstrap for controller-assigned
+  build jobs, with KVM enabled where the runner supports it.
+
 ### TUI
 
 - Use one divider around the worker log preview and remove the log spinner.

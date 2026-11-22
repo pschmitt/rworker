@@ -498,6 +498,9 @@ fn main() {
                     | "claim"
                     | "niks3-token"
                     | "lifecycle-events"
+                    | "github-up"
+                    | "github-status"
+                    | "github-down"
             ),
             [] => false,
         };

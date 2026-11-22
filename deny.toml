@@ -25,6 +25,9 @@ allow = [
 exceptions = [
     # Axum’s router includes code under the BSD 3-Clause license.
     { name = "matchit", allow = ["BSD-3-Clause"] },
+    # The GitHub OIDC signature verifier and its input validation dependency.
+    { name = "ring", allow = ["ISC"] },
+    { name = "untrusted", allow = ["ISC"] },
     # This crate itself.
     { name = "rworker", allow = ["GPL-3.0-only"] },
 ]

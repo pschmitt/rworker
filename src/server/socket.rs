@@ -93,10 +93,12 @@ fn serve_connection(config: &str) -> io::Result<()> {
         ));
     }
     let args: Vec<String> = serde_json::from_slice(&request)?;
-    if args
-        .first()
-        .is_some_and(|action| matches!(action.as_str(), "refresh-inventory" | "inventory-api"))
-    {
+    if args.first().is_some_and(|action| {
+        matches!(
+            action.as_str(),
+            "refresh-inventory" | "inventory-api" | "github-agent-api"
+        )
+    }) {
         io::stdout()
             .lock()
             .write_all(b"eInvalid control command\nx2\n")?;

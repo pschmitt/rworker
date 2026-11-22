@@ -59,6 +59,18 @@
                   python3 ${./tests/server-parity/inventory-cache.py} ${rworker.unwrapped}/bin/rworker
                   touch "$out"
                 '';
+            github-leases =
+              pkgs.runCommand "rworker-github-leases-test"
+                {
+                  nativeBuildInputs = [
+                    pkgs.openssl
+                    pkgs.python3
+                  ];
+                }
+                ''
+                  python3 ${./tests/server-parity/github-leases.py} ${rworker.unwrapped}/bin/rworker
+                  touch "$out"
+                '';
             # The Home Manager module, evaluated against stand-ins for the two
             # Home Manager options it sets, and its configured wrapper built
             # and asked for its settings.

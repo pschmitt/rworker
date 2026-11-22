@@ -1,5 +1,9 @@
 mod autoscale;
 pub(crate) mod builder_gateway;
+mod github;
+mod github_agent_api;
+mod github_leases;
+mod github_oidc;
 mod http;
 mod inventory;
 mod inventory_api;
@@ -83,6 +87,14 @@ pub fn run(ctx: &crate::ctx::Ctx, args: &[String]) -> R {
         crate::ctx::outln(&output);
         return Ok(());
     }
+    if action == "github-agent-api"
+        && let [socket] = rest
+    {
+        return github_agent_api::serve(config, socket).map_err(|error| {
+            eprintln!("GitHub agent API: {error}");
+            Fail(1)
+        });
+    }
     let cache = inventory_cache::directory();
     if action == "refresh-inventory" && rest.is_empty() {
         return match cache {
@@ -116,7 +128,7 @@ pub fn run(ctx: &crate::ctx::Ctx, args: &[String]) -> R {
         None
     };
     let edit = match action.as_str() {
-        "up" => None,
+        "up" | "github-up" | "github-status" | "github-down" | "github-reap" => None,
         "reap" if rest.is_empty() || rest == ["--dry-run"] => None,
         "autoscale" if rest.is_empty() || rest == ["--once"] => None,
         "profiles" if rest.is_empty() => None,
@@ -152,7 +164,12 @@ pub fn run(ctx: &crate::ctx::Ctx, args: &[String]) -> R {
             reap_command::reap(&settings, !rest.is_empty())?;
             return Ok(());
         }
-        let response = if let Some(args) = up {
+        let response = if matches!(
+            action.as_str(),
+            "github-up" | "github-status" | "github-down" | "github-reap"
+        ) {
+            github_leases::run(&settings, action, rest)?
+        } else if let Some(args) = up {
             up::up(&settings, args)?
         } else if let Some(edit) = edit {
             let mut compute = openstack::OpenStack::from_settings(&settings)?;
@@ -366,13 +383,16 @@ fn required<'a>(settings: &'a Value, key: &str) -> io::Result<&'a Value> {
 }
 
 fn profiles(settings: &Value) -> io::Result<Vec<Value>> {
-    let Some(profiles) = settings.get("profiles") else {
-        return Ok(Vec::new());
+    let mut profiles: Vec<_> = match settings.get("profiles") {
+        Some(profiles) => profiles
+            .as_object()
+            .ok_or_else(|| {
+                io::Error::new(io::ErrorKind::InvalidData, "Expected a profiles object")
+            })?
+            .iter()
+            .collect(),
+        None => Vec::new(),
     };
-    let profiles = profiles
-        .as_object()
-        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "Expected a profiles object"))?;
-    let mut profiles: Vec<_> = profiles.iter().collect();
     profiles.sort_unstable_by_key(|(name, _)| *name);
     let default = settings.get("defaultProfile").and_then(Value::as_str);
     let mut rows = profiles
@@ -416,6 +436,22 @@ fn profiles(settings: &Value) -> io::Result<Vec<Value>> {
                 profile["ram_mib"] = json!(ram_mib);
             }
         }
+    }
+    if settings["githubActions"].is_object() {
+        rows.extend(
+            [
+                ("github-arm64", "aarch64-linux"),
+                ("github-x64", "x86_64-linux"),
+            ]
+            .map(|(profile, system)| {
+                json!({
+                    "name": profile,
+                    "provider": "github",
+                    "system": system,
+                    "default": false,
+                })
+            }),
+        );
     }
     Ok(rows)
 }

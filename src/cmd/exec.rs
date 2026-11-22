@@ -24,8 +24,16 @@ impl Drop for Cleanup<'_> {
             return;
         }
         let ctx = self.ctx;
-        let remote = ["down", &self.name, "--owner", &ctx.owner()];
-        let _ = ctx.muted(|| state::remote_quiet(ctx, &remote));
+        let owner = ctx.owner();
+        let remote = ["down", &self.name, "--owner", &owner];
+        let request: &[&str] = match state::github_id(&self.name) {
+            Some(id) => &["github-down", id, &owner],
+            None => &remote,
+        };
+        if !matches!(ctx.muted(|| state::remote_quiet(ctx, request)), Ok(0)) {
+            ctx.err(&format!("Could not delete {}", self.name));
+            return;
+        }
         state::forget(ctx, &self.name);
         ctx.err(&paint::ok_line(ctx, &format!("deleted {}", self.name)));
     }
@@ -156,7 +164,8 @@ pub fn cmd_exec(ctx: &Ctx, args: &[String]) -> R {
         ctx.err(&format!("{} synced {item}", paint(ctx, "32", "✔")));
     }
 
-    let login = format!("agent@{ip}");
+    let user = info["user"].as_str().unwrap_or("agent");
+    let login = format!("{user}@{ip}");
     let mut ssh = Command::new("ssh");
     // OpenSSH joins command words with spaces before the remote shell parses
     // them. Preserve that command string inside the job wrapper.

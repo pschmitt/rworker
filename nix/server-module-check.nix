@@ -10,8 +10,15 @@ let
       serverModule
       {
         system.stateVersion = "25.11";
+        security.acme.acceptTerms = true;
+        security.acme.defaults.email = "admin@example.com";
         services.rworker = {
           enable = true;
+          githubActions = {
+            enable = true;
+            serverName = "runner.example.com";
+            authorizedKeysFile = "/run/secrets/github-relay-authorized-keys";
+          };
           builderGateway = {
             enable = true;
             authorizedKeysFile = "/run/secrets/builder-authorized-keys";
@@ -75,6 +82,10 @@ assert services."rworker-builder@".serviceConfig.StandardOutput == "socket";
 assert services."rworker-builder@".serviceConfig.StandardError == "journal";
 assert pkgs.lib.hasSuffix ''"7200" "300" "-"'' services."rworker-builder@".serviceConfig.ExecStart;
 assert timers.rworker-builder-reap.timerConfig.OnUnitInactiveSec == "1m";
+assert services.rworker-github-api.serviceConfig.StateDirectory == "rworker-github";
+assert timers.rworker-github-reap.timerConfig.OnUnitInactiveSec == "1m";
+assert config.services.nginx.virtualHosts."runner.example.com".forceSSL;
+assert pkgs.lib.hasInfix "PermitListen 127.0.0.1:*" config.services.openssh.extraConfig;
 assert config.nix.distributedBuilds;
 assert (builtins.head config.nix.buildMachines).protocol == "ssh-ng";
 pkgs.runCommand "rworker-server-module-check" { } ''
@@ -83,6 +94,8 @@ pkgs.runCommand "rworker-server-module-check" { } ''
   test -e ${config.systemd.units."rworker-inventory.service".unit}
   test -e ${config.systemd.units."rworker-inventory-api.service".unit}
   test -e ${config.systemd.units."rworker-reaper.service".unit}
+  test -e ${config.systemd.units."rworker-github-api.service".unit}
+  test -e ${config.systemd.units."rworker-github-reap.timer".unit}
   test -e ${config.systemd.units."nixbot-autoscaler.service".unit}
   test -e ${config.systemd.units."rworker-log-cache.service".unit}
   test -e ${config.systemd.units."rworker-job-events.service".unit}

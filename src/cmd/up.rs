@@ -179,6 +179,53 @@ fn need(info: &Value, field: &str) -> R<String> {
 
 /// Create a worker. With `capture` (exec), the JSON is returned instead of
 /// printed, as `JSON=1 cmd_up` in a command substitution.
+fn github_up(ctx: &Ctx, profile: &str, ttl: &str, key_file: &str, topic: &str) -> R<Value> {
+    let key = std::fs::read_to_string(key_file).map_err(|error| {
+        ctx.err(&format!("Read SSH public key {key_file}: {error}"));
+        Fail(2)
+    })?;
+    let owner = ctx.owner();
+    let raw = state::remote(ctx, &["github-up", profile, ttl, key.trim(), &owner, topic])?;
+    let initial: Value = serde_json::from_str(&raw).map_err(|_| Fail(1))?;
+    let id = need(&initial, "id")?;
+    let name = format!("gha-{id}");
+    ctx.err(&format!("Waiting for GitHub worker {name}"));
+    let expires = epoch(&initial["expires_at"]);
+
+    let ready = (|| {
+        while crate::time::now() < expires {
+            let raw = state::remote(ctx, &["github-status", &id])?;
+            let lease: Value = serde_json::from_str(&raw).map_err(|_| Fail(1))?;
+            match lease["state"].as_str() {
+                Some("ready") => {
+                    let output = json!({
+                        "name": name,
+                        "ip": name,
+                        "user": "rworker-build",
+                        "kind": "adhoc",
+                        "provider": "github",
+                        "profile": profile,
+                        "expires_at": expires,
+                        "github_port": lease["endpoint"]["port"],
+                        "host_key": lease["endpoint"]["host_key"],
+                        "kvm": lease["kvm"],
+                    });
+                    state::remember_github(ctx, &name, &output)?;
+                    return Ok(output);
+                }
+                Some("ended" | "cancelling" | "dispatch_unknown") => break,
+                _ => std::thread::sleep(Duration::from_secs(3)),
+            }
+        }
+        ctx.err(&format!("GitHub worker {name} did not become ready"));
+        Err(Fail(1))
+    })();
+    if ready.is_err() {
+        let _ = state::remote_quiet(ctx, &["github-down", &id, &owner]);
+    }
+    ready
+}
+
 pub fn up(ctx: &Ctx, args: &[String], capture: bool) -> R<Option<String>> {
     let key_file = ctx.key_file();
     let mut login = false;
@@ -223,6 +270,49 @@ pub fn up(ctx: &Ctx, args: &[String], capture: bool) -> R<Option<String>> {
             other => rest.push(other.to_string()),
         }
         i += 1;
+    }
+    let github_profile = rest
+        .windows(2)
+        .filter(|pair| pair[0] == "--profile")
+        .map(|pair| pair[1].as_str())
+        .chain(rest.iter().filter_map(|arg| arg.strip_prefix("--profile=")))
+        .last()
+        .and_then(|profile| match profile {
+            "github-arm64" => Some("linux-arm64"),
+            "github-x64" => Some("linux-x64"),
+            _ => None,
+        });
+    if let Some(profile) = github_profile {
+        if nix_cache == Some(true) || nix_auth == Some(true) {
+            ctx.err("GitHub workers do not accept Nix cache credentials");
+            return Err(Fail(2));
+        }
+        let ttl = rest
+            .windows(2)
+            .filter(|pair| pair[0] == "--ttl")
+            .map(|pair| pair[1].as_str())
+            .chain(rest.iter().filter_map(|arg| arg.strip_prefix("--ttl=")))
+            .last()
+            .unwrap_or("30m");
+        let output = github_up(ctx, profile, ttl, &key_file, &topic)?;
+        if capture {
+            return Ok(Some(jq::compact(&output)));
+        }
+        let name = need(&output, "name")?;
+        if ctx.json.get() {
+            crate::ctx::json_out(ctx, &jq::compact(&output));
+        } else {
+            paint::ok(ctx, &format!("{name} is READY"));
+        }
+        if login {
+            let target = if login_user.is_empty() {
+                name
+            } else {
+                format!("{login_user}@{name}")
+            };
+            super::files::cmd_ssh(ctx, &[target])?;
+        }
+        return Ok(None);
     }
     let meta = crate::creator::meta(&topic, &agent_id);
     if topic.is_empty() && !quiet_topic_warning {

@@ -13,3 +13,7 @@ Actions:
   niks3-token   Issue a fresh push token for a worker.
   reap          Reconcile expired ad-hoc workers once. --dry-run reports deletions without writes.
   autoscale     Reconcile the nixbot build pool continuously.
+  github-up PROFILE TTL PUBLIC_KEY OWNER TOPIC  Dispatch a GitHub Actions lease.
+  github-status ID       Reconcile a GitHub Actions lease.
+  github-down ID OWNER         Request cancellation of a GitHub Actions lease.
+  github-reap             Reconcile all GitHub Actions leases.

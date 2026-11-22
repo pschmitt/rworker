@@ -190,6 +190,20 @@ pub fn remember_created(ctx: &Ctx, name: &str, info: &Value) -> R {
     append_known_host(ctx, &format!("{ip} {key}"))
 }
 
+pub fn remember_github(ctx: &Ctx, name: &str, info: &Value) -> R {
+    fs::create_dir_all(&ctx.state_dir).map_err(|_| Fail(1))?;
+    write_state(ctx, name, info)
+}
+
+pub fn github_id(name: &str) -> Option<&str> {
+    let id = name.strip_prefix("gha-")?;
+    (id.len() == 32
+        && id
+            .bytes()
+            .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b)))
+    .then_some(id)
+}
+
 /// Fetch a worker this host did not create (another host's, or nixbot's
 /// pool) from the control host, pin its host key and remember it.
 pub fn adopt(ctx: &Ctx, name: &str) -> R {
@@ -211,6 +225,9 @@ pub fn adopt(ctx: &Ctx, name: &str) -> R {
             ),
         );
         return Err(Fail(1));
+    }
+    if info["provider"] == "github" {
+        return remember_github(ctx, name, info);
     }
     // agent's keys are the creator's; everyone else logs in as themselves.
     let mut user = ctx.user.clone();
@@ -306,6 +323,9 @@ fn ssh_port_open(ip: &str, timeout: Duration) -> bool {
 pub fn worker_ip(ctx: &Ctx, name: &str) -> R<String> {
     worker_field(ctx, name, "ip").map_err(|_| Fail(1))?;
     let mut state = read_state(ctx, name).map_err(|_| Fail(1))?;
+    if state["provider"] == "github" {
+        return Ok(name.to_owned());
+    }
     // A state file from before the overlays has only the recorded address:
     // ask the control host once.
     if !jq::truthy(jq::get(&state, "ips")) {
@@ -381,6 +401,26 @@ pub fn ssh_opts(ctx: &Ctx, name: &str) -> Vec<String> {
         "-o".to_string(),
         "BatchMode=yes".to_string(),
     ];
+    if github_id(name).is_some()
+        && let Ok(state) = read_state(ctx, name)
+        && let Some(port) = state["github_port"]
+            .as_u64()
+            .filter(|port| (1024..=65535).contains(port))
+    {
+        let target = format!("127.0.0.1:{port}");
+        let proxy = proc::quote_words(&[
+            "ssh",
+            "-q",
+            "-o",
+            "BatchMode=yes",
+            "-W",
+            &target,
+            "--",
+            &ctx.control_host,
+        ])
+        .replace('%', "%%");
+        options.extend(["-o".into(), format!("ProxyCommand={proxy}")]);
+    }
     if let Some(identity) =
         std::env::var_os("RWORKER_IDENTITY_FILE").filter(|path| !path.is_empty())
     {
@@ -444,6 +484,16 @@ pub fn rsync_e(opts: &[String]) -> String {
     let mut s = "ssh".to_string();
     // "ssh ${opts[*]}": a space even when there are no options.
     s.push(' ');
-    s.push_str(&opts.join(" "));
+    let args: Vec<_> = opts
+        .iter()
+        .map(|arg| {
+            if arg.contains(char::is_whitespace) || arg.contains(['\'', '"']) {
+                format!("\"{}\"", arg.replace('"', "\"\""))
+            } else {
+                arg.clone()
+            }
+        })
+        .collect();
+    s.push_str(&args.join(" "));
     s
 }

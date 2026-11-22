@@ -82,9 +82,9 @@ flag setup --dry-run only show what would be pushed
 flag setup -n short for --dry-run
 flag up -l=user log in as this user (with --ssh; default agent)
 flag up --topic=topic what the worker is for (none unless given)
-flag up --profile=profile worker profile (standard, browser-daemon or large-builder)
+flag up --profile=profile worker profile (including github-arm64 and github-x64)
 flag exec --topic=topic what the worker is for (none unless given)
-flag exec --profile=profile worker profile (standard, browser-daemon or large-builder)
+flag exec --profile=profile worker profile (including github-arm64 and github-x64)
 flag machines -o=format output format (json or wide)
 flag machines --all include retired workers from history
 flag machines -A short for --all

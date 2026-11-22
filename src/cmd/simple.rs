@@ -25,6 +25,9 @@ pub fn cmd_down(ctx: &Ctx, args: &[String]) -> R {
     if args.get(1).map(String::as_str) == Some("--force") {
         remote.push("--force".into());
     }
+    if let Some(id) = state::github_id(name) {
+        remote = vec!["github-down".into(), id.into(), ctx.owner()];
+    }
     if state::remote_quiet(ctx, &remote)? != 0 {
         return Err(Fail(1));
     }

@@ -18,3 +18,5 @@ Status messages go to stderr, the command's output to stdout.
 Examples:
   __ME__ exec --sync .:src -- 'cd src && nix develop -c cargo build --release'
   __ME__ exec --flavor s1.2xlarge --sync .:app --fetch app/out:./out -- 'cd app && ./build.sh'
+
+GitHub-hosted profiles: --profile github-arm64 or --profile github-x64.

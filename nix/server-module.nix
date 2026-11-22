@@ -32,6 +32,9 @@ let
       null;
   apiSocket = "/run/rworker-inventory-api/http.sock";
   apiGroup = if cfg.api.https == null then cfg.group else "rworker-inventory-api";
+  githubAccount = "rworker-github-relay";
+  githubApiGroup = "rworker-github-api";
+  githubApiSocket = "/run/rworker-github-api/http.sock";
   runtimeTools = [
     pkgs.coreutils
     pkgs.curl
@@ -156,6 +159,19 @@ in
           };
         }
       );
+    };
+    githubActions = {
+      enable = lib.mkEnableOption "GitHub Actions workers and their SSH relay";
+      serverName = lib.mkOption {
+        type = lib.types.str;
+        example = "rworker-agent.example.com";
+        description = "Public HTTPS hostname for GitHub runner registration.";
+      };
+      authorizedKeysFile = lib.mkOption {
+        type = lib.types.str;
+        example = "/run/secrets/rworker-github-relay-keys";
+        description = "Runtime authorized_keys file readable by the GitHub relay account.";
+      };
     };
     builderGateway = {
       enable = lib.mkEnableOption "the on-demand SSH Nix builder gateway";
@@ -503,6 +519,110 @@ in
               StandardError = "journal";
             };
           };
+        };
+      };
+    })
+    (lib.mkIf cfg.githubActions.enable {
+      assertions = [
+        {
+          assertion = cfg.enable;
+          message = "services.rworker.githubActions requires services.rworker.enable.";
+        }
+        {
+          assertion =
+            lib.hasPrefix "/" cfg.githubActions.authorizedKeysFile
+            && builtins.match "[^[:space:]]+" cfg.githubActions.authorizedKeysFile != null;
+          message = "The rworker GitHub relay authorizedKeysFile must be an absolute runtime path without whitespace.";
+        }
+      ];
+      users = {
+        groups = {
+          ${githubAccount} = { };
+          ${githubApiGroup} = { };
+        };
+        users = {
+          ${githubAccount} = {
+            isSystemUser = true;
+            group = githubAccount;
+            shell = pkgs.bash;
+          };
+          ${config.services.nginx.user}.extraGroups = [ githubApiGroup ];
+        };
+      };
+      services.openssh = {
+        enable = true;
+        extraConfig = ''
+          Match User ${githubAccount}
+            AuthorizedKeysFile ${cfg.githubActions.authorizedKeysFile}
+            AuthenticationMethods publickey
+            MaxSessions 0
+            AllowTcpForwarding remote
+            AllowStreamLocalForwarding no
+            GatewayPorts no
+            PermitListen 127.0.0.1:*
+            PermitTunnel no
+            PermitTTY no
+            PermitUserRC no
+          Match All
+        '';
+      };
+      services.nginx = {
+        enable = true;
+        virtualHosts.${cfg.githubActions.serverName} = {
+          forceSSL = true;
+          enableACME = true;
+          locations = {
+            "/".return = "404";
+            "/v1/agent/jobs/" = {
+              proxyPass = "http://unix:${githubApiSocket}:";
+              extraConfig = "client_max_body_size 4k;";
+            };
+          };
+        };
+      };
+      systemd.services = {
+        rworker-github-api = {
+          description = "rworker GitHub Actions runner API";
+          wantedBy = [ "multi-user.target" ];
+          serviceConfig = {
+            User = cfg.user;
+            Group = githubApiGroup;
+            SupplementaryGroups = [ cfg.group ];
+            RuntimeDirectory = "rworker-github-api";
+            RuntimeDirectoryMode = "0750";
+            StateDirectory = "rworker-github";
+            StateDirectoryMode = "0700";
+            UMask = "0077";
+            Restart = "on-failure";
+            ExecStartPre = "${pkgs.coreutils}/bin/rm -f ${githubApiSocket}";
+            ExecStart = command [
+              "server"
+              cfg.settingsFile
+              "github-agent-api"
+              githubApiSocket
+            ];
+          };
+        };
+        rworker-github-reap = {
+          description = "Reconcile GitHub Actions worker leases";
+          after = [ "rworker-github-api.service" ];
+          serviceConfig = {
+            Type = "oneshot";
+            User = cfg.user;
+            Group = cfg.group;
+            ExecStart = command [
+              "server"
+              cfg.settingsFile
+              "github-reap"
+            ];
+          };
+        };
+      };
+      systemd.timers.rworker-github-reap = {
+        wantedBy = [ "timers.target" ];
+        timerConfig = {
+          OnBootSec = "1m";
+          OnUnitInactiveSec = "1m";
         };
       };
     })

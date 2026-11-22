@@ -1,0 +1,41 @@
+name: rworker job
+run-name: rworker job ${{ inputs.job_id }}
+
+on:
+  workflow_dispatch:
+    inputs:
+      job_id:
+        description: Controller assignment ID
+        required: true
+        type: string
+      profile:
+        description: Native Linux runner profile
+        required: true
+        type: choice
+        options:
+          - linux-arm64
+          - linux-x64
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  build:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ${{ inputs.profile == 'linux-arm64' && 'ubuntu-24.04-arm' || 'ubuntu-24.04' }}
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: pschmitt/ci-workflows/.github/actions/nix-setup@main
+      - name: Run controller assignment
+        env:
+          RWORKER_AGENT_URL: ${{ vars.RWORKER_AGENT_URL }}
+          RWORKER_JOB_ID: ${{ inputs.job_id }}
+          RWORKER_GATEWAY: ${{ vars.RWORKER_GATEWAY }}
+          RWORKER_GATEWAY_KNOWN_HOSTS: ${{ vars.RWORKER_GATEWAY_KNOWN_HOSTS }}
+          RWORKER_GATEWAY_KEY: ${{ secrets.RWORKER_GATEWAY_KEY }}
+          RWORKER_PROFILE: ${{ inputs.profile }}
+        run: python3 scripts/github-job-agent.py
