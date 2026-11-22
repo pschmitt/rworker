@@ -6,6 +6,7 @@ use super::create::{self, After, CreateWorker};
 use super::proc::{self, Msg, Stream};
 use crate::ctx::Ctx;
 use crate::jq::{self, get};
+use ratatui::crossterm::cursor::Show;
 use ratatui::crossterm::event::{
     DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers,
     MouseButton, MouseEvent, MouseEventKind,
@@ -1681,6 +1682,7 @@ pub fn run(ctx: &Ctx, interval: Duration) -> std::io::Result<()> {
                 }
                 execute!(std::io::stdout(), DisableMouseCapture)?;
                 ratatui::restore();
+                execute!(std::io::stdout(), Show)?;
                 let status = proc::interactive(&args);
                 if !matches!(status, Ok(Some(0))) {
                     use std::io::Write;
@@ -1713,6 +1715,7 @@ pub fn run(ctx: &Ctx, interval: Duration) -> std::io::Result<()> {
     })();
     drop(mouse);
     ratatui::restore();
+    let _ = execute!(std::io::stdout(), Show);
     app.preview = None;
     // Stop the streams before the process ends.
     app.stack.clear();

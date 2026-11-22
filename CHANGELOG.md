@@ -41,6 +41,8 @@ The Rust client and controller replace the original Bash client.
 
 ### TUI
 
+- Restore the terminal cursor when handing off to SSH or exiting the TUI.
+
 - Show live SSH worker provisioning stages and elapsed time in the footer.
 
 - Provision SSH workers in the background with a status spinner, then open SSH when ready.
