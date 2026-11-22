@@ -215,7 +215,10 @@ pub struct Confirm {
 
 /// What a background action is for.
 enum Pending {
-    Status(String),
+    Status {
+        label: String,
+        deleting: Option<String>,
+    },
     JobList,
     History,
     LogPreview(u64),
@@ -299,7 +302,7 @@ impl App {
     pub fn pending_actions(&self) -> usize {
         self.pending
             .values()
-            .filter(|p| matches!(p, Pending::Status(_)))
+            .filter(|p| matches!(p, Pending::Status { .. }))
             .count()
     }
 
@@ -347,8 +350,26 @@ impl App {
         let label = label.into();
         let id = self.id();
         self.say(format!("{label}…"), false);
-        self.pending.insert(id, Pending::Status(label));
+        let deleting = if args.first().is_some_and(|arg| arg == "down") {
+            args.get(1).cloned()
+        } else {
+            None
+        };
+        self.pending.insert(id, Pending::Status { label, deleting });
         proc::action(id, args, self.tx.clone());
+    }
+
+    pub(super) fn worker_status<'a>(&self, worker: &'a Worker) -> &'a str {
+        if !worker.retired
+            && !matches!(worker.status.as_str(), "DELETING" | "DELETED")
+            && self.pending.values().any(|action| {
+                matches!(action, Pending::Status { deleting: Some(name), .. } if name == &worker.name)
+            })
+        {
+            "DOWN…"
+        } else {
+            &worker.status
+        }
     }
 
     /// Open a text view on the output of `rworker ARGS`.
@@ -651,7 +672,7 @@ impl App {
                 }
             }
             Msg::Done { id, ok, out, err } => match self.pending.remove(&id) {
-                Some(Pending::Status(label)) => {
+                Some(Pending::Status { label, .. }) => {
                     if ok {
                         let detail = proc::last_line(&out);
                         if detail.is_empty() || detail.starts_with('{') || detail.starts_with('[') {
@@ -1332,15 +1353,8 @@ impl App {
                 Err(e) => self.say(e, true),
             },
             PromptKind::Start(w) if !input.is_empty() => {
-                let id = self.id();
-                self.pending
-                    .insert(id, Pending::Status(format!("start on {w}")));
-                self.say(format!("start on {w}…"), false);
-                proc::action(
-                    id,
-                    vec!["start".into(), w, "--".into(), input],
-                    self.tx.clone(),
-                );
+                let label = format!("start on {w}");
+                self.act(vec!["start".into(), w, "--".into(), input], label);
                 self.reload_jobs();
             }
             PromptKind::Command if !input.is_empty() => match split_words(&input) {

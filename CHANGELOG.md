@@ -6,6 +6,9 @@ The Rust client and controller replace the original Bash client.
 
 ### TUI
 
+- Show pending down requests in the worker status column and display the full
+  `DELETING` status in bold red.
+
 - Toggle chrome in every TUI view with `n` and start a job with `c`.
 
 - Use `c` to create a worker and `C` to claim one.

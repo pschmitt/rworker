@@ -15,6 +15,7 @@ use ratatui::widgets::{Block, BorderType, Cell, Clear, Paragraph, Row, Table, Wr
 use std::time::Duration;
 use unicode_width::UnicodeWidthStr;
 
+const STATUS_WIDTH: u16 = 8;
 const ACCENT: Color = Color::Cyan;
 const SPINNER: &[&str] = &["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
 
@@ -103,7 +104,9 @@ fn status_style(status: &str) -> Style {
     match status {
         "ACTIVE" | "READY" => Style::new().fg(Color::Green),
         "BUILD" | "BUILDING" | "BOOTING" | "REBOOT" => Style::new().fg(Color::Yellow),
-        "ERROR" | "DELETED" | "SHUTOFF" => Style::new().fg(Color::Red).bold(),
+        "ERROR" | "DOWN…" | "DELETING" | "DELETED" | "SHUTOFF" => {
+            Style::new().fg(Color::Red).bold()
+        }
         _ => Style::new(),
     }
 }
@@ -401,7 +404,7 @@ impl App {
                 if self.refreshed.is_none() && !self.stale {
                     "loading…"
                 } else {
-                    "No workers. Press n to create one."
+                    "No workers. Press c to create one."
                 }
             } else {
                 "Nothing matches the filter (esc clears it)."
@@ -420,6 +423,7 @@ impl App {
         let rows: Vec<Row> = visible
             .iter()
             .map(|w| {
+                let status = self.worker_status(w);
                 let (exp, urg) = w.expiry(now);
                 let exp_style = match urg {
                     Urgency::Now => Style::new().fg(Color::Red),
@@ -443,11 +447,11 @@ impl App {
                         Style::new().fg(ACCENT),
                     )),
                     Cell::from(Span::styled(
-                        w.status.clone(),
+                        status.to_owned(),
                         if w.retired {
                             dim()
                         } else {
-                            status_style(&w.status)
+                            status_style(status)
                         },
                     )),
                     Cell::from(agent),
@@ -477,7 +481,7 @@ impl App {
             .collect();
         let name_cap = (table_area.width / 3)
             .clamp(16, 28)
-            .min(table_area.width.saturating_sub(11).max(4));
+            .min(table_area.width.saturating_sub(STATUS_WIDTH + 4).max(4));
         let name_w = visible
             .iter()
             .map(|w| w.name.width() + if self.icons { 2 } else { 0 })
@@ -499,7 +503,7 @@ impl App {
             .clamp(5, 16) as u16;
         let mut widths = vec![
             Constraint::Length(name_w),
-            Constraint::Length(7),
+            Constraint::Length(STATUS_WIDTH),
             Constraint::Length(agent_w),
             Constraint::Fill(1),
             Constraint::Length(11),
