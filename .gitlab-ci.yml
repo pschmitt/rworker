@@ -17,7 +17,9 @@ variables:
   RWORKER_PROFILE: $[[ inputs.profile ]]
 
 rworker-lease:
-  image: $RWORKER_JOB_IMAGE
+  image:
+    name: $RWORKER_JOB_IMAGE
+    pull_policy: always
   rules:
     - if: '$RWORKER_PROFILE == "gl-linux-x64-lease"'
       variables:
