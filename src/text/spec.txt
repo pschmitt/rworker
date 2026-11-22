@@ -134,7 +134,7 @@ flag tui --interval=seconds refresh interval of the worker list
 flag tui -n=interval short for --interval
 values duration 30m 1h 2h 4h 8h 24h
 values flavor s1.large s1.xlarge s1.2xlarge
-values profile standard browser-daemon large-builder
+values profile standard browser-daemon large-builder github-arm64 github-x64
 values size 100 150 250 500
 values path
 values format json wide

@@ -6,6 +6,8 @@ The Rust client and controller replace the original Bash client.
 
 ### GitHub Actions
 
+- Complete the GitHub runner profiles in shell commands.
+
 - Show GitHub’s published CPU, RAM, and disk allocations in the worker profile list.
 
 - Keep one-shot build logs after the GitHub worker closes when controller log archiving is enabled.
