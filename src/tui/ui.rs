@@ -54,12 +54,13 @@ pub(super) fn log_size(total: u16, requested: u16, direction: Direction) -> u16 
 
 fn workers_layout(
     area: Rect,
+    mut status: Rect,
     has_selection: bool,
     log_width: Option<u16>,
     log_height: Option<u16>,
-) -> (Rect, WorkerPane) {
+) -> (Rect, WorkerPane, Rect) {
     if !has_selection {
-        return (area, WorkerPane::Hidden);
+        return (area, WorkerPane::Hidden, status);
     }
     if area.width >= 116 && area.height >= 10 {
         let sidebar_width = log_size(
@@ -67,10 +68,12 @@ fn workers_layout(
             log_width.unwrap_or_else(|| (area.width / 3).clamp(36, 56)),
             Direction::Horizontal,
         );
-        let [table, details] =
+        let [table, mut details] =
             Layout::horizontal([Constraint::Fill(1), Constraint::Length(sidebar_width)])
                 .areas(area);
-        (table, WorkerPane::Sidebar(details))
+        status.width = table.width;
+        details.height += status.height;
+        (table, WorkerPane::Sidebar(details), status)
     } else if area.height >= 14 {
         let height = log_size(
             area.height,
@@ -79,9 +82,9 @@ fn workers_layout(
         );
         let [table, details] =
             Layout::vertical([Constraint::Fill(1), Constraint::Length(height)]).areas(area);
-        (table, WorkerPane::Below(details))
+        (table, WorkerPane::Below(details), status)
     } else {
-        (area, WorkerPane::Hidden)
+        (area, WorkerPane::Hidden, status)
     }
 }
 
@@ -202,16 +205,16 @@ fn ago(d: Duration) -> String {
 
 impl App {
     pub fn draw(&mut self, f: &mut Frame) {
-        let [body, status] =
-            Layout::vertical([Constraint::Fill(1), Constraint::Length(1)]).areas(f.area());
         let plain = self.plain;
-        let body = if plain { f.area() } else { body };
+        let [body, mut status] =
+            Layout::vertical([Constraint::Fill(1), Constraint::Length(u16::from(!plain))])
+                .areas(f.area());
         self.mouse_table = None;
         self.mouse_text = None;
         self.log_divider = None;
         let mut stack = std::mem::take(&mut self.stack);
         match stack.last_mut() {
-            None => self.draw_workers(f, body),
+            None => status = self.draw_workers(f, body, status),
             Some(Sub::Jobs(j)) => {
                 self.mouse_table = Some(borderless_rows(body));
                 draw_jobs(f, body, j);
@@ -363,12 +366,13 @@ impl App {
         f.render_widget(Line::from(right).alignment(Alignment::Right), r);
     }
 
-    fn draw_workers(&mut self, f: &mut Frame, area: Rect) {
+    fn draw_workers(&mut self, f: &mut Frame, area: Rect, status: Rect) -> Rect {
         let now = crate::time::now() as f64;
         let selected = self.selected().map(|w| w.name.clone());
         let visible = self.visible();
-        let (table_area, details) = workers_layout(
+        let (table_area, details, status) = workers_layout(
             area,
+            status,
             selected.is_some() && !visible.is_empty(),
             self.log_width,
             self.log_height,
@@ -399,7 +403,7 @@ impl App {
                 Paragraph::new(Line::styled(msg, dim())).alignment(Alignment::Center),
                 table_area,
             );
-            return;
+            return status;
         }
 
         let mut header = COLUMNS.to_vec();
@@ -534,7 +538,7 @@ impl App {
         let (pane, border, direction) = match details {
             WorkerPane::Sidebar(pane) => (pane, Rect { width: 1, ..pane }, Direction::Horizontal),
             WorkerPane::Below(pane) => (pane, Rect { height: 1, ..pane }, Direction::Vertical),
-            WorkerPane::Hidden => return,
+            WorkerPane::Hidden => return status,
         };
         self.log_divider = Some(LogDivider {
             area,
@@ -560,6 +564,7 @@ impl App {
                 area,
             );
         }
+        status
     }
 
     fn draw_help(&mut self, f: &mut Frame) {
@@ -906,14 +911,18 @@ mod tests {
     #[test]
     fn details_follow_terminal_geometry() {
         let area = Rect::new(0, 1, 120, 28);
-        let (table, WorkerPane::Sidebar(sidebar)) = workers_layout(area, true, None, None) else {
+        let (table, WorkerPane::Sidebar(sidebar), _) =
+            workers_layout(area, Rect::default(), true, None, None)
+        else {
             panic!("expected sidebar on wide terminal");
         };
         assert_eq!(sidebar.x, table.right());
         assert_eq!(sidebar.height, table.height);
 
         let area = Rect::new(0, 1, 72, 24);
-        let (table, WorkerPane::Below(details)) = workers_layout(area, true, None, None) else {
+        let (table, WorkerPane::Below(details), _) =
+            workers_layout(area, Rect::default(), true, None, None)
+        else {
             panic!("expected details under the table");
         };
         assert_eq!(details.y, table.bottom());
@@ -921,25 +930,51 @@ mod tests {
 
         let area = Rect::new(0, 1, 72, 10);
         assert!(
-            matches!(workers_layout(area, true, None, None), (table, WorkerPane::Hidden) if table == area)
+            matches!(workers_layout(area, Rect::default(), true, None, None), (table, WorkerPane::Hidden, _) if table == area)
         );
         let area = Rect::new(0, 1, 160, 28);
         assert!(
-            matches!(workers_layout(area, false, None, None), (table, WorkerPane::Hidden) if table == area)
+            matches!(workers_layout(area, Rect::default(), false, None, None), (table, WorkerPane::Hidden, _) if table == area)
         );
+    }
+
+    #[test]
+    fn status_sits_under_the_table_when_logs_are_beside_it() {
+        for width in [120, 160] {
+            let body = Rect::new(2, 3, width, 20);
+            let status = Rect::new(body.x, body.bottom(), body.width, 1);
+            let (table, WorkerPane::Sidebar(logs), status) =
+                workers_layout(body, status, true, Some(42), None)
+            else {
+                panic!("expected sidebar");
+            };
+            assert_eq!(status, Rect::new(table.x, table.bottom(), table.width, 1));
+            assert_eq!(logs.x, status.right());
+            assert_eq!(logs.bottom(), status.bottom());
+        }
+        let body = Rect::new(2, 3, 72, 20);
+        let status = Rect::new(body.x, body.bottom(), body.width, 1);
+        let (_, WorkerPane::Below(logs), footer) = workers_layout(body, status, true, None, None)
+        else {
+            panic!("expected stacked logs");
+        };
+        assert_eq!(footer, status);
+        assert_eq!(logs.bottom(), footer.y);
     }
 
     #[test]
     fn log_pane_sizes_clamp_without_crowding_out_workers() {
         let area = Rect::new(0, 1, 120, 28);
-        let (table, WorkerPane::Sidebar(logs)) = workers_layout(area, true, Some(100), Some(4))
+        let (table, WorkerPane::Sidebar(logs), _) =
+            workers_layout(area, Rect::default(), true, Some(100), Some(4))
         else {
             panic!("expected sidebar");
         };
         assert_eq!((table.width, logs.width), (36, 84));
 
         let area = Rect::new(0, 1, 72, 24);
-        let (table, WorkerPane::Below(logs)) = workers_layout(area, true, Some(100), Some(22))
+        let (table, WorkerPane::Below(logs), _) =
+            workers_layout(area, Rect::default(), true, Some(100), Some(22))
         else {
             panic!("expected stacked logs");
         };

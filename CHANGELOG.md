@@ -41,6 +41,8 @@ The Rust client and controller replace the original Bash client.
 
 ### TUI
 
+- Keep worker status under the table when logs are shown alongside it.
+
 - Move status to the bottom and show shortcuts in help for the current view.
 
 - Add a worker creation form with profile resources and SSH options.
