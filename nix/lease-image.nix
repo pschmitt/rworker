@@ -2,11 +2,13 @@
   bashInteractive,
   cacert,
   coreutils,
+  curl,
   dockerTools,
   git,
   gnugrep,
   nix,
   openssh,
+  openssl,
   procps,
   python3,
   rsync,
@@ -19,23 +21,26 @@ dockerTools.buildLayeredImage {
     bashInteractive
     cacert
     coreutils
+    curl
     dockerTools.binSh
     dockerTools.usrBinEnv
     git
     gnugrep
     nix
     openssh
+    openssl.bin
     procps
     python3
     rsync
   ];
   extraCommands = ''
-    mkdir -p etc/nix etc/ssh etc/rworker home/rworker-build root tmp var/empty usr/sbin
+    mkdir -p etc/nix etc/ssh etc/ssl/certs etc/rworker home/rworker-build root tmp var/empty usr/sbin
     touch etc/rworker/lease-image
     chmod 0700 root home/rworker-build
     chmod 1777 tmp
     chmod 0555 var/empty
     ln -s ${openssh}/bin/sshd usr/sbin/sshd
+    ln -s ca-bundle.crt etc/ssl/certs/ca-certificates.crt
     cat > etc/passwd <<'USERS'
     root:x:0:0:root:/root:/bin/bash
     rworker-build:x:1000:1000:Worker:/home/rworker-build:/bin/bash
@@ -68,6 +73,7 @@ dockerTools.buildLayeredImage {
     build-users-group = nixbld
     sandbox = false
     allowed-users = root rworker-build
+    ssl-cert-file = /etc/ssl/certs/ca-bundle.crt
     NIX
   '';
   fakeRootCommands = ''

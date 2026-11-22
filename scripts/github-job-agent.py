@@ -190,6 +190,7 @@ def prepare_sshd(paths, public_key):
     # The runner image may mark newly created passwordless accounts locked.
     # PAM permits public-key login while password-based methods stay disabled.
     sshd_config = paths / "sshd_config"
+    trust = " SSL_CERT_FILE=/etc/ssl/certs/ca-bundle.crt" if LEASE_IMAGE else ""
     sshd_config.write_text(
         f"""ListenAddress 127.0.0.1
 Port 22222
@@ -203,8 +204,7 @@ KbdInteractiveAuthentication no
 AuthenticationMethods publickey
 DisableForwarding yes
 PermitUserEnvironment no
-SetEnv XDG_CONFIG_HOME={pwd.getpwnam(BUILD_USER).pw_dir}/.config
-SetEnv PATH=/nix/var/nix/profiles/default/bin:/usr/local/bin:/usr/bin:/bin
+SetEnv XDG_CONFIG_HOME={pwd.getpwnam(BUILD_USER).pw_dir}/.config PATH=/nix/var/nix/profiles/default/bin:/usr/local/bin:/usr/bin:/bin{trust}
 AcceptEnv LANG LC_*
 Subsystem sftp internal-sftp
 """
@@ -310,6 +310,13 @@ def check_runtime(profile):
                     raise RuntimeError("Runtime SSH user mismatch")
                 if Path(output[1]).read_text().strip() != "ready":
                     raise RuntimeError("Runtime Nix build produced unexpected output")
+                if os.getenv("RWORKER_CHECK_HTTPS") == "1":
+                    subprocess.run([
+                        *ssh,
+                        "openssl version && curl -fLsS --max-time 15 "
+                        "https://channels.nixos.org/flake-registry.json >/dev/null "
+                        "&& nix registry list >/dev/null",
+                    ], check=True, timeout=30)
             finally:
                 if daemon.poll() is None:
                     daemon.terminate()
