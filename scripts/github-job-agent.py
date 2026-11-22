@@ -107,6 +107,14 @@ def start_ssh_worker(url, token, assignment):
             ["sudo", "-n", "install", "-m", "0644", authorized, authorized_path], check=True
         )
         subprocess.run(["sudo", "-n", "install", "-d", "-m", "0755", "/run/sshd"], check=True)
+        # pam_limits applies the session limits after sshd starts.
+        limits = paths / "limits"
+        limits.write_text(f"{BUILD_USER} - stack 65536\n")
+        subprocess.run(
+            ["sudo", "-n", "install", "-m", "0644", limits,
+             "/etc/security/limits.d/99-rworker-build.conf"],
+            check=True,
+        )
         # The runner image may mark newly created passwordless accounts locked.
         # PAM permits public-key login while password-based methods stay disabled.
         sshd_config = paths / "sshd_config"
@@ -130,10 +138,7 @@ Subsystem sftp internal-sftp
 """
         )
         with subprocess.Popen(
-            [
-                "sudo", "-n", "/usr/bin/prlimit", "--stack=67108864:67108864", "--",
-                "/usr/sbin/sshd", "-D", "-e", "-f", sshd_config,
-            ],
+            ["sudo", "-n", "/usr/sbin/sshd", "-D", "-e", "-f", sshd_config],
             stdin=subprocess.DEVNULL,
         ) as sshd:
             master = [

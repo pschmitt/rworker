@@ -6,6 +6,8 @@ The Rust client and controller replace the original Bash client.
 
 ### GitHub Actions
 
+- Apply the Nix stack limit through PAM for hosted worker logins.
+
 - Use the standard worker creation spinner for GitHub queues and SSH startup.
 
 - Cache profile lookups for GitHub runners and display only the observed
