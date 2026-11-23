@@ -542,7 +542,10 @@ function render() {
     return;
   }
   const test = filterTests[view]?.[state.filters[view]] || (() => true);
-  let visible = source.filter((row) => searchMatch(row, search) && test(row, now));
+  // Jobs also match their worker's topic and agent, as shown in the list.
+  const workerOf = view === "jobs" && search ? new Map((state.rows.workers || []).map((worker) => [worker.name, worker])) : null;
+  const searchable = (row) => workerOf ? { ...row, topic: workerOf.get(row.worker)?.topic, agent: workerOf.get(row.worker)?.agent } : row;
+  let visible = source.filter((row) => searchMatch(searchable(row), search) && test(row, now));
   if (view === "events") visible = visible.slice().reverse();
   const key = JSON.stringify([view, prefs.layout, state.filters[view], state.sort, state.tableSort, search, state.limit, state.selected?.name, Math.floor(now / 20), visible]);
   if (key === lastRenderKey) return;
@@ -888,9 +891,15 @@ function renderWorkerCards(visible, now) {
 function renderJobs(visible) {
   const container = el("div", "jobs-list");
   const sorted = visible.slice().sort((a, b) => Number(filterTests.jobs.active(b)) - Number(filterTests.jobs.active(a)));
+  // Jobs have no topic or agent of their own: show their worker's.
+  const workers = new Map((state.rows.workers || []).map((worker) => [worker.name, worker]));
   for (const row of sorted.slice(0, state.limit)) {
     const [tone, ic] = jobTone(row.state);
-    const link = el("a", "job-row" + (tone === "archived" ? " archived" : ""), icon(ic, "tone-" + (tone || "info")), el("span", "name", row.job), el("span", "worker", row.worker), jobPill(row.state));
+    const worker = workers.get(row.worker) || {};
+    const topic = el("span", "topic", worker.topic || "");
+    if (worker.topic) topic.title = worker.topic;
+    const link = el("a", "job-row" + (tone === "archived" ? " archived" : ""), icon(ic, "tone-" + (tone || "info")), el("span", "name", row.job),
+      topic, el("span", "agent", agentLabel(worker.agent)), el("span", "worker", row.worker), jobPill(row.state));
     link.href = workerHash({ name: row.worker }, row.job);
     link.dataset.worker = row.worker;
     link.dataset.job = row.job;
