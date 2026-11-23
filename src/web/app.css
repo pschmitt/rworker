@@ -386,6 +386,15 @@ select { height: 32px; padding: 0 28px 0 10px; border: 1px solid var(--line2); b
 .profiles { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 300px), 1fr)); gap: 14px; padding: 8px; }
 .profile-card { display: grid; gap: 12px; padding: 16px; border: 1px solid var(--line); border-radius: 14px; background: var(--s1); }
 .profile-card .specs { display: flex; flex-wrap: wrap; gap: 6px; }
+.profile-row { grid-template-columns: minmax(0, 1fr) auto; }
+.profile-row:hover { background: var(--hover); }
+.profile-open { display: grid; grid-template-columns: 34px minmax(0, 1fr); align-items: center; gap: 12px; min-width: 0; padding: 0; border: 0; background: none; color: inherit; font: inherit; text-align: left; cursor: pointer; }
+.profile-end { display: flex; align-items: center; gap: 10px; }
+.profile-end .specs { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 6px; }
+.profiles-table .ctr { grid-template-columns: 14px minmax(150px, 1.2fr) 130px 110px 70px 50px 70px 80px minmax(0, 1fr); }
+.profiles-table button.ctr { width: 100%; background: none; border-width: 0 0 1px; font: inherit; text-align: left; cursor: pointer; }
+.profiles-table button.ctr:hover { background: var(--hover); }
+@media (max-width: 760px) { .profile-end .specs { display: none; } }
 .tag { display: inline-flex; align-items: center; height: 22px; padding: 0 8px; border-radius: 999px; background: var(--s3); color: var(--mut); font-size: 11.5px; font-weight: 650; white-space: nowrap; }
 .tag.default { background: var(--acc-soft); color: var(--acc); }
 .profile-card .card-actions { padding-top: 0; border-top: 0; }

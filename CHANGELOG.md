@@ -4,6 +4,7 @@
 
 The Rust client and controller replace the original Bash client.
 
+- Lay out the web console's Profiles view by the layout setting too: a list (split), a sortable table (console) or cards; a click opens the profile details.
 - Lay out the web console's Jobs view like the Workers view: split (compact list beside the job's log), console (sortable table above it) or cards. Opening a job keeps you on Jobs (`#jobs/WORKER/JOB`), J/K move between jobs and Esc closes the job.
 - Show each job's worker topic and agent in the web console's Jobs list, under a sticky header row, and match them in its filter.
 - Show live registered jobs with an amber activity icon and pill (like running jobs and the sidebar's count) instead of a grey clock, and archived jobs muted (grey icon and name, outlined pill) in the web console.

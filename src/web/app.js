@@ -547,7 +547,8 @@ function render() {
   const searchable = (row) => workerOf ? { ...row, topic: workerOf.get(row.worker)?.topic, agent: workerOf.get(row.worker)?.agent } : row;
   let visible = source.filter((row) => searchMatch(searchable(row), search) && test(row, now));
   if (view === "events") visible = visible.slice().reverse();
-  const key = JSON.stringify([view, prefs.layout, state.filters[view], state.sort, state.tableSort, search, state.limit, state.selected?.name, Math.floor(now / 20), visible]);
+  const key = JSON.stringify([view, prefs.layout, state.filters[view], state.sort, state.tableSort, state.jobSort, state.profileSort, search, state.limit,
+    state.selected?.name, state.job, view === "jobs" ? (state.rows.workers || []).length : 0, Math.floor(now / 20), visible]);
   if (key === lastRenderKey) return;
   lastRenderKey = key;
   if (!visible.length) {
@@ -575,7 +576,10 @@ function render() {
       else renderJobs(visible);
       break;
     case "events": renderEvents(visible, now); break;
-    default: renderProfiles(visible);
+    default:
+      if (prefs.layout === "console" && !narrow.matches) renderProfileTable(visible);
+      else if (prefs.layout === "split") renderProfileList(visible);
+      else renderProfiles(visible);
   }
   $("inventory").scrollTop = scroll;
 }
@@ -1067,6 +1071,81 @@ function diskLabel(row) {
 
 function profileSpecs(row) {
   return [row.vcpus ? row.vcpus + " vCPU" : "", ramLabel(row), diskLabel(row)].filter(Boolean);
+}
+
+function profileProvider(row) {
+  return ciProviders[row.provider] || "OpenStack";
+}
+
+// Split layout: one row per profile, like the worker list.
+function renderProfileList(visible) {
+  const list = el("div", "worker-list profile-list");
+  for (const row of visible) {
+    const node = el("div", "row profile-row");
+    const open = el("button", "profile-open", profileTile(row), el("span", "ident",
+      el("span", "name-line", el("span", "name", row.name), row.default ? el("span", "tag default", "default") : null),
+      el("span", "sub", [profileProvider(row), row.flavor, row.arch, (row.image_tags || []).join(", ")].filter(Boolean).join(" · "))));
+    open.type = "button";
+    open.title = "Details of " + row.name;
+    open.addEventListener("click", () => openProfile(row));
+    const end = el("span", "profile-end", el("span", "specs", ...profileSpecs(row).map((spec) => el("span", "tag", spec))));
+    if (state.authenticated) end.append(iconButton("plus", "New " + row.name + " worker", () => form("create", null, { profile: row.name }), "btn sm icon"));
+    node.append(open, end);
+    list.append(node);
+  }
+  $("results").replaceChildren(list);
+}
+
+// Console layout: a sortable table: [label, key, value].
+const profileColumns = [
+  ["PROFILE", "name", (row) => row.name],
+  ["PROVIDER", "provider", (row) => profileProvider(row)],
+  ["FLAVOR", "flavor", (row) => row.flavor || ""],
+  ["ARCH", "arch", (row) => row.arch || ""],
+  ["VCPU", "vcpus", (row) => row.vcpus ?? ""],
+  ["RAM", "ram", (row) => row.ram_gb != null ? row.ram_gb * 1024 : row.ram_mib ?? ""],
+  ["DISK", "disk", (row) => row.disk_total_bytes != null ? row.disk_total_bytes / 2 ** 30 : row.disk ?? ""],
+  ["IMAGE TAGS", "tags", (row) => (row.image_tags || []).join(", ")],
+];
+
+function renderProfileTable(visible) {
+  const table = el("div", "ctable profiles-table");
+  const sort = state.profileSort;
+  const column = sort && profileColumns.find(([, key]) => key === sort.key);
+  const rows = visible.slice();
+  if (column) {
+    rows.sort((a, b) => {
+      const left = column[2](a);
+      const right = column[2](b);
+      if (left === "" || right === "") return Number(left === "") - Number(right === "");
+      const order = typeof left === "number" ? left - right : String(left).localeCompare(String(right), undefined, { numeric: true, sensitivity: "base" });
+      return sort.desc ? -order : order;
+    });
+  }
+  const head = el("div", "ctr head", el("span"));
+  for (const [label, key] of profileColumns) {
+    const active = sort?.key === key;
+    const heading = button(null, () => {
+      state.profileSort = active && !sort.desc ? { key, desc: true } : { key, desc: false };
+      render();
+    }, { cls: "sort", title: "Sort by " + label.toLowerCase() });
+    heading.append(label, el("span", "arrow", active ? (sort.desc ? "↓" : "↑") : ""));
+    if (active) heading.setAttribute("aria-sort", sort.desc ? "descending" : "ascending");
+    head.append(heading);
+  }
+  table.append(head);
+  for (const row of rows) {
+    const node = el("button", "ctr", el("span", "mark"),
+      el("span", "nm", row.name, row.default ? " " : null, row.default ? el("span", "tag default", "default") : null),
+      el("span", "muted", profileProvider(row)), el("span", null, row.flavor || "—"), el("span", null, row.arch || "—"),
+      el("span", null, row.vcpus ?? "—"), el("span", null, ramLabel(row) || "—"), el("span", null, diskLabel(row).replace(" disk", "") || "—"),
+      el("span", "muted", (row.image_tags || []).join(", ") || "—"));
+    node.type = "button";
+    node.title = "Details of " + row.name;
+    node.addEventListener("click", () => openProfile(row));
+    table.append(node);
+  }
+  $("results").replaceChildren(table);
 }
 
 function renderProfiles(visible) {
