@@ -8,8 +8,8 @@ const narrow = matchMedia("(max-width: 1180px)");
 const leaseWarningSeconds = 15 * 60;
 
 // Preferences: layout (split view or cards), theme and density, kept per browser.
-const prefChoices = { layout: ["split", "cards", "console"], theme: ["system", "dark", "light"], density: ["comfortable", "compact"] };
-const prefs = { layout: "split", theme: "system", density: "comfortable" };
+const prefChoices = { layout: ["split", "cards", "console"], theme: ["system", "dark", "light"], density: ["comfortable", "compact"], rail: ["expanded", "collapsed"] };
+const prefs = { layout: "split", theme: "system", density: "comfortable", rail: "expanded" };
 try { Object.assign(prefs, JSON.parse(localStorage.getItem("rworker.prefs") || "{}")); } catch { /* Storage disabled. */ }
 for (const [key, choices] of Object.entries(prefChoices)) if (!choices.includes(prefs[key])) prefs[key] = choices[0];
 
@@ -17,6 +17,19 @@ function applyPrefs() {
   root.dataset.theme = prefs.theme;
   root.dataset.layout = prefs.layout;
   root.dataset.density = prefs.density;
+  root.dataset.rail = prefs.rail;
+  const toggle = document.getElementById("rail-toggle");
+  if (toggle) {
+    const collapsed = prefs.rail === "collapsed";
+    toggle.title = (collapsed ? "Expand" : "Collapse") + " the sidebar ([)";
+    toggle.setAttribute("aria-expanded", String(!collapsed));
+    toggle.querySelector(".lbl").textContent = collapsed ? "Expand" : "Collapse";
+  }
+}
+
+function toggleRail() {
+  setPref("rail", prefs.rail === "collapsed" ? "expanded" : "collapsed");
+  applySplit();
 }
 
 function setPref(key, value) {
@@ -2570,7 +2583,7 @@ const shortcuts = [
   [["N"], "New worker"], [["J"], "Next worker"], [["K"], "Previous worker"], [["Enter"], "Open the focused worker"],
   [["Esc"], "Close the worker or dialog"], [["S"], "SSH into the open worker"], [["E"], "Extend its lease"],
   [["T"], "Edit its topic"], [["D"], "Delete it"], [["L"], "Show its logs"], [["F"], "Follow or pause the log"],
-  [["W"], "Wrap long log lines"], [["R"], "Refresh"], [["?"], "This list"],
+  [["W"], "Wrap long log lines"], [["R"], "Refresh"], [["["], "Collapse or expand the sidebar"], [["?"], "This list"],
 ];
 function showKeys() {
   $("keys-list").replaceChildren(...shortcuts.flatMap(([keys, text]) => [el("dt", null, ...keys.map((key) => el("kbd", null, key))), el("dd", null, text)]));
@@ -2615,6 +2628,7 @@ document.addEventListener("keydown", (event) => {
   const keys = {
     "/": () => state.view === "logs" && !row ? $("logs-filter")?.focus() : $("search-box").hidden || $("search").focus(),
     "?": showKeys,
+    "[": toggleRail,
     "1": () => { location.hash = "workers"; }, "2": () => { location.hash = "jobs"; },
     "3": () => { location.hash = "logs"; }, "4": () => { location.hash = "events"; }, "5": () => { location.hash = "profiles"; },
     n: () => form("create"), j: () => moveSelection(1), k: () => moveSelection(-1),
@@ -2725,6 +2739,8 @@ $("fab").addEventListener("click", () => form("create"));
 $("back").addEventListener("click", () => { location.hash = state.view; });
 $("palette-open").addEventListener("click", openPalette);
 $("settings-open").addEventListener("click", openSettings);
+$("rail-toggle").addEventListener("click", toggleRail);
+applyPrefs();
 $("settings-mobile").addEventListener("click", openSettings);
 $("settings-close").addEventListener("click", () => $("settings").close());
 $("keys-close").addEventListener("click", () => $("keys").close());

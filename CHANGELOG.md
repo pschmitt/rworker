@@ -4,6 +4,7 @@
 
 The Rust client and controller replace the original Bash client.
 
+- Collapse the web console's sidebar to an icon rail (button at its foot, or `[`), kept in the browser; the collapsed Jobs icon shows an amber dot while jobs run.
 - Resize the columns of the web console's worker table by dragging the header dividers (arrow keys when focused, double-click resets); widths are kept in the browser.
 - Show only the number of running jobs on a worker's Jobs tab, amber like the sidebar's count, and nothing when no job is running.
 - Move `builder` and `nix-cache` under `setup`: `setup nix-builder` and `setup nix-cache`; the old top-level actions are gone. Without a worker name, `setup nix-builder` prints a line for the on-demand builder gateway (`--profile`, `--arch`, `--pool`, `--gateway`, `--identity`, `--host-key`, `--system`, `--jobs`, `--features`; Home Manager `programs.rworker.builderGateway`). The MCP tool `builder` becomes `setup_nix_builder` with the gateway selectors, and `nix_cache` is gone (use `setup_nix` with `auth=false`).

@@ -505,7 +505,20 @@ details.advanced .grid2 { display: grid; grid-template-columns: repeat(2, minmax
 .keys-list dt { display: flex; gap: 4px; justify-content: flex-end; }
 .keys-list dd { color: var(--mut); }
 
-/* Narrow desktop: icon rail. */
+/* Icon rail: collapsed by choice, or on a narrow desktop. */
+:root[data-rail="collapsed"] { --rail-w: 64px; }
+:root[data-rail="collapsed"] .rail { align-items: center; padding-inline: 10px; }
+:root[data-rail="collapsed"] .rail .lbl { display: none; }
+:root[data-rail="collapsed"] .rail .btn { width: 40px; padding: 0; justify-content: center; }
+:root[data-rail="collapsed"] .nav a { justify-content: center; width: 40px; padding: 0; }
+:root[data-rail="collapsed"] .session { padding: 8px; justify-content: center; flex-direction: column; }
+:root[data-rail="collapsed"] .brand { padding: 2px; }
+:root[data-rail="collapsed"] .rail-toggle .i { transform: rotate(180deg); }
+:root[data-rail="collapsed"] .rail-foot { justify-items: center; }
+:root[data-rail="collapsed"] .rail-foot > .btn { justify-content: center; }
+:root[data-rail="collapsed"] .nav a { position: relative; }
+:root[data-rail="collapsed"] .nav .count.busy:not(:empty) { display: block; position: absolute; top: 7px; right: 7px; width: 7px; height: 7px; padding: 0; border-radius: 50%; background: var(--amb); font-size: 0; }
+.app { transition: grid-template-columns .18s ease; }
 @media (max-width: 1080px) {
   :root { --rail-w: 64px; }
   .rail { align-items: center; padding-inline: 10px; }
@@ -514,6 +527,11 @@ details.advanced .grid2 { display: grid; grid-template-columns: repeat(2, minmax
   .nav a { justify-content: center; width: 40px; padding: 0; }
   .session { padding: 8px; justify-content: center; flex-direction: column; }
   .brand { padding: 2px; }
+  .rail-foot { justify-items: center; }
+  .rail-foot > .btn { justify-content: center; }
+  .nav a { position: relative; }
+  .nav .count.busy:not(:empty) { display: block; position: absolute; top: 7px; right: 7px; width: 7px; height: 7px; padding: 0; border-radius: 50%; background: var(--amb); font-size: 0; }
+  .rail-toggle { display: none; }
 }
 @media (max-width: 1180px) {
   :root[data-layout="split"] .workspace.split { grid-template-columns: minmax(0, 1fr); }
