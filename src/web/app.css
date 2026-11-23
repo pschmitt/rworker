@@ -158,7 +158,8 @@ kbd { display: inline-grid; place-items: center; min-width: 18px; height: 18px; 
 .nav { display: grid; gap: 2px; }
 .nav a { display: flex; align-items: center; gap: 10px; height: 36px; padding: 0 10px; border-radius: 8px; color: var(--mut); font-weight: 600; text-decoration: none; }
 .nav a:hover { background: var(--hover); color: var(--ink); }
-.nav a[aria-current] { background: var(--s2); color: var(--ink); box-shadow: inset 2px 0 0 var(--acc); }
+.nav a[aria-current] { background: var(--s3); color: var(--ink); }
+.nav a[aria-current] .i { color: var(--acc); }
 .nav .count { margin-left: auto; color: var(--dim); font-size: 12px; font-variant-numeric: tabular-nums; }
 .nav .count.busy { background: none; color: var(--amb); }
 .rail-foot { display: grid; gap: 4px; margin-top: auto; }
@@ -627,3 +628,6 @@ a.ctr[aria-current] .mark::before { content: "›"; color: #ff8b0f; font-weight:
 .ctr .kd .glyph { flex: none; width: 15px; text-align: center; }
 .glyph.pool { color: var(--cyan); }
 .glyph.adhoc { color: var(--acc); }
+.ctr.head .sort { display: inline-flex; align-items: center; gap: 4px; min-width: 0; padding: 0; border: 0; background: none; color: inherit; font: inherit; letter-spacing: inherit; text-align: left; cursor: pointer; }
+.ctr.head .sort:hover, .ctr.head .sort[aria-sort] { color: var(--ink); }
+.ctr.head .sort .arrow { color: var(--acc); }

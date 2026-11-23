@@ -4,6 +4,8 @@
 
 The Rust client and controller replace the original Bash client.
 
+- Mark the current web console view with a filled background and accent icon instead of a side bar.
+- Sort the console layout's worker table by clicking a column header.
 - Show why a web console action failed: the controller's error message, with secrets masked, instead of a generic error.
 - Add a console layout to the web console: a dense worker table with the selected worker's logs below and a shortcut bar.
 - Show the new expiry when choosing a lifetime for a new or extended worker.

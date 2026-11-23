@@ -33,7 +33,7 @@ applyPrefs();
 
 const state = {
   token: "", authenticated: false, view: "workers", rows: {}, selected: null, job: null, tab: "logs",
-  filters: { workers: "live", jobs: "active", events: "all" }, sort: "newest",
+  filters: { workers: "live", jobs: "active", events: "all" }, sort: "newest", tableSort: null,
   redact: true, follow: true, wrap: true, logQuery: "", logText: "", logRendered: "", logSgr: {}, limit: 200,
   detailJobs: null, raw: false, dismissed: new Set(), order: [],
 };
@@ -434,7 +434,7 @@ function renderFilters(now) {
       sort.append(option);
     }
     sort.value = state.sort;
-    sort.addEventListener("change", () => { state.sort = sort.value; render(); });
+    sort.addEventListener("change", () => { state.sort = sort.value; state.tableSort = null; render(); });
     host.append(sort);
   }
 }
@@ -501,7 +501,7 @@ function render() {
   const test = filterTests[view]?.[state.filters[view]] || (() => true);
   let visible = source.filter((row) => searchMatch(row, search) && test(row, now));
   if (view === "events") visible = visible.slice().reverse();
-  const key = JSON.stringify([view, prefs.layout, state.filters[view], state.sort, search, state.limit, state.selected?.name, Math.floor(now / 20), visible]);
+  const key = JSON.stringify([view, prefs.layout, state.filters[view], state.sort, state.tableSort, search, state.limit, state.selected?.name, Math.floor(now / 20), visible]);
   if (key === lastRenderKey) return;
   lastRenderKey = key;
   if (!visible.length) {
@@ -620,7 +620,7 @@ function tableRow(row, now) {
   }
   const status = row.retired ? ["retired", "idle"] : lease.kind === "pool" ? [row.pool_state, lease.tone === "busy" ? "busy" : "idle"] :
     [String(row.status || "?").toLowerCase(), /^(active|ready)$/i.test(row.status) ? "good" : /^(build|boot|deleting|pending)/i.test(row.status) ? "busy" : "bad"];
-  const kind = row.name.startsWith("gha-") ? "github" : row.provider === "gitlab" || row.name.startsWith("glci-") ? "gitlab" : isPool(row) ? (row.pool || row.kind) : row.kind || "";
+  const kind = workerKind(row);
   const glyphChar = workerGlyph(row);
   const glyphClass = glyphChar === githubGlyph ? "github" : glyphChar === gitlabGlyph ? "gitlab" : isPool(row) ? "pool" : "adhoc";
   const node = el("a", "ctr worker-item", el("span", "mark"), el("span", "nm", row.name), el("span", "kd", glyph(glyphChar, glyphClass), el("span", "muted", kind)), el("span", "st-" + status[1], status[0]),
@@ -635,12 +635,53 @@ function tableRow(row, now) {
   return node;
 }
 
+function workerKind(row) {
+  return row.name.startsWith("gha-") ? "github" : row.provider === "gitlab" || row.name.startsWith("glci-") ? "gitlab" : isPool(row) ? (row.pool || row.kind) : row.kind || "";
+}
+
+// Column sort for the console table: [label, key, value].
+const tableColumns = [
+  ["NAME", "name", (row) => row.name],
+  ["KIND", "kind", (row) => workerKind(row)],
+  ["STATUS", "status", (row) => row.retired ? "retired" : isPool(row) && row.pool_state ? row.pool_state : String(row.status || "").toLowerCase()],
+  ["AGENT", "agent", (row) => row.agent || ""],
+  ["TOPIC", "topic", (row) => row.topic || ""],
+  ["LEASE", "lease", (row, now) => isPool(row) || row.retired ? Infinity : row.grace_until > now ? row.grace_until - now : row.expires_at > 0 ? row.expires_at - now : Infinity],
+  ["AGE", "age", (row, now) => now - (timestamp(row.created_at) || now)],
+];
+
+function tableSorted(rows, now) {
+  const sort = state.tableSort;
+  const column = sort && tableColumns.find(([, key]) => key === sort.key);
+  if (!column) return sortWorkers(rows, now);
+  const value = column[2];
+  const empty = (v) => v === "" || v == null || v === Infinity;
+  return rows.slice().sort((a, b) => {
+    const left = value(a, now);
+    const right = value(b, now);
+    if (empty(left) || empty(right)) return empty(left) - empty(right);
+    const order = typeof left === "number" ? left - right : String(left).localeCompare(String(right), undefined, { numeric: true, sensitivity: "base" });
+    return sort.desc ? -order : order;
+  });
+}
+
 function renderWorkerTable(visible, now) {
   const table = el("div", "ctable");
   table.setAttribute("role", "list");
-  table.append(el("div", "ctr head", el("span"), el("span", null, "NAME"), el("span", null, "KIND"), el("span", null, "STATUS"), el("span", null, "AGENT"), el("span", null, "TOPIC"), el("span", null, "LEASE"), el("span", null, "AGE")));
+  const head = el("div", "ctr head", el("span"));
+  for (const [label, key] of tableColumns) {
+    const active = state.tableSort?.key === key;
+    const heading = button(null, () => {
+      state.tableSort = active && !state.tableSort.desc ? { key, desc: true } : { key, desc: false };
+      render();
+    }, { cls: "sort", title: "Sort by " + label.toLowerCase() });
+    heading.append(label, el("span", "arrow", active ? (state.tableSort.desc ? "↓" : "↑") : ""));
+    if (active) heading.setAttribute("aria-sort", state.tableSort.desc ? "descending" : "ascending");
+    head.append(heading);
+  }
+  table.append(head);
   const order = [];
-  for (const row of sortWorkers(visible, now).slice(0, state.limit)) {
+  for (const row of tableSorted(visible, now).slice(0, state.limit)) {
     table.append(tableRow(row, now));
     order.push(row.name);
   }
