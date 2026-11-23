@@ -83,9 +83,11 @@ flag up -l=user log in as this user (with --ssh; default agent)
 flag up --topic=topic what the worker is for (none unless given)
 flag up --profile=profile worker profile (including gh-aarch64, gh-x86_64, gl-x86_64 and gl-x86_64-lease)
 flag up --arch=arch try profiles matching an architecture
+flag up --queue-timeout=seconds cancel a hosted lease still queued after this many seconds
 flag exec --topic=topic what the worker is for (none unless given)
 flag exec --profile=profile worker profile (including gh-aarch64, gh-x86_64, gl-x86_64 and gl-x86_64-lease)
 flag exec --arch=arch try profiles matching an architecture
+flag exec --queue-timeout=seconds cancel a hosted lease still queued after this many seconds
 flag machines -o=format output format (json or wide)
 flag profiles -o=format output format (json or wide)
 flag profiles --wide show image and runner details
@@ -106,6 +108,7 @@ flag ssh --create create a worker first (same as up --ssh; up's options follow)
 flag ssh --rm delete the newly created worker after SSH exits
 flag ssh --profile=profile worker image profile when creating
 flag ssh --arch=arch try profiles matching an architecture when creating
+flag ssh --queue-timeout=seconds cancel a hosted lease still queued after this many seconds
 flag ssh -l=user log in as this user (like ssh -l)
 flag machines --fresh wait for a fresh inventory snapshot
 flag jobs --watch redraw the jobs list in place

@@ -195,6 +195,7 @@ fn hosted_up(
     ttl: &str,
     key_file: &str,
     topic: &str,
+    queue_timeout: Option<Duration>,
     progress: &mpsc::Sender<String>,
 ) -> R<Value> {
     let key = std::fs::read_to_string(key_file).map_err(|error| {
@@ -241,6 +242,7 @@ fn hosted_up(
     ));
     let _ = progress.send(format!("rworker-progress QUEUED · {}", forge.label()));
     let expires = epoch(&initial["expires_at"]);
+    let queue_started = std::time::Instant::now();
     let mut runner_started = false;
     let mut disconnected = false;
 
@@ -268,6 +270,15 @@ fn hosted_up(
             runner_started = started;
             disconnected = false;
             match lease["state"].as_str() {
+                Some("queued")
+                    if !runner_started
+                        && queue_timeout
+                            .is_some_and(|timeout| queue_started.elapsed() >= timeout) =>
+                {
+                    let _ =
+                        progress.send(format!("Timed out waiting for a runner for {name}{link}"));
+                    return Err(Fail(75));
+                }
                 Some("ready") => {
                     let output = json!({
                         "name": name,
@@ -374,7 +385,14 @@ fn up_inner(
             pool = Some(value.to_owned());
         } else if matches!(
             arg.as_str(),
-            "--profile" | "--ttl" | "--flavor" | "--disk" | "--topic" | "--agent-id" | "-l"
+            "--profile"
+                | "--ttl"
+                | "--flavor"
+                | "--disk"
+                | "--queue-timeout"
+                | "--topic"
+                | "--agent-id"
+                | "-l"
         ) {
             explicit_profile |= arg == "--profile";
             rest.push(arg.clone());
@@ -408,7 +426,7 @@ fn up_inner(
     let candidates = pool_candidates(&rows, &pool);
     if candidates.is_empty() {
         ctx.err(&format!("No profiles match architecture {pool}"));
-        return Err(Fail(1));
+        return Err(Fail(75));
     }
     try_pool(&candidates, |name| {
         ctx.err(&format!("Trying profile {name} ({pool})"));
@@ -441,16 +459,17 @@ fn try_pool<T>(
     candidates: &[&str],
     mut attempt: impl FnMut(&str) -> Result<T, (Fail, bool)>,
 ) -> R<T> {
+    let mut unavailable = true;
     for name in candidates {
         match attempt(name) {
             Ok(result) => return Ok(result),
             Err((error, created)) if created || error.0 == 2 || error.0 >= 128 => {
                 return Err(error);
             }
-            Err(_) => {}
+            Err((error, _)) => unavailable &= error == Fail(75),
         }
     }
-    Err(Fail(1))
+    Err(Fail(if unavailable { 75 } else { 1 }))
 }
 
 fn pool_candidates<'a>(rows: &'a [Value], arch: &str) -> Vec<&'a str> {
@@ -488,6 +507,7 @@ fn up_attempt(
     let mut agent_id = String::new();
     let mut nix_cache: Option<bool> = None;
     let mut nix_auth: Option<bool> = None;
+    let mut queue_timeout = None;
     let mut quiet_topic_warning = false;
     let mut rest: Vec<String> = Vec::new();
     let mut i = 0;
@@ -498,6 +518,18 @@ fn up_attempt(
             "--no-nix-cache" => nix_cache = Some(false),
             "--nix-auth" => nix_auth = Some(true),
             "--no-nix-auth" => nix_auth = Some(false),
+            "--queue-timeout" => {
+                let Some(seconds) = args
+                    .get(i + 1)
+                    .and_then(|value| value.parse::<u64>().ok())
+                    .filter(|seconds| (1..=86400).contains(seconds))
+                else {
+                    ctx.err("--queue-timeout needs a number of seconds from 1 to 86400");
+                    return Err(Fail(2));
+                };
+                queue_timeout = Some(Duration::from_secs(seconds));
+                i += 1;
+            }
             "-l" => {
                 login_user = args.get(i + 1).cloned().unwrap_or_default();
                 if login_user.is_empty() {
@@ -552,7 +584,7 @@ fn up_attempt(
             let (tx, rx) = mpsc::channel();
             let no_color = ctx.no_color;
             scope.spawn(move || render_progress_lines(rx, no_color, emit_stages));
-            let result = hosted_up(ctx, profile, ttl, &key_file, &topic, &tx);
+            let result = hosted_up(ctx, profile, ttl, &key_file, &topic, queue_timeout, &tx);
             drop(tx);
             result
         })?;
@@ -919,5 +951,15 @@ mod profile_pool_tests {
         });
         assert_eq!(result, Err(Fail(255)));
         assert_eq!(attempts, ["first"]);
+    }
+
+    #[test]
+    fn only_reports_capacity_unavailable_when_every_attempt_did() {
+        let exhausted: R<()> = try_pool(&["first", "second"], |_| Err((Fail(75), false)));
+        assert_eq!(exhausted, Err(Fail(75)));
+        let mixed: R<()> = try_pool(&["first", "second"], |name| {
+            Err((Fail(if name == "first" { 1 } else { 75 }), false))
+        });
+        assert_eq!(mixed, Err(Fail(1)));
     }
 }

@@ -7,6 +7,7 @@ The Rust client and controller replace the original Bash client.
 - Show profile architecture in JSON, CLI, TUI and web profile listings.
 - Try profiles matching an architecture with `--arch`.
 - Include the native system and SSH relay configuration in hosted builder JSON.
+- Add a hosted queue timeout and report exit 75 for unavailable architecture pools.
 - Label the profile tag column “Tags” throughout the interfaces.
 
 - Show profile and agent icons and colors on worker creation and deletion events.

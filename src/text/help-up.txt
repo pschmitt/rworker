@@ -14,6 +14,10 @@ print it as JSON (name, ip, host_key, user, expires_at, builder).
   --profile NAME   standard (default), browser-daemon or large-builder
   --arch ARCH  try configured profiles matching ARCH, default first then by name;
                    cannot be combined with --profile (e.g. aarch64)
+  --queue-timeout SECONDS
+                   cancel a hosted lease if it is still queued after this time.
+                   Exit 75 when no profiles match --arch or all attempts time
+                   out in the queue and cancellation succeeds.
   --scratch        scratch host: maximum lifetime 7 days instead of 24 h
   --nix-cache      push the S3 cache settings (the default when this host's
                    Nix has an s3:// cache; fails loudly when it has none)
