@@ -54,19 +54,29 @@ let
       pkgs.coreutils
       pkgs.socat
     ];
+    # Nix sends "<remote-program> --stdio". A selector as the remote
+    # program (profile:NAME, arch:ARCH, pool:NAME) picks the leased worker.
     text = ''
-      case "''${SSH_ORIGINAL_COMMAND:-}" in
-        "nix-daemon --stdio" | "nix daemon --stdio")
-          {
-            printf '%s\n' "''${SSH_CONNECTION%% *}"
-            cat
-          } | socat -t60 STDIO UNIX-CONNECT:${builderSocket}
+      command="''${SSH_ORIGINAL_COMMAND:-}"
+      selector=
+      case "$command" in
+        "nix-daemon --stdio" | "nix daemon --stdio") ;;
+        *" --stdio")
+          selector="''${command% --stdio}"
+          if ! [[ "$selector" =~ ^(profile|arch|pool):[A-Za-z0-9._-]{1,64}$ ]]; then
+            echo "Unknown builder selector; use profile:NAME, arch:ARCH or pool:NAME." >&2
+            exit 126
+          fi
           ;;
         *)
           echo "This account serves the Nix daemon protocol." >&2
           exit 126
           ;;
       esac
+      {
+        printf '%s%s\n' "''${SSH_CONNECTION%% *}" "''${selector:+ $selector}"
+        cat
+      } | socat -t60 STDIO UNIX-CONNECT:${builderSocket}
     '';
   };
   builderCommand =
@@ -262,6 +272,52 @@ in
         type = lib.types.listOf lib.types.str;
         default = [ ];
         description = "Features a derivation must request before Nix selects this builder.";
+      };
+      selector = lib.mkOption {
+        type = lib.types.nullOr (lib.types.strMatching "(profile|arch|pool):[A-Za-z0-9._-]{1,64}");
+        default = null;
+        example = "profile:large-builder";
+        description = "Worker the gateway leases for this entry: `profile:NAME`, `arch:ARCH` or `pool:NAME`. Null uses the gateway's default profile.";
+      };
+      extraMachines = lib.mkOption {
+        type = lib.types.listOf (
+          lib.types.submodule {
+            options = {
+              selector = lib.mkOption {
+                type = lib.types.strMatching "(profile|arch|pool):[A-Za-z0-9._-]{1,64}";
+                example = "arch:aarch64";
+                description = "Worker the gateway leases for this entry.";
+              };
+              systems = lib.mkOption {
+                type = lib.types.nonEmptyListOf lib.types.str;
+                example = [ "aarch64-linux" ];
+                description = "Systems the selected worker can build.";
+              };
+              maxJobs = lib.mkOption {
+                type = lib.types.ints.positive;
+                default = 1;
+                description = "Maximum concurrent builds on this entry.";
+              };
+              speedFactor = lib.mkOption {
+                type = lib.types.ints.positive;
+                default = 1;
+                description = "Relative speed Nix uses when choosing among builders.";
+              };
+              supportedFeatures = lib.mkOption {
+                type = lib.types.listOf lib.types.str;
+                default = [ ];
+                description = "Nix system features the selected worker provides.";
+              };
+              mandatoryFeatures = lib.mkOption {
+                type = lib.types.listOf lib.types.str;
+                default = [ ];
+                description = "Features a derivation must request before Nix selects this entry.";
+              };
+            };
+          }
+        );
+        default = [ ];
+        description = "Further gateway entries, each leasing its own worker, e.g. an aarch64 builder.";
       };
     };
     logCache = {
@@ -761,22 +817,29 @@ in
       ];
       nix = {
         distributedBuilds = true;
-        buildMachines = [
-          {
-            protocol = "ssh-ng";
-            sshUser = builderAccount;
-            sshKey = cfg.builderClient.identityFile;
-            inherit (cfg.builderClient)
-              hostName
-              publicHostKey
-              systems
-              maxJobs
-              speedFactor
-              supportedFeatures
-              mandatoryFeatures
-              ;
-          }
-        ];
+        buildMachines =
+          let
+            # Nix appends the URI query to the store URL, and sends the
+            # remote program as the SSH command.
+            entry = selector: machine: {
+              protocol = "ssh-ng";
+              sshUser = builderAccount;
+              sshKey = cfg.builderClient.identityFile;
+              hostName =
+                cfg.builderClient.hostName
+                + lib.optionalString (selector != null) "?remote-program=${selector}";
+              inherit (cfg.builderClient) publicHostKey;
+              inherit (machine)
+                systems
+                maxJobs
+                speedFactor
+                supportedFeatures
+                mandatoryFeatures
+                ;
+            };
+          in
+          [ (entry cfg.builderClient.selector cfg.builderClient) ]
+          ++ map (machine: entry machine.selector machine) cfg.builderClient.extraMachines;
       };
     })
     (lib.mkIf (cfg.enable && cfg.api.https != null) {

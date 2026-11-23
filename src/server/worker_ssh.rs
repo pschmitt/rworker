@@ -86,6 +86,10 @@ pub(super) fn answers(ip: IpAddr) -> bool {
 }
 
 fn pinned_hosts(settings: &Value, ip: IpAddr, host_key: &str) -> Result<KnownHosts, String> {
+    pinned_host(settings, &ip.to_string(), host_key)
+}
+
+fn pinned_host(settings: &Value, host: &str, host_key: &str) -> Result<KnownHosts, String> {
     if host_key.contains(['\r', '\n']) {
         return Err("Invalid worker host key".into());
     }
@@ -101,17 +105,35 @@ fn pinned_hosts(settings: &Value, ip: IpAddr, host_key: &str) -> Result<KnownHos
         .open(&path)
         .map_err(|err| format!("Create worker known-hosts file: {err}"))?;
     let known = KnownHosts(path);
-    writeln!(file, "{ip} {host_key}").map_err(|err| format!("Write worker host key: {err}"))?;
+    writeln!(file, "{host} {host_key}").map_err(|err| format!("Write worker host key: {err}"))?;
     drop(file);
     Ok(known)
 }
 
 /// A Nix remote store connection leaves both protocol streams untouched.
 pub(super) fn daemon_stdio(settings: &Value, ip: IpAddr, host_key: &str) -> Result<i32, String> {
-    let known = pinned_hosts(settings, ip, host_key)?;
     let user = setting(settings, "sshUser")?;
+    daemon_stdio_at(settings, ip, 22, user, host_key, "nix-daemon --stdio")
+}
+
+/// Like `daemon_stdio`, for a daemon behind another port, account or
+/// program (a hosted lease's local relay and its isolated store).
+pub(super) fn daemon_stdio_at(
+    settings: &Value,
+    ip: IpAddr,
+    port: u16,
+    user: &str,
+    host_key: &str,
+    remote: &str,
+) -> Result<i32, String> {
+    let host = if port == 22 {
+        ip.to_string()
+    } else {
+        format!("[{ip}]:{port}")
+    };
+    let known = pinned_host(settings, &host, host_key)?;
     let status = Command::new("ssh")
-        .args(["-T", "-F", "/dev/null", "-i"])
+        .args(["-T", "-F", "/dev/null", "-p", &port.to_string(), "-i"])
         .arg(setting(settings, "sshKeyFile")?)
         .args([
             "-o",
@@ -133,7 +155,7 @@ pub(super) fn daemon_stdio(settings: &Value, ip: IpAddr, host_key: &str) -> Resu
             "-o",
         ])
         .arg(format!("UserKnownHostsFile={}", known.0.display()))
-        .args(["--", &format!("{user}@{ip}"), "nix-daemon --stdio"])
+        .args(["--", &format!("{user}@{ip}"), remote])
         .stdin(Stdio::inherit())
         .stdout(Stdio::inherit())
         .stderr(Stdio::inherit())

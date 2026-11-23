@@ -4,6 +4,7 @@
 
 The Rust client and controller replace the original Bash client.
 
+- Pick the builder gateway's worker per machine entry: `?remote-program=profile:NAME`, `arch:ARCH` or `pool:NAME` leases a worker of that profile, architecture or pool, each with its own lease and idle timer; `arch:aarch64` and `profile:gh-aarch64` lease a GitHub runner and build in its isolated store. The NixOS client module gains `selector` and `extraMachines`.
 - Mark workers created in the last five minutes with a "new" badge in the web console.
 - Flash web console worker rows only when their status, topic, agent or lease state changes, not on every lease countdown tick.
 - Keep retrying the TUI's log preview of a worker that has no IP yet, so its logs appear once it is reachable.

@@ -35,6 +35,12 @@ let
             publicHostKey = "dGVzdA==";
             systems = [ "x86_64-linux" ];
             mandatoryFeatures = [ "rworker" ];
+            extraMachines = [
+              {
+                selector = "arch:aarch64";
+                systems = [ "aarch64-linux" ];
+              }
+            ];
           };
           reaper.enable = true;
           logCache.operator = "operator";
@@ -110,6 +116,9 @@ pkgs.runCommand "rworker-server-module-check" { } ''
   test -e ${config.systemd.units."rworker-builder@.service".unit}
   test -e ${config.systemd.units."rworker-builder-reap.timer".unit}
   grep -q '^ssh-ng://rworker-builder@builder.example.com x86_64-linux /run/secrets/builder-key 1 1 rworker rworker dGVzdA==$' ${
+    config.environment.etc."nix/machines".source
+  }
+  grep -q '^ssh-ng://rworker-builder@builder.example.com?remote-program=arch:aarch64 aarch64-linux /run/secrets/builder-key 1 1 - - dGVzdA==$' ${
     config.environment.etc."nix/machines".source
   }
   touch "$out"
