@@ -1,10 +1,10 @@
-//! `__workers [ACTION]`: "NAME<TAB>DESCRIPTION" per worker for the shell
+//! `__workers [ACTION]`: name, description and display icon as TSV for the shell
 //! completions, from the ls cache. Never waits on the network: a cache
 //! older than 30 s is refreshed in the background for the next TAB.
 
 use crate::ctx::{Ctx, R, outln};
 use crate::jq::{self, get};
-use crate::table;
+use crate::{github_profiles, pool_icon, table};
 use serde_json::Value;
 use std::process::{Command, Stdio};
 use std::time::SystemTime;
@@ -50,7 +50,8 @@ pub fn cmd_workers(ctx: &Ctx, action: &str) -> R {
             .unwrap_or_default();
         names.sort();
         for n in names {
-            outln(&format!("{n}\t"));
+            let worker = serde_json::json!({"name": n});
+            candidate(ctx, &n, "", pool_icon::glyph(&worker));
         }
         return Ok(());
     };
@@ -98,13 +99,20 @@ pub fn cmd_workers(ctx: &Ctx, action: &str) -> R {
             .flatten()
             .filter(|p| !p.is_empty())
             .collect();
-        outln(&format!(
-            "{}\t{}",
-            jq::raw(get(w, "name")),
-            desc.join(" · ")
-        ));
+        candidate(
+            ctx,
+            &jq::raw(get(w, "name")),
+            &desc.join(" · "),
+            pool_icon::glyph(w),
+        );
     }
     Ok(())
+}
+
+fn candidate(ctx: &Ctx, value: &str, description: &str, icon: &str) {
+    let description = description.replace(char::is_control, " ");
+    let icon = if ctx.icons.get() { icon } else { "" };
+    outln(&format!("{value}\t{description}\t{icon}"));
 }
 
 /// A topic or agent as a regex that matches exactly that text.
@@ -119,11 +127,23 @@ fn regex_escape(s: &str) -> String {
     out
 }
 
-/// `__values SET`: "VALUE<TAB>DESCRIPTION" for a dynamic value set of the
-/// spec (topics, agents, agent ids), from the cached worker list plus the
-/// set's static values. The *-re sets are regex filters: their values are
-/// escaped, so a topic matches itself.
+/// `__values SET`: TSV value, description and icon from static profiles or
+/// the cached worker list plus static filter values. The *-re sets escape
+/// values for literal matches.
 pub fn cmd_values(ctx: &Ctx, set: &str) -> R {
+    let prefix = format!("values {set} ");
+    let static_values = crate::help::SPEC
+        .lines()
+        .find_map(|line| line.strip_prefix(&prefix))
+        .unwrap_or_default()
+        .split_whitespace();
+    if set == "profile" {
+        for value in static_values {
+            let forge = github_profiles::from_name(value).map(|profile| profile.forge);
+            candidate(ctx, value, "", pool_icon::provider_glyph(forge));
+        }
+        return Ok(());
+    }
     let (field, regex) = match set {
         "topic" => ("topic", false),
         "topic-re" => ("topic", true),
@@ -134,11 +154,8 @@ pub fn cmd_values(ctx: &Ctx, set: &str) -> R {
         _ => return Ok(()),
     };
     let mut values: std::collections::BTreeMap<String, Vec<String>> = Default::default();
-    let prefix = format!("values {set} ");
-    if let Some(line) = crate::help::SPEC.lines().find(|l| l.starts_with(&prefix)) {
-        for v in line[prefix.len()..].split(' ').filter(|v| !v.is_empty()) {
-            values.entry(v.to_string()).or_default();
-        }
+    for value in static_values {
+        values.entry(value.to_owned()).or_default();
     }
     let list = cached_ls(ctx)
         .and_then(|t| serde_json::from_str::<Value>(&t).ok())
@@ -155,10 +172,17 @@ pub fn cmd_values(ctx: &Ctx, set: &str) -> R {
             1..=3 => workers.join(", "),
             n => format!("{}, ... ({n} workers)", workers[..2].join(", ")),
         };
+        let icon = match field {
+            "agent" => table::glyph(&value),
+            "agent_id" => value
+                .split_once(':')
+                .map_or("", |(agent, _)| table::glyph(agent)),
+            _ => "",
+        };
         let value = if regex { regex_escape(&value) } else { value };
         // One value per line: a tab or newline in it would break the lines.
         let value = value.replace(['\t', '\n'], " ");
-        outln(&format!("{value}\t{desc}"));
+        candidate(ctx, &value, &desc, icon);
     }
     Ok(())
 }

@@ -4,6 +4,8 @@
 
 The Rust client and controller replace the original Bash client.
 
+- Show profile, worker, and agent icons in Zsh completion menus while preserving the inserted values.
+
 - Add optional ephemeral Tailscale and NetBird proxies for CI workers.
 - Include a sample flake for building a custom OpenStack worker image.
 

@@ -13,9 +13,18 @@ pub(crate) const GITLAB: &str = "\u{f296}";
 pub(crate) const OPENSTACK: &str = "\u{e856}";
 
 pub fn profile_glyph(profile: &Value) -> &'static str {
-    match profile["provider"].as_str() {
-        Some("github") => GITHUB,
-        Some("gitlab") => GITLAB,
+    provider_glyph(
+        profile["provider"]
+            .as_str()
+            .and_then(crate::github_profiles::Forge::from_key),
+    )
+}
+
+pub(crate) fn provider_glyph(forge: Option<crate::github_profiles::Forge>) -> &'static str {
+    use crate::github_profiles::Forge;
+    match forge {
+        Some(Forge::GitHub) => GITHUB,
+        Some(Forge::GitLab) => GITLAB,
         _ => OPENSTACK,
     }
 }

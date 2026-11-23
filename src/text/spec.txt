@@ -150,7 +150,7 @@ values agent claude codex agy opencode gemini copilot shell nixbot
 values agent-re claude codex agy opencode gemini copilot shell nixbot
 values user agent pschmitt nix-remote-builder
 values interval 2 5 10 30
-dynamic topic topic-re agent agent-re id id-re
+dynamic profile topic topic-re agent agent-re id id-re
 worker down extend topic claim niks3-token ssh sync builder prune inspect nix-cache start jobs ps logs register
 global --json force JSON output
 global -j short for --json

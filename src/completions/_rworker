@@ -8,48 +8,55 @@ _rworker_spec() {
   (( ${+_rworker_spec_cache} )) || _rworker_spec_cache=("${(@f)$(rworker __spec 2>/dev/null)}")
 }
 
-_rworker_workers() {
-  local line name desc
-  local -a workers
-  for line in "${(@f)$(rworker __workers "${_rworker_action:-}" 2>/dev/null)}"
+_rworker_rows() {
+  local tag="$1" heading="$2" line value rest description icon label expl
+  shift 2
+  local -a _rw_matches _rw_labels
+  local verbose=0
+  zstyle -T ":completion:${curcontext}:$tag" verbose && verbose=1
+  for line in "$@"
   do
     [[ -n "$line" ]] || continue
-    name="${line%%$'\t'*}"
-    desc="${line#*$'\t'}"
-    workers+=("${name}:${desc//:/\\:}")
+    value="${line%%$'\t'*}"
+    rest="${line#*$'\t'}"
+    description="${rest%%$'\t'*}"
+    icon=""
+    [[ "$rest" == *$'\t'* ]] && icon="${rest#*$'\t'}"
+    label="$value"
+    [[ -n "$icon" ]] && label="$icon $label"
+    if (( verbose )) && [[ -n "$description" ]]
+    then
+      label+=" -- $description"
+    fi
+    _rw_matches+=("$value")
+    _rw_labels+=("$label")
   done
+  if [[ "$tag" == workers && "$_rworker_action" == cp ]]
+  then
+    _all_labels workers expl worker compadd -S : -o match -d _rw_labels -a _rw_matches
+  else
+    _wanted "$tag" expl "$heading" compadd -o match -d _rw_labels -a _rw_matches
+  fi
+}
+
+_rworker_workers() {
   if [[ "$PREFIX" == *@* ]]
   then
     compset -P '*@'
   fi
-  _describe -t workers 'worker' workers
+  _rworker_rows workers worker "${(@f)$(rworker __workers "${_rworker_action:-}" 2>/dev/null)}"
 }
 
 # Topics, agents and agent ids of the cached workers (rworker __values SET),
 # with the workers that have them. A leading ! (invert the filter) stays.
 _rworker_values() {
   # _arguments puts its compadd options (-J GROUP ...) first.
-  local set="${@[-1]}" line value desc
-  local -a values
-  for line in "${(@f)$(rworker __values "$set" 2>/dev/null)}"
-  do
-    [[ -n "$line" ]] || continue
-    value="${line%%$'\t'*}"
-    desc="${line#*$'\t'}"
-    # _describe reads backslashes as escapes: keep a regex's \( and \.
-    value="${value//\\/\\\\}"
-    if [[ -n "$desc" ]]
-    then
-      values+=("${value//:/\\:}:${desc//:/\\:}")
-    else
-      values+=("${value//:/\\:}")
-    fi
-  done
+  local set="${@[-1]}"
   if [[ "$set" == *-re ]]
   then
     compset -P '!'
   fi
-  _describe -t values "${set%-re}" values
+  _rworker_rows values "${set%-re}" "${(@f)$(rworker __values "$set" 2>/dev/null)}"
 }
 
 _rworker_jobs() {
@@ -138,9 +145,7 @@ _rworker() {
     then
       _message 'path on the worker'
     else
-      local -a targets
-      targets=(${${(@f)$(rworker __workers 2>/dev/null)}%%$'\t'*})
-      _alternative 'workers:worker:compadd -S : -a targets' 'files:file:_files'
+      _alternative 'workers:worker:_rworker_workers' 'files:file:_files'
     fi
     return
   fi
