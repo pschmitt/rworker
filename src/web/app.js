@@ -1,10 +1,41 @@
 "use strict";
 
 const $ = (id) => document.getElementById(id);
+const root = document.documentElement;
+const SVG_NS = "http://www.w3.org/2000/svg";
 const views = { workers: "Workers", jobs: "Jobs", events: "Events", profiles: "Profiles" };
+const narrow = matchMedia("(max-width: 1180px)");
+const leaseWarningSeconds = 15 * 60;
+
+// Preferences: layout (split view or cards), theme and density, kept per browser.
+const prefChoices = { layout: ["split", "cards"], theme: ["system", "dark", "light"], density: ["comfortable", "compact"] };
+const prefs = { layout: "split", theme: "system", density: "comfortable" };
+try { Object.assign(prefs, JSON.parse(localStorage.getItem("rworker.prefs") || "{}")); } catch { /* Storage disabled. */ }
+for (const [key, choices] of Object.entries(prefChoices)) if (!choices.includes(prefs[key])) prefs[key] = choices[0];
+
+function applyPrefs() {
+  root.dataset.theme = prefs.theme;
+  root.dataset.layout = prefs.layout;
+  root.dataset.density = prefs.density;
+}
+
+function setPref(key, value) {
+  if (!prefChoices[key]?.includes(value)) return;
+  prefs[key] = value;
+  try { localStorage.setItem("rworker.prefs", JSON.stringify(prefs)); } catch { /* Storage disabled. */ }
+  applyPrefs();
+  for (const input of document.querySelectorAll(`#settings input[name="${key}"]`)) input.checked = input.value === value;
+  lastRenderKey = "";
+  detailPanel();
+  render();
+}
+applyPrefs();
+
 const state = {
-  token: "", authenticated: false, view: "workers", rows: {}, sort: {}, selected: null, job: null, tab: "logs",
-  workerFilter: "live", showFinished: false, redact: true, follow: true, limit: 200,
+  token: "", authenticated: false, view: "workers", rows: {}, selected: null, job: null, tab: "logs",
+  filters: { workers: "live", jobs: "active", events: "all" }, sort: "newest",
+  redact: true, follow: true, wrap: true, logQuery: "", logText: "", limit: 200,
+  detailJobs: null, raw: false, dismissed: new Set(), order: [],
 };
 let stream;
 let logSocket;
@@ -13,25 +44,75 @@ let loading = false;
 let detailRequest = 0;
 let detailLoading = false;
 let currentAction;
+let lastRenderKey = "";
+let lastHeadKey = "";
+let lastSearchView = "";
+const rowCache = new Map();
 
-function element(tag, value, className) {
+// DOM helpers
+function el(tag, className, ...children) {
   const node = document.createElement(tag);
-  if (value != null) node.textContent = String(value);
   if (className) node.className = className;
+  for (const child of children) {
+    if (child == null || child === false) continue;
+    node.append(child instanceof Node ? child : String(child));
+  }
   return node;
 }
 
-function button(label, onClick, className) {
-  const node = element("button", label, className);
+function icon(name, extra = "") {
+  const svg = document.createElementNS(SVG_NS, "svg");
+  svg.setAttribute("class", "i" + (extra ? " " + extra : ""));
+  svg.setAttribute("aria-hidden", "true");
+  const use = document.createElementNS(SVG_NS, "use");
+  use.setAttribute("href", "#i-" + name);
+  svg.append(use);
+  return svg;
+}
+
+function button(label, onClick, { cls = "btn", ic, title, aria } = {}) {
+  const node = el("button", cls);
   node.type = "button";
-  node.addEventListener("click", onClick);
+  if (ic) node.append(icon(ic));
+  if (label) node.append(el("span", null, label));
+  if (title) node.title = title;
+  if (aria) node.setAttribute("aria-label", aria);
+  if (onClick) node.addEventListener("click", onClick);
   return node;
 }
 
-function notice(message, error = false) {
-  $("notice").textContent = message;
-  $("notice").hidden = !message;
-  $("notice").classList.toggle("error", error);
+function iconButton(ic, label, onClick, cls = "btn quiet sm icon") {
+  return button(null, onClick, { cls, ic, title: label, aria: label });
+}
+
+// Toasts replace the old banner notices: they never move the page.
+function toast(message, { tone = "ok", detail, actions = [], timeout = 5000 } = {}) {
+  const node = el("div", "toast");
+  let timer;
+  const close = () => { clearTimeout(timer); node.remove(); };
+  const arm = (ms) => { clearTimeout(timer); if (ms) timer = setTimeout(close, ms); };
+  const build = (text, opts) => {
+    const tone = opts.tone || "ok";
+    node.className = "toast" + (tone === "error" ? " error" : tone === "busy" ? " busy" : "");
+    node.setAttribute("role", tone === "error" ? "alert" : "status");
+    const msg = el("div", "msg", text);
+    if (opts.detail) msg.append(el("small", null, opts.detail));
+    node.replaceChildren(icon(tone === "error" ? "alert" : tone === "busy" ? "loader" : tone === "info" ? "info" : "check", tone === "busy" ? "spin" : ""), msg);
+    for (const action of opts.actions || []) node.append(button(action.label, () => { close(); action.run(); }, { cls: "btn quiet sm" }));
+    node.append(iconButton("x", "Dismiss", close));
+    arm(opts.timeout ?? (tone === "error" ? 9000 : tone === "busy" ? 0 : 5000));
+  };
+  build(message, { tone, detail, actions, timeout });
+  node.addEventListener("mouseenter", () => clearTimeout(timer));
+  node.addEventListener("mouseleave", () => { if (!node.classList.contains("busy")) arm(4000); });
+  const stack = $("toasts");
+  stack.append(node);
+  while (stack.children.length > 4) stack.firstElementChild.remove();
+  return { close, update: (text, opts = {}) => build(text, opts) };
+}
+
+function fail(message) {
+  return toast(message, { tone: "error" });
 }
 
 function connection(label, kind = "") {
@@ -66,64 +147,67 @@ async function request(path, data) {
 
 function lock() {
   closeLogStream();
-  if ($("terminal-dialog").open) $("terminal-dialog").close();
+  for (const dialog of document.querySelectorAll("dialog[open]")) dialog.close();
+  closeMenu();
   state.authenticated = false;
   state.token = "";
   try { sessionStorage.removeItem("rworker.operator"); } catch { /* Storage disabled. */ }
   state.rows = {};
   state.selected = null;
+  rowCache.clear();
+  lastRenderKey = "";
   detailRequest++;
   stream?.close();
   stream = undefined;
   $("console").hidden = true;
+  $("toolbar").hidden = true;
   $("login").hidden = false;
   $("lock").hidden = true;
   $("sign-out").hidden = true;
   $("create").hidden = true;
+  $("fab").hidden = true;
   $("results").replaceChildren();
   $("detail-output").replaceChildren();
-  if ($("dialog").open) $("dialog").close();
+  $("session-detail").textContent = "";
   connection("Locked");
 }
 
+// Routing: #workers, #workers/NAME, #workers/NAME/JOB, #jobs, #events, #profiles.
 function navigate() {
   const [requested, worker, job] = location.hash.slice(1).split("/");
-  state.view = Object.hasOwn(views, requested) ? requested : "workers";
-  state.selected = null;
-  state.limit = 200;
-  $("search").value = "";
+  const view = Object.hasOwn(views, requested) ? requested : "workers";
+  if (view !== state.view) {
+    state.limit = 200;
+    $("search").value = "";
+  }
+  state.view = view;
   document.querySelectorAll("[data-view]").forEach((link) => {
     if (link.dataset.view === state.view) link.setAttribute("aria-current", "page");
     else link.removeAttribute("aria-current");
   });
-  $("search").placeholder = "Filter " + state.view;
-  $("create").hidden = !state.authenticated;
-  $("extra-toggle").hidden = state.view !== "jobs";
-  $("extra").checked = state.showFinished;
-  detailPanel();
-  render();
-  if (state.authenticated && requested === "workers" && worker) {
-    try {
-      openWorker(workerFor(decodeURIComponent(worker)), job ? decodeURIComponent(job) : null);
-    } catch (error) {
-      notice(error.message, true);
-    }
+  $("search").placeholder = { workers: "Filter workers", jobs: "Filter jobs", events: "Filter events", profiles: "Filter profiles" }[view];
+  if (state.authenticated && view === "workers" && worker) {
+    openWorker(workerFor(decodeURIComponent(worker)), job ? decodeURIComponent(job) : null);
+  } else {
+    state.selected = null;
+    state.job = null;
+    detailPanel();
   }
+  lastRenderKey = "";
+  render();
   refresh();
 }
 
+// Glyphs from the bundled icon font (agents.woff2). Keep in sync with
+// scripts/web-icon-font.sh, which builds the font from these.
 const agentIcons = new Map([
-  ["claude", ["\uec82", "claude"]], ["codex", ["\uec81", "codex"]],
-  ["shell", ["\uea85", ""]], ["nixbot", ["\uf313", "nix"]], ["nix build", ["\uf313", "nix"]],
-  ["copilot", ["\uec1e", ""]], ["gemini", ["\uec10", ""]], ["agy", ["\uec10", ""]],
+  ["claude", ["", "claude"]], ["codex", ["", "codex"]],
+  ["shell", ["", ""]], ["nixbot", ["", "nix"]], ["nix build", ["", "nix"]],
+  ["copilot", ["", ""]], ["gemini", ["", ""]], ["agy", ["", ""]],
   ["circus", ["\u{f0508}", ""]],
   ["circus-qemu", ["\u{f0508}", ""]],
-  ["antigravity", ["\uec10", ""]], ["browser-daemon", ["\u{f02a0}", ""]],
+  ["antigravity", ["", ""]], ["browser-daemon", ["\u{f02a0}", ""]],
 ]);
-
-// Worker glyphs: the `icon` of the worker's Glance image (rworker_icon) when
-// the bundled font has it, else one for its kind. Keep in sync with
-// scripts/web-icon-font.sh, which builds agents.woff2 from these.
 const githubGlyph = "\u{f09b}";
 const gitlabGlyph = "\u{f296}";
 const ciProviders = { github: "GitHub Actions", gitlab: "GitLab CI" };
@@ -149,119 +233,61 @@ function profileGlyph(row) {
   return openstackGlyph;
 }
 
-function profileIcon(row, className = "agent-icon") {
-  const providerClass = `profile-icon-${Object.hasOwn(ciProviders, row.provider) ? row.provider : "openstack"}`;
-  const icon = element("span", profileGlyph(row), `${className} ${providerClass}`);
-  icon.setAttribute("aria-hidden", "true");
-  return icon;
+function providerKey(row) {
+  return Object.hasOwn(ciProviders, row.provider) ? row.provider : "openstack";
 }
 
-function workerName(row) {
-  const link = element("a", null, "worker-link");
-  link.href = workerHash(row);
-  const icon = workerGlyph(row);
-  const glyph = element("span", icon, `agent-icon worker-icon${icon === gitlabGlyph ? " profile-icon-gitlab" : ""}`);
-  glyph.setAttribute("aria-hidden", "true");
-  const identity = element("span", row.name, "worker-identity");
-  const label = row.label || (isPool(row) ? row.kind + " pool" : "");
-  if (label) identity.append(element("span", label, "secondary"));
-  const context = [row.topic, row.agent].filter(Boolean).join(" · ");
-  if (context) identity.append(element("span", context, "secondary worker-context"));
-  link.append(glyph, identity);
-  return link;
+function workerTile(row) {
+  const glyph = workerGlyph(row);
+  const kind = glyph === githubGlyph ? " github" : glyph === gitlabGlyph ? " gitlab" : isPool(row) ? " pool" : "";
+  const tile = el("span", "tile" + kind + (row.retired ? " retired" : ""), glyph);
+  tile.setAttribute("aria-hidden", "true");
+  return tile;
 }
 
-function agentLabel(agent) {
-  if (!agent) return "—";
-  const label = element("span", null, "agent");
-  const icon = agentIcons.get(agent);
-  if (icon) {
-    const glyph = element("span", icon[0], "agent-icon " + icon[1]);
-    glyph.setAttribute("aria-hidden", "true");
-    label.append(glyph);
-  }
-  label.append(agent);
+function profileTile(row) {
+  const tile = el("span", "tile " + providerKey(row), profileGlyph(row));
+  tile.setAttribute("aria-hidden", "true");
+  return tile;
+}
+
+function glyph(char, cls = "") {
+  const node = el("span", "glyph" + (cls ? " " + cls : ""), char);
+  node.setAttribute("aria-hidden", "true");
+  return node;
+}
+
+function agentLabel(agent, agentId) {
+  if (!agent) return el("span", "muted", "—");
+  const label = el("span");
+  const known = agentIcons.get(agent);
+  const wrap = el("span", null);
+  wrap.append(...(known ? [glyph(known[0], known[1]), " "] : []), agent);
+  if (agentId) wrap.append(el("span", "muted", " · " + agentId));
+  label.append(wrap);
   return label;
 }
 
-function badge(value) {
-  const text = String(value || "Unknown");
-  const key = text.toLowerCase();
-  const kind = /^(active|ready|running)$/.test(key) ? "good" :
-    /^(build|boot|reboot|deleting|pending)/.test(key) ? "busy" :
-    /^(error|failed|exit [1-9])/.test(key) ? "bad" : "";
-  return element("span", text, "badge" + (kind ? " " + kind : ""));
-}
-
-function eventLabel(row) {
-  const kind = row.kind;
-  const tone = kind.endsWith("-added") ? "good" : kind.endsWith("-deleted") ? "bad" :
-    kind === "job-state" ? "busy" : "info";
-  const label = element("div");
-  label.append(element("strong", kind.replaceAll("-", " "), "event-tone " + tone));
-  if (!row.details) return label;
-  const detail = element("span", null, "secondary event-detail");
-  const addValue = (value) => {
-    const key = value.toLowerCase();
-    const color = key === "exit 0" ? "" : /^(exit |error$|failed$|failure$|shutoff$|deleted$)/.test(key) ? "bad" :
-      /^(running|active|ready|succeeded|success|completed)$/.test(key) ? "good" : "busy";
-    detail.append(element("span", value, "event-tone " + color));
-  };
-  if (row.details.includes(" -> ")) {
-    const [before, after] = row.details.split(" -> ", 2);
-    addValue(before);
-    detail.append(" → ");
-    addValue(after);
-  } else {
-    const field = /^([a-z_-]+=)(.*)$/.exec(row.details);
-    if (field) {
-      detail.append(field[1]);
-      addValue(field[2]);
-    } else {
-      addValue(row.details);
-    }
-  }
-  label.append(detail);
-  return label;
-}
-
+// Formatting
 function duration(seconds) {
-  if (seconds < 0) return "expired";
+  seconds = Math.max(0, Math.floor(seconds));
+  if (seconds < 60) return "<1m";
   const minutes = Math.floor(seconds / 60);
   if (minutes < 60) return minutes + "m";
   const hours = Math.floor(minutes / 60);
-  if (hours < 24) return hours + "h" + (minutes % 60) + "m";
-  return Math.floor(hours / 24) + "d" + (hours % 24) + "h";
+  if (hours < 24) return hours + "h" + (minutes % 60 ? " " + (minutes % 60) + "m" : "");
+  return Math.floor(hours / 24) + "d" + (hours % 24 ? " " + (hours % 24) + "h" : "");
 }
 
 function timestamp(value) {
   return typeof value === "number" ? value : Date.parse(value) / 1000;
 }
 
-function workerAge(created, now) {
-  const seconds = timestamp(created);
-  return Number.isFinite(seconds) ? duration(now - seconds) : "—";
-}
-
-function workerExpiry(row, now) {
-  let label = "—";
-  let tone = "";
-  if (isPool(row) && row.pool_state) {
-    label = row.pool_state;
-    if (label === "idle" && row.last_busy > 0) {
-      label += " " + duration(now - row.last_busy);
-      tone = " idle";
-    }
-  } else if (row.grace_until > now) {
-    label = "grace " + duration(row.grace_until - now);
-    tone = " urgent";
-  } else if (row.expires_at > 0) {
-    const remaining = row.expires_at - now;
-    label = duration(remaining);
-    if (remaining < 0) tone = " urgent";
-    else if (remaining < leaseWarningSeconds) tone = " soon";
-  }
-  return element("span", label, "worker-expiry" + tone);
+function relative(value, now = Date.now() / 1000) {
+  const seconds = now - timestamp(value);
+  if (!Number.isFinite(seconds)) return "";
+  if (seconds < 45) return "just now";
+  return duration(seconds) + " ago";
 }
 
 function clock(value) {
@@ -270,227 +296,467 @@ function clock(value) {
   return Number.isNaN(date.valueOf()) ? "—" : date.toLocaleString();
 }
 
-const sortFields = {
-  workers: [
-    (row) => row.name, (row) => row.retired ? "Retired" : row.status, (row) => row.agent,
-    (row) => row.topic,
-    (row, now) => isPool(row) && row.pool_state ? null :
-      row.grace_until > now ? Number(row.grace_until) : Number(row.expires_at) || null,
-    (row) => -timestamp(row.created_at),
-  ],
-  jobs: [(row) => row.job, (row) => row.state],
-  events: [(row) => row.kind, (row) => row.target, (row) => timestamp(row.timestamp)],
-  profiles: [(row) => row.name, (row) => row.arch, (row) => row.vcpus,
-    (row) => row.ram_gb == null ? row.ram_mib : row.ram_gb * 1e9 / 2 ** 20,
-    (row) => row.disk_total_bytes == null ? Number(row.disk) || null : row.disk_total_bytes / 2 ** 30, (row) => row.flavor, (row) => (row.image_tags || []).join(", ")],
-};
-const sortLabels = new Intl.Collator(undefined, { numeric: true, sensitivity: "base" });
-
-function compareSortValues(left, right, descending) {
-  const empty = (value) => value == null || value === "" || Number.isNaN(value);
-  if (empty(left)) return empty(right) ? 0 : 1;
-  if (empty(right)) return -1;
-  const order = typeof left === "number" && typeof right === "number" ?
-    left - right : sortLabels.compare(left, right);
-  return descending ? -order : order;
+function timeOfDay(value) {
+  const date = new Date(timestamp(value) * 1000);
+  return Number.isNaN(date.valueOf()) ? "" : date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
 }
 
-function table(columns, rows, view) {
-  const node = element("table");
-  const head = node.createTHead().insertRow();
-  for (const [index, [label, optional, sortable = true]] of columns.entries()) {
-    const cell = element("th", view && sortable ? null : label, optional ? "optional" : "");
-    cell.scope = "col";
-    if (view && sortable) {
-      const sort = state.sort[view];
-      const active = sort?.index === index;
-      const heading = button(label, () => {
-        state.sort[view] = { index, descending: active && !sort.descending };
-        render();
-      }, "sort-heading");
-      heading.dataset.sort = String(index);
-      const arrow = element("span", active ? (sort.descending ? "↓" : "↑") : "↕", "sort-arrow");
-      arrow.setAttribute("aria-hidden", "true");
-      heading.append(arrow);
-      cell.append(heading);
-      if (active) cell.setAttribute("aria-sort", sort.descending ? "descending" : "ascending");
-    }
-    head.append(cell);
+function dayLabel(value) {
+  const date = new Date(timestamp(value) * 1000);
+  const today = new Date();
+  const start = (d) => new Date(d.getFullYear(), d.getMonth(), d.getDate()).valueOf();
+  const days = Math.round((start(today) - start(date)) / 864e5);
+  if (days === 0) return "Today";
+  if (days === 1) return "Yesterday";
+  return date.toLocaleDateString([], { weekday: "long", day: "numeric", month: "long" });
+}
+
+function leaseInfo(row, now) {
+  if (row.retired) return { kind: "retired", text: "retired", long: "Retired", tone: "", pct: 0 };
+  if (isPool(row) && row.pool_state) {
+    const busy = row.pool_state === "busy";
+    const idleFor = !busy && row.last_busy > 0 ? duration(now - row.last_busy) : "";
+    return { kind: "pool", text: row.pool_state + (idleFor ? " " + idleFor : ""), long: busy ? "Busy" : "Idle" + (idleFor ? " for " + idleFor : ""), tone: busy ? "busy" : "idle", pct: 100 };
   }
-  const tbody = node.createTBody();
-  for (const row of rows) {
-    const tr = tbody.insertRow();
-    if (row.selected) tr.className = "selected";
-    row.cells.forEach((value, index) => {
-      const cell = tr.insertCell();
-      if (columns[index][1]) cell.className = "optional";
-      if (value instanceof Node) cell.append(value);
-      else cell.textContent = value ?? "—";
+  if (row.grace_until > now) {
+    const left = row.grace_until - now;
+    return { kind: "lease", text: "grace " + duration(left), long: "In its grace period, " + duration(left) + " left", tone: "urgent", pct: 100 };
+  }
+  if (row.expires_at > 0) {
+    const left = row.expires_at - now;
+    const created = timestamp(row.created_at);
+    const total = Number.isFinite(created) ? row.expires_at - created : 0;
+    const pct = total > 0 ? Math.min(100, Math.max(0, left / total * 100)) : 100;
+    const tone = left < 0 ? "urgent" : left < leaseWarningSeconds ? "soon" : "";
+    return {
+      kind: "lease", pct, tone,
+      text: left < 0 ? "overdue " + duration(-left) : duration(left) + " left",
+      long: left < 0 ? "Overdue by " + duration(-left) : duration(left) + " left · expires " + timeOfDay(row.expires_at),
+    };
+  }
+  return { kind: "none", text: "—", long: "No lease", tone: "", pct: 0 };
+}
+
+function leaseBar(lease, wide = false) {
+  const bar = el("span", "bar" + (lease.kind === "pool" ? " pool-" + lease.tone : lease.tone ? " " + lease.tone : ""));
+  const fill = el("i");
+  fill.style.setProperty("--pct", Math.round(lease.pct) + "%");
+  bar.append(fill);
+  if (wide) bar.style.width = "100%";
+  return bar;
+}
+
+function statusPill(row) {
+  if (row.retired) return el("span", "pill", "Retired");
+  const text = String(row.status || "Unknown");
+  const key = text.toLowerCase();
+  if (isPool(row) && row.pool_state && key === "active") {
+    return el("span", "pill " + (row.pool_state === "busy" ? "busy" : ""), row.pool_state === "busy" ? "Busy" : "Idle");
+  }
+  const tone = /^(active|ready|running)$/.test(key) ? "good" : /^(build|boot|reboot|deleting|pending)/.test(key) ? "busy" : /^(error|failed)/.test(key) ? "bad" : "";
+  return el("span", "pill" + (tone ? " " + tone : ""), text.charAt(0) + text.slice(1).toLowerCase());
+}
+
+function jobTone(value) {
+  const key = String(value || "").toLowerCase();
+  if (key === "running") return ["busy", "play"];
+  if (key === "exit 0") return ["good", "check"];
+  if (/^exit /.test(key) || /error|failed/.test(key)) return ["bad", "x"];
+  return ["", "file"];
+}
+
+function stripAnsi(value) {
+  return value.replace(/\u001b\[[0-?]*[ -/]*[@-~]/g, "");
+}
+
+function emptyState(ic, message, extra) {
+  const node = el("div", "empty", icon(ic, ic === "loader" ? "spin" : ""), el("p", null, message));
+  if (extra) node.append(extra);
+  return node;
+}
+
+// Filters per view.
+const viewFilters = {
+  workers: [["live", "Live"], ["pool", "Pools"], ["expiring", "Expiring"], ["retired", "Retired"]],
+  jobs: [["active", "Active"], ["all", "All"]],
+  events: [["all", "All", "activity"], ["workers", "Workers", "server"], ["jobs", "Jobs", "jobs"], ["state", "State changes", "swap"], ["failures", "Failures", "alert"]],
+  profiles: [],
+};
+const filterTests = {
+  workers: {
+    live: (row) => !row.retired,
+    pool: (row) => !row.retired && isPool(row),
+    expiring: (row, now) => !row.retired && !(isPool(row) && row.pool_state) &&
+      (row.grace_until > now || (row.expires_at > 0 && row.expires_at - now < leaseWarningSeconds)),
+    retired: (row) => Boolean(row.retired),
+  },
+  jobs: {
+    active: (row) => row.state !== "archived" && !String(row.state).startsWith("exit "),
+    all: () => true,
+  },
+  events: {
+    all: () => true,
+    workers: (row) => row.kind.startsWith("worker-"),
+    jobs: (row) => row.kind.startsWith("job-"),
+    state: (row) => row.kind.endsWith("-state"),
+    failures: (row) => /exit [1-9]|error|failed|failure/i.test(row.details || ""),
+  },
+};
+
+function renderFilters(now) {
+  const host = $("filters");
+  const defs = viewFilters[state.view];
+  const source = state.rows[state.view];
+  const key = JSON.stringify([state.view, state.filters[state.view], state.sort, source?.length, source && defs.map(([id]) => source.filter((row) => filterTests[state.view][id](row, now)).length)]);
+  if (host.dataset.key === key) return;
+  host.dataset.key = key;
+  host.replaceChildren();
+  for (const [id, label, ic] of defs) {
+    const chip = el("button", "chip");
+    chip.type = "button";
+    if (ic && state.view === "events") chip.append(icon(ic));
+    chip.append(label);
+    if (source && state.view !== "events") chip.append(" ", el("b", null, source.filter((row) => filterTests[state.view][id](row, now)).length));
+    chip.setAttribute("aria-pressed", String(state.filters[state.view] === id));
+    chip.addEventListener("click", () => {
+      state.filters[state.view] = id;
+      state.limit = 200;
+      render();
     });
+    host.append(chip);
   }
-  return node;
-}
-
-function named(title, secondary, click) {
-  const node = element("div");
-  node.append(click ? button(title, click, "row-link") : element("strong", title));
-  if (secondary) node.append(element("span", secondary, "secondary"));
-  return node;
-}
-
-function workerHash(row, job) {
-  return "#workers/" + encodeURIComponent(row.name) + (job ? "/" + encodeURIComponent(job) : "");
-}
-
-function selected(row, job) {
-  location.hash = workerHash(row, job);
-}
-
-function openWorker(row, job) {
-  state.selected = row;
-  state.job = job;
-  state.tab = "logs";
-  state.follow = !row.retired;
-  detailPanel();
-  updateDetail(true);
-  window.scrollTo(0, 0);
-  $("heading").focus({ preventScroll: true });
-}
-
-function sourceWorker(name) {
-  return (state.rows.workers || []).find((worker) => worker.name === name);
-}
-function workerFor(name) {
-  return sourceWorker(name) || { name };
-}
-
-const leaseWarningSeconds = 15 * 60;
-const workerFilters = {
-  live: (row) => !row.retired,
-  pool: (row) => !row.retired && isPool(row),
-  expiring: (row, now) => !row.retired && !(isPool(row) && row.pool_state) &&
-    (row.grace_until > now || (row.expires_at > 0 && row.expires_at - now < leaseWarningSeconds)),
-  retired: (row) => Boolean(row.retired),
-};
-const filterButtons = [...document.querySelectorAll("[data-worker-filter]")];
-
-function renderWorkerFilters(source, now) {
-  for (const control of filterButtons) {
-    const key = control.dataset.workerFilter;
-    const count = state.rows.workers ? source.filter((row) => workerFilters[key](row, now)).length : "—";
-    control.querySelector("strong").textContent = count;
-    control.setAttribute("aria-pressed", String(key === state.workerFilter));
+  if (state.view === "workers") {
+    const sort = el("select");
+    sort.setAttribute("aria-label", "Sort workers");
+    for (const [value, label] of [["newest", "Newest first"], ["lease", "Expiring first"], ["name", "Name"]]) {
+      const option = el("option", null, label);
+      option.value = value;
+      sort.append(option);
+    }
+    sort.value = state.sort;
+    sort.addEventListener("change", () => { state.sort = sort.value; render(); });
+    host.append(sort);
   }
+}
+
+function renderNav(now) {
+  const workers = state.rows.workers;
+  const jobs = state.rows.jobs;
+  const set = (key, text, cls = "") => {
+    for (const node of document.querySelectorAll(`[data-count="${key}"]`)) {
+      node.textContent = text;
+      node.className = "count lbl" + (cls ? " " + cls : "");
+    }
+  };
+  set("workers", workers ? String(workers.filter((row) => !row.retired).length) : "");
+  const running = jobs ? jobs.filter((row) => filterTests.jobs.active(row, now)).length : 0;
+  set("jobs", running ? running + " running" : "", "busy");
+  set("profiles", state.rows.profiles ? String(state.rows.profiles.length) : "");
+}
+
+// Expiry banner: a lease about to run out, with a one-click extension.
+function renderBanner(now) {
+  const banner = $("banner");
+  const fullPage = state.selected && !$("workspace").classList.contains("split");
+  const expiring = state.view !== "workers" || fullPage ? [] : (state.rows.workers || []).filter((row) =>
+    filterTests.workers.expiring(row, now) && !state.dismissed.has(row.name));
+  const key = "k:" + expiring.map((row) => row.name + leaseInfo(row, now).text).join("|");
+  if (banner.dataset.key === key) return;
+  banner.dataset.key = key;
+  banner.hidden = !expiring.length;
+  if (!expiring.length) return;
+  const [row] = expiring;
+  const lease = leaseInfo(row, now);
+  const link = el("a", "mono", row.name);
+  link.href = workerHash(row);
+  const text = el("span", null, link, " ", row.grace_until > now ? "is in its grace period" : lease.text.startsWith("overdue") ? "is overdue" : "expires in " + lease.text.replace(" left", ""),
+    row.topic ? el("span", "muted", " · " + row.topic) : null,
+    expiring.length > 1 ? el("span", "muted", ` · and ${expiring.length - 1} more`) : null);
+  const actions = el("span", "actions",
+    button("1h from now", () => runAction({ action: "extend", worker: row.name, ttl: "1h" }, `${row.name} now expires in 1 hour.`), { cls: "btn sm primary", ic: "clock" }),
+    button("Extend…", () => form("extend", row), { cls: "btn sm" }),
+    iconButton("x", "Dismiss", () => { state.dismissed.add(row.name); banner.dataset.key = ""; renderBanner(Date.now() / 1000); }));
+  banner.replaceChildren(icon("alert"), text, actions);
+}
+
+function searchMatch(row, search) {
+  return !search || JSON.stringify(row).toLowerCase().includes(search);
 }
 
 function render() {
-  const source = state.rows[state.view] || [];
+  const now = Date.now() / 1000;
+  if (!state.authenticated) return;
+  renderNav(now);
+  renderFilters(now);
+  renderBanner(now);
+  const view = state.view;
+  const source = state.rows[view];
   const results = $("results");
   const search = $("search").value.trim().toLowerCase();
-  let visible = source.filter((row) => !search || JSON.stringify(row).toLowerCase().includes(search));
-  const now = Date.now() / 1000;
-  if (state.view === "workers") {
-    renderWorkerFilters(source, now);
-    visible = visible.filter((row) => workerFilters[state.workerFilter](row, now));
-  }
-  if (state.view === "jobs" && !state.showFinished) {
-    visible = visible.filter((row) => row.state !== "archived" && !String(row.state).startsWith("exit "));
-  }
-  if (state.view === "events") visible.reverse();
-  const sort = state.sort[state.view];
-  if (sort) {
-    const value = sortFields[state.view][sort.index];
-    visible.sort((left, right) => compareSortValues(value(left, now), value(right, now), sort.descending));
-  }
-  const count = visible.length;
-  visible = visible.slice(0, state.limit);
-
-  const counter = $("results-count");
-  counter.hidden = !visible.length;
-  counter.textContent = count > visible.length ? `Showing ${visible.length} of ${count}` : `${count} ${count === 1 ? "result" : "results"}`;
-  if (!visible.length) {
-    const workerEmpty = {
-      live: "No live workers.",
-      pool: "No live pool workers.",
-      expiring: "No leases expiring in the next 15 minutes or overdue.",
-      retired: "No retired workers.",
-    };
-    const message = !state.rows[state.view] ? "Loading " + state.view + "…" :
-      search ? "No results match your search in this view." :
-        state.view === "workers" ? workerEmpty[state.workerFilter] :
-        state.view === "jobs" && !state.showFinished && source.length ? "No active jobs. Show finished jobs to see earlier runs." :
-          "No " + state.view + " to display.";
-    results.replaceChildren(element("div", message, "empty"));
+  if (!source) {
+    if (lastRenderKey !== "loading:" + view) results.replaceChildren(emptyState("loader", "Loading " + view + "…"));
+    lastRenderKey = "loading:" + view;
     return;
   }
-  let columns;
-  let rows;
-  switch (state.view) {
-    case "workers": {
-      columns = [["Name"], ["Status"], ["Agent"], ["Topic"], ["Lease / pool"], ["Age"]];
-      rows = visible.map((row) => ({
-        selected: state.selected?.name === row.name,
-        cells: [workerName(row), badge(row.retired ? "Retired" : row.status),
-          agentLabel(row.agent), row.topic || "—", workerExpiry(row, now),
-          element("span", workerAge(row.created_at, now), "worker-age")],
-      }));
-      break;
+  const test = filterTests[view]?.[state.filters[view]] || (() => true);
+  let visible = source.filter((row) => searchMatch(row, search) && test(row, now));
+  if (view === "events") visible = visible.slice().reverse();
+  const key = JSON.stringify([view, prefs.layout, state.filters[view], state.sort, search, state.limit, state.selected?.name, Math.floor(now / 20), visible]);
+  if (key === lastRenderKey) return;
+  lastRenderKey = key;
+  if (!visible.length) {
+    const messages = {
+      workers: { live: "No live workers.", pool: "No live pool workers.", expiring: "No leases expire in the next 15 minutes.", retired: "No retired workers." }[state.filters.workers],
+      jobs: state.filters.jobs === "active" && source.length ? "No active jobs. Choose All to see earlier runs." : "No jobs yet.",
+      events: "No events match.",
+      profiles: "No profiles configured.",
+    };
+    const extra = view === "workers" && state.filters.workers === "live" && !search ? button("New worker", () => form("create"), { cls: "btn primary", ic: "plus" }) : null;
+    results.replaceChildren(emptyState(search ? "search" : view === "workers" ? "server" : "info", search ? "Nothing matches your filter." : messages[view], extra));
+    state.order = [];
+    return;
+  }
+  const scroll = $("inventory").scrollTop;
+  switch (view) {
+    case "workers": prefs.layout === "cards" ? renderWorkerCards(visible, now) : renderWorkerList(visible, now); break;
+    case "jobs": renderJobs(visible); break;
+    case "events": renderEvents(visible, now); break;
+    default: renderProfiles(visible);
+  }
+  $("inventory").scrollTop = scroll;
+}
+
+function showMore(container, total) {
+  if (total <= state.limit) return;
+  const more = el("div", "more-row", `Showing ${state.limit} of ${total} · `,
+    button("Show more", () => { state.limit += 200; render(); }, { cls: "" }));
+  container.append(more);
+}
+
+function sortWorkers(rows, now) {
+  const sorted = rows.slice();
+  if (state.sort === "name") sorted.sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true }));
+  else if (state.sort === "lease") {
+    const left = (row) => isPool(row) ? Infinity : row.grace_until > now ? row.grace_until - now : row.expires_at > 0 ? row.expires_at - now : Infinity;
+    sorted.sort((a, b) => left(a) - left(b));
+  } else sorted.sort((a, b) => (timestamp(b.created_at) || 0) - (timestamp(a.created_at) || 0));
+  return sorted;
+}
+
+function groupWorkers(rows, now) {
+  rows = sortWorkers(rows, now);
+  if (state.filters.workers === "retired" || state.filters.workers === "expiring") return [[null, null, rows]];
+  const adhoc = rows.filter((row) => !isPool(row));
+  const pools = new Map();
+  for (const row of rows.filter(isPool)) {
+    const key = row.pool || row.kind;
+    if (!pools.has(key)) pools.set(key, []);
+    pools.get(key).push(row);
+  }
+  const groups = [];
+  if (adhoc.length) groups.push(["Ad-hoc", "cloud", adhoc]);
+  for (const [name, members] of pools) groups.push([name + " pool", "tent", members]);
+  return groups;
+}
+
+function workerSub(row) {
+  return row.topic || row.label || (isPool(row) ? row.kind + " pool" : row.owner) || "";
+}
+
+function workerRow(row, now) {
+  const lease = leaseInfo(row, now);
+  const data = JSON.stringify([row.topic, row.label, row.status, row.retired, lease.text, lease.tone, Math.round(lease.pct / 5), row.icon]);
+  const current = state.selected?.name === row.name;
+  const cached = rowCache.get(row.name);
+  if (cached && cached.data === data) {
+    if (current) cached.node.setAttribute("aria-current", "true");
+    else cached.node.removeAttribute("aria-current");
+    return cached.node;
+  }
+  const node = el("a", "row worker-item");
+  node.href = workerHash(row);
+  node.dataset.worker = row.name;
+  if (current) node.setAttribute("aria-current", "true");
+  const right = lease.kind === "pool" ? el("span", "pill" + (lease.tone === "busy" ? " busy" : ""), lease.text) :
+    lease.kind === "retired" ? el("span", "lease-text", relative(row.created_at, now)) :
+      el("span", "lease", el("span", "lease-text" + (lease.tone ? " " + lease.tone : ""), lease.text), leaseBar(lease));
+  node.append(workerTile(row), el("span", "ident", el("span", "name", row.name), el("span", "sub", workerSub(row))), right);
+  if (cached) node.classList.add("flash");
+  rowCache.set(row.name, { node, data });
+  return node;
+}
+
+function renderWorkerList(visible, now) {
+  const container = el("div", "worker-list");
+  const order = [];
+  let shown = 0;
+  for (const [title, ic, rows] of groupWorkers(visible, now)) {
+    if (title) container.append(el("div", "group", icon(ic), title, " ", el("span", null, rows.length)));
+    for (const row of rows) {
+      if (shown++ >= state.limit) break;
+      container.append(workerRow(row, now));
+      order.push(row.name);
     }
-    case "jobs":
-      columns = [["Job"], ["State"]];
-      rows = visible.map((row) => ({
-        selected: state.selected?.name === row.worker && state.job === row.job,
-        cells: [named(row.job, row.worker, () => selected(workerFor(row.worker), row.job)), badge(row.state)],
-      }));
-      break;
-    case "events":
-      columns = [["Event"], ["Target"], ["Time"]];
-      rows = visible.map((row) => ({
-        cells: [eventLabel(row), element("span", row.target, "event-tone info"), clock(row.timestamp)],
-      }));
-      break;
-    default:
-      columns = [["Profile"], ["Arch"], ["vCPUs"], ["RAM"], ["Disk"], ["Flavor", true], ["Tags", true]];
-      if (state.authenticated) columns.push(["Actions", false, false]);
-      rows = visible.map((row) => {
-        const tags = (row.image_tags || []).join(", ");
-        const profile = named(row.name, row.default ? "Default" : "", () => openProfile(row));
-        if (row.flavor) profile.append(element("span", row.flavor, "secondary profile-context"));
-        if (tags) profile.append(element("span", tags, "secondary profile-context"));
-        const profileName = element("div", null, "profile-name");
-        profileName.append(profileIcon(row, "agent-icon worker-icon"), profile);
-        const ram = row.ram_gb != null ? row.ram_gb + " GB" : row.ram_mib == null ? "—" :
-          row.ram_mib % 1024 === 0 ? row.ram_mib / 1024 + " GiB" : row.ram_mib + " MiB";
-        const disk = row.disk_total_bytes != null ? `${(row.disk_total_bytes / 2 ** 30).toFixed(1)} GiB` :
-          row.disk ? row.disk + " GiB" : "—";
-        const cells = [profileName, row.arch || "—", row.vcpus, ram, disk, row.flavor, tags || "—"];
-        if (state.authenticated) {
-          const create = button("Worker", () => form("create", null, row.name), "profile-create-action");
-          create.setAttribute("aria-label", `New worker from ${row.name}`);
-          cells.push(create);
-        }
-        return { cells };
-      });
   }
-  const previous = results.querySelector(`[data-view-table="${state.view}"]`);
-  const scrollLeft = previous?.scrollLeft ?? 0;
-  const focused = previous?.contains(document.activeElement) ? document.activeElement : null;
-  const focusedSort = focused?.dataset.sort;
-  const focusedWorker = focused?.classList.contains("worker-link") ? focused.hash : null;
-  const scroller = element("div", null, state.view === "workers" ? "table-scroll worker-table" : "table-scroll");
-  scroller.dataset.viewTable = state.view;
-  scroller.append(table(columns, rows, state.view));
-  results.replaceChildren(scroller);
-  scroller.scrollLeft = scrollLeft;
-  if (focusedSort !== undefined) scroller.querySelector(`[data-sort="${focusedSort}"]`)?.focus({preventScroll: true});
-  if (focusedWorker) {
-    [...scroller.querySelectorAll(".worker-link")].find((link) => link.hash === focusedWorker)?.focus({ preventScroll: true });
+  showMore(container, visible.length);
+  state.order = order;
+  $("results").replaceChildren(container);
+}
+
+function workerMenuButton(row, cls = "btn sm icon quiet") {
+  const trigger = iconButton("more", "More actions", (event) => { event.preventDefault(); openMenu(trigger, workerMenu(row)); }, cls);
+  return trigger;
+}
+
+function renderWorkerCards(visible, now) {
+  const container = el("div");
+  const sorted = sortWorkers(visible, now);
+  const single = sorted.filter((row) => !isPool(row) || row.retired);
+  const order = [];
+  if (single.length) {
+    if (state.filters.workers !== "retired") container.append(el("div", "group", icon("cloud"), "Ad-hoc ", el("span", null, single.length)));
+    const grid = el("div", "cards");
+    for (const row of single.slice(0, state.limit)) {
+      const lease = leaseInfo(row, now);
+      const card = el("article", "card");
+      const name = el("a", "name", row.name);
+      name.href = workerHash(row);
+      const profile = state.rows.profiles?.find((item) => item.name === row.profile);
+      const facts = el("div", "card-facts",
+        el("span", null, icon("cpu"), [row.profile, profile?.vcpus ? profile.vcpus + " vCPU" : ""].filter(Boolean).join(" · ") || "—"),
+        el("span", null, agentLabel(row.agent)),
+        el("span", null, icon("user"), row.owner || "—"),
+        el("span", null, icon("clock"), relative(row.created_at, now).replace(" ago", " old")));
+      card.append(el("div", "card-head", workerTile(row), el("div", "ident", name, el("span", "sub", workerSub(row))), statusPill(row)), facts);
+      if (lease.kind === "lease") {
+        card.append(el("div", "card-lease", el("div", null, el("span", null, "Lease"), el("span", "lease-text" + (lease.tone ? " " + lease.tone : ""), lease.text)), leaseBar(lease, true)));
+      }
+      const actions = el("div", "card-actions");
+      if (!row.retired) actions.append(button("SSH", () => openTerminal(row), { cls: "btn sm", ic: "terminal" }));
+      const open = el("a", "btn sm", icon("file"), el("span", null, row.retired ? "Logs" : "Open"));
+      open.href = workerHash(row);
+      actions.append(open);
+      if (!row.retired) actions.append(workerMenuButton(row));
+      card.append(actions);
+      grid.append(card);
+      order.push(row.name);
+    }
+    container.append(grid);
   }
-  if (count > visible.length) {
-    const more = element("div", null, "more");
-    more.append(button("Show more", () => { state.limit += 200; render(); }));
-    results.append(more);
+  const pools = new Map();
+  for (const row of sorted.filter((item) => isPool(item) && !item.retired)) {
+    const key = row.pool || row.kind;
+    if (!pools.has(key)) pools.set(key, []);
+    pools.get(key).push(row);
   }
+  if (pools.size) {
+    container.append(el("div", "group", icon("tent"), "Pools ", el("span", null, pools.size)));
+    const grid = el("div", "pools");
+    for (const [name, members] of pools) {
+      const busy = members.filter((row) => row.pool_state === "busy").length;
+      const strip = el("div", "pool-members");
+      for (const row of members) {
+        const lease = leaseInfo(row, now);
+        const link = el("a", "pool-member", el("span", "sq" + (row.pool_state === "busy" ? " busy" : "")), el("span", "mono", row.name), el("span", "muted", lease.text));
+        link.href = workerHash(row);
+        strip.append(link);
+        order.push(row.name);
+      }
+      const profile = state.rows.profiles?.find((item) => item.name === members[0].profile);
+      grid.append(el("article", "card",
+        el("div", "card-head", workerTile(members[0]), el("div", "ident", el("strong", null, name), el("span", "sub", [members[0].topic, profile?.vcpus ? profile.vcpus + " vCPU each" : ""].filter(Boolean).join(" · "))),
+          el("span", "muted", `${busy} busy · ${members.length - busy} idle`)),
+        strip));
+    }
+    container.append(grid);
+  }
+  showMore(container, single.length);
+  state.order = order;
+  $("results").replaceChildren(container);
+}
+
+function renderJobs(visible) {
+  const container = el("div", "jobs-list");
+  const sorted = visible.slice().sort((a, b) => Number(filterTests.jobs.active(b)) - Number(filterTests.jobs.active(a)));
+  for (const row of sorted.slice(0, state.limit)) {
+    const [tone, ic] = jobTone(row.state);
+    const link = el("a", "job-row", icon(ic, "tone-" + (tone || "info")), el("span", "name", row.job), el("span", "worker", row.worker), el("span", "pill" + (tone ? " " + tone : ""), row.state));
+    link.href = workerHash({ name: row.worker }, row.job);
+    container.append(link);
+  }
+  showMore(container, visible.length);
+  $("results").replaceChildren(container);
+}
+
+function eventValue(value) {
+  const key = value.toLowerCase();
+  const tone = key === "exit 0" ? "good" : /^(exit |error$|failed$|failure$|shutoff$|deleted$)/.test(key) ? "bad" :
+    /^(running|active|ready|succeeded|success|completed)$/.test(key) ? "good" : "busy";
+  return el("strong", "tone-" + tone, value.toLowerCase());
+}
+
+function eventDetails(details) {
+  if (!details) return [];
+  if (details.includes(" -> ")) {
+    const [before, after] = details.split(" -> ", 2);
+    return [" ", eventValue(before), " → ", eventValue(after)];
+  }
+  const field = /^([a-z_-]+)=(.*)$/.exec(details);
+  return field ? [" · ", eventValue(field[2])] : [" · ", eventValue(details)];
+}
+
+function renderEvents(visible, now) {
+  const container = el("div");
+  let day = "";
+  const kinds = {
+    "worker-added": ["add", "plus", "Created"], "worker-deleted": ["del", "minus", "Deleted"],
+    "worker-state": ["chg", "swap", "Worker"], "job-added": ["job", "play", "Job started"], "job-state": ["job", "jobs", "Job"],
+  };
+  for (const row of visible.slice(0, state.limit)) {
+    const label = dayLabel(row.timestamp);
+    if (label !== day) {
+      day = label;
+      container.append(el("div", "day", label));
+    }
+    const [dot, ic, verb] = kinds[row.kind] || ["chg", "info", row.kind.replaceAll("-", " ")];
+    const [worker, job] = String(row.target).split("/");
+    const target = button(row.target, () => select(workerFor(worker), job), { cls: "target" });
+    const meta = [row.profile, row.topic, row.agent, row.owner].filter(Boolean).join(" · ");
+    container.append(el("div", "event",
+      el("span", "event-dot " + dot, icon(ic)),
+      el("div", null, el("div", "event-what", el("span", null, verb + " "), target, ...eventDetails(row.details)), meta ? el("div", "event-meta", meta) : null),
+      el("div", "event-when", el("div", null, timeOfDay(row.timestamp)), el("div", null, relative(row.timestamp, now)))));
+  }
+  showMore(container, visible.length);
+  $("results").replaceChildren(container);
+}
+
+function ramLabel(row) {
+  return row.ram_gb != null ? row.ram_gb + " GB" : row.ram_mib == null ? "" : row.ram_mib % 1024 === 0 ? row.ram_mib / 1024 + " GiB" : row.ram_mib + " MiB";
+}
+
+function diskLabel(row) {
+  return row.disk_total_bytes != null ? `${(row.disk_total_bytes / 2 ** 30).toFixed(0)} GiB disk` : row.disk ? row.disk + " GiB disk" : "";
+}
+
+function profileSpecs(row) {
+  return [row.vcpus ? row.vcpus + " vCPU" : "", ramLabel(row), diskLabel(row)].filter(Boolean);
+}
+
+function renderProfiles(visible) {
+  const grid = el("div", "profiles");
+  for (const row of visible) {
+    const head = el("div", "card-head", profileTile(row), el("div", "ident",
+      el("span", null, el("span", "name", row.name), row.default ? el("span", "tag default", "default") : null),
+      el("span", "sub", ciProviders[row.provider] || "OpenStack" + (row.flavor ? " · " + row.flavor : ""))));
+    const specs = el("div", "specs", ...profileSpecs(row).map((spec) => el("span", "tag", spec)), row.arch ? el("span", "tag", row.arch) : null);
+    const tags = (row.image_tags || []).join(", ");
+    const actions = el("div", "card-actions");
+    if (state.authenticated) actions.append(button("New worker", () => form("create", null, { profile: row.name }), { cls: "btn sm primary", ic: "plus" }));
+    actions.append(button("Details", () => openProfile(row), { cls: "btn sm quiet", ic: "info" }));
+    grid.append(el("article", "profile-card", head, specs, tags ? el("div", "sub", "Image tags: " + tags) : null, actions));
+  }
+  $("results").replaceChildren(grid);
 }
 
 async function refresh(manual = false) {
@@ -506,39 +772,47 @@ async function refresh(manual = false) {
       state.rows.workers = await request("workers");
     }
     const stale = state.inventoryStale && view === "workers";
-    connection(stale ? "Cached inventory" : "Connected", stale ? "stale" : "online");
-    if (view === state.view) {
-      if (state.selected && view === "workers") {
-        const current = sourceWorker(state.selected.name);
-        if (current && ["status", "owner", "retired", "expires_at"].some((field) => current[field] !== state.selected[field])) {
-          const retired = Boolean(current.retired) !== Boolean(state.selected.retired);
-          state.selected = current;
-          if (retired) state.follow = !current.retired;
+    connection(stale ? "Cached inventory" : "Live", stale ? "stale" : "online");
+    if (state.selected && view === "workers") {
+      const current = sourceWorker(state.selected.name);
+      if (current) {
+        const retired = Boolean(current.retired) !== Boolean(state.selected.retired);
+        state.selected = current;
+        if (retired) {
+          state.follow = !current.retired;
           detailPanel();
-          if (retired) updateDetail(true);
-        }
+          updateDetail(true);
+        } else renderDetailHead();
       }
-      render();
     }
+    if (view === state.view) render();
   } catch (error) {
     if (state.authenticated) connection("Disconnected", "error");
-    if (manual || !state.rows[view]) notice(error.message, true);
+    if (manual || !state.rows[view]) fail(error.message);
   } finally {
     loading = false;
     if (state.authenticated && state.view !== view) refresh();
   }
 }
 
+async function loadBackground() {
+  try { state.rows.profiles = await request("profiles"); } catch { /* Shown when the view is opened. */ }
+  try { state.rows.jobs = await request("jobs"); } catch { /* Shown when the view is opened. */ }
+  lastRenderKey = "";
+  render();
+  if (state.selected) renderDetailHead();
+}
+
 async function openProfile(row) {
   const dialog = $("profile-dialog");
   const status = $("profile-status");
   const metadata = $("profile-metadata");
-  const title = $("profile-title");
-  title.replaceChildren(profileIcon(row), " " + row.name);
+  $("profile-title").replaceChildren(el("span", "mono", row.name));
   $("profile-create").onclick = () => {
     dialog.close();
-    form("create", null, row.name);
+    form("create", null, { profile: row.name });
   };
+  $("profile-create").hidden = !state.authenticated;
   const show = (profile) => {
     const ciProvider = ciProviders[profile.provider];
     const fields = [
@@ -552,11 +826,8 @@ async function openProfile(row) {
       ["Image name", profile.image_name || profile.image_status],
       ["Image ID", profile.image_id], ["Image created", profile.image_created_at],
     ];
-    metadata.replaceChildren(...fields.filter(([, value]) => value != null && value !== "").map(([key, value]) => {
-      const field = element("div");
-      field.append(element("dt", key), element("dd", value));
-      return field;
-    }));
+    metadata.replaceChildren(...fields.filter(([, value]) => value != null && value !== "").map(([key, value]) =>
+      el("div", "kv", el("dt", null, key), el("dd", null, el("span", null, value)))));
   };
   show(row);
   status.textContent = "Loading image details…";
@@ -574,113 +845,227 @@ async function openProfile(row) {
   }
 }
 
-const actionIcons = {
-  ssh: "m4 6 5 5-5 5m9 0h7",
-  start: "M8 5v14l11-7z",
-  more: "M5 12h.01M12 12h.01M19 12h.01",
-  extend: "M12 8v4l3 2m6-2a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z",
-  topic: "m14 6 4 4M5 19l1-5L16 4l4 4-10 10z",
-  claim: "M5 21v-3a4 4 0 0 1 4-4h4a4 4 0 0 1 4 4v3m-2-14a4 4 0 1 1-8 0 4 4 0 0 1 8 0z",
-  register: "M6 3h8l4 4v14H6zm8 0v5h4M9 13h6m-6 4h6",
-  "renew-token": "M16 10a4 4 0 1 0-4-4 4 4 0 0 0 4 4zm-3 0-8 8v3h3v-3h3v-3l4-5",
-  copy: "M8 8h12v12H8zM4 16V4h12",
-  delete: "M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13m-8 4v5m4-5v5",
-};
-
-function actionIcon(name) {
-  const namespace = "http://www.w3.org/2000/svg";
-  const icon = document.createElementNS(namespace, "svg");
-  icon.setAttribute("viewBox", "0 0 24 24");
-  icon.setAttribute("aria-hidden", "true");
-  icon.classList.add("action-icon");
-  const path = document.createElementNS(namespace, "path");
-  path.setAttribute("d", actionIcons[name]);
-  icon.append(path);
-  return icon;
+// Worker detail
+function workerHash(row, job) {
+  return "#workers/" + encodeURIComponent(row.name) + (job ? "/" + encodeURIComponent(job) : "");
 }
 
-function workerAction(label, icon, click, variant = "") {
-  const control = button(label, click, "worker-action" + (variant ? " " + variant : ""));
-  control.prepend(actionIcon(icon));
-  return control;
+function select(row, job) {
+  location.hash = workerHash(row, job);
+}
+
+function sourceWorker(name) {
+  return (state.rows.workers || []).find((worker) => worker.name === name);
+}
+
+function workerFor(name) {
+  return sourceWorker(name) || { name };
+}
+
+function splitActive() {
+  return prefs.layout === "split" && state.view === "workers" && !narrow.matches;
+}
+
+function openWorker(row, job) {
+  const same = state.selected?.name === row.name;
+  state.selected = row;
+  state.job = job;
+  if (!same) {
+    state.tab = "logs";
+    state.detailJobs = null;
+    state.logQuery = "";
+    state.raw = false;
+    loadDetailJobs(row);
+  }
+  state.follow = !row.retired;
+  detailPanel();
+  updateDetail(true);
+  if (!splitActive()) {
+    $("detail-output").scrollTop = 0;
+    $("detail-head").querySelector("h2")?.focus({ preventScroll: true });
+  }
+}
+
+async function loadDetailJobs(row) {
+  try {
+    const jobs = await request("jobs/" + encodeURIComponent(row.name));
+    if (state.selected?.name !== row.name) return;
+    state.detailJobs = Array.isArray(jobs) ? jobs : [];
+    renderTabs();
+    if (state.tab === "logs") renderLogTools();
+  } catch { /* The jobs tab reports errors itself. */ }
+}
+
+function workerMenu(row) {
+  const items = [];
+  if (!isPool(row)) items.push({ label: "Extend lease", icon: "clock", hint: "E", run: () => form("extend", row) });
+  items.push(
+    { label: "Edit topic", icon: "pencil", hint: "T", run: () => { if (state.selected?.name === row.name) editTopic(); else form("topic", row); } },
+    { label: "Claim worker", icon: "user", run: () => form("claim", row) },
+    { label: "Register log file", icon: "file", run: () => form("register", row) },
+    { label: "Renew cache token", icon: "key", run: () => form("renew-token", row) },
+    "-",
+    { label: "Copy SSH command", icon: "copy", run: () => copy("rworker ssh " + row.name) },
+    { label: "Copy builder entry", icon: "link", run: async () => {
+      try { await copy(await request("builder/" + encodeURIComponent(row.name))); } catch (error) { fail(error.message); }
+    } },
+  );
+  if (row.run_url) items.push({ label: "Open GitHub run", icon: "external", run: () => window.open(row.run_url, "_blank", "noopener") });
+  items.push("-", { label: "Delete worker…", icon: "trash", hint: "D", danger: true, run: () => form("delete", row) });
+  return items;
+}
+
+function layoutWorkspace() {
+  const row = state.selected;
+  const split = splitActive();
+  const fullPage = Boolean(row) && !split;
+  $("workspace").classList.toggle("split", split);
+  $("detail").hidden = !row;
+  $("detail-empty").hidden = !split || Boolean(row);
+  $("inventory").hidden = fullPage;
+  $("app").classList.toggle("detail-open", fullPage);
+  $("back").hidden = !fullPage;
+  $("filters").hidden = fullPage;
+  $("search-box").hidden = fullPage;
+  if (fullPage) $("banner").hidden = true;
+  $("create").hidden = !state.authenticated;
+  $("fab").hidden = !state.authenticated;
+  $("heading").textContent = views[state.view];
+  $("banner").dataset.key = "";
+  document.title = (row?.name || views[state.view]) + " · rworker";
 }
 
 function detailPanel() {
-  const row = state.selected;
-  $("detail").hidden = !row;
-  $("inventory").hidden = Boolean(row);
-  $("summary").hidden = Boolean(row) || state.view !== "workers";
-  $("create").hidden = Boolean(row) || !state.authenticated;
-  $("worker-back").hidden = !row;
-  $("heading").textContent = row?.name || views[state.view];
-  document.title = $("heading").textContent + " · rworker";
-  if (!row) {
+  layoutWorkspace();
+  if (!state.selected) {
     closeLogStream();
     detailRequest++;
     detailLoading = false;
+    lastHeadKey = "";
     $("detail-output").replaceChildren();
     return;
   }
-  $("detail-state").replaceChildren(badge(row.retired ? "Retired" : row.status));
-  $("metadata").replaceChildren();
-  for (const [key, value] of [["Owner", row.owner], ["Profile", row.profile], ["Agent", row.agent], ["Expires", clock(row.expires_at)]]) {
-    if (!value) continue;
-    const datum = element("div");
-    const description = element("dd", key === "Agent" ? null : value);
-    if (key === "Agent") description.append(agentLabel(value));
-    if (key === "Profile") {
-      description.classList.add("profile-value");
-      description.prepend(profileIcon(row));
-    }
-    datum.append(element("dt", key), description);
-    $("metadata").append(datum);
-  }
+  lastHeadKey = "";
+  renderDetailHead();
+  renderTabs();
+}
 
-  const actions = $("worker-actions");
-  actions.replaceChildren();
+function renderDetailHead() {
+  const row = state.selected;
+  if (!row) return;
+  const now = Date.now() / 1000;
+  const lease = leaseInfo(row, now);
+  const split = splitActive();
+  const key = JSON.stringify([row, lease.text, Math.round(lease.pct), split, state.order, Boolean(state.rows.profiles)]);
+  if (key === lastHeadKey || $("detail-head").contains(document.activeElement) && document.activeElement.classList.contains("topic-input")) return;
+  lastHeadKey = key;
+
+  const name = el("h2", null, row.name);
+  name.tabIndex = -1;
+  const titleLine = el("div", null, name, iconButton("copy", "Copy worker name", () => copy(row.name)), statusPill(row));
+  const topic = el("button", "topic-button", el("span", null, row.topic || (row.retired ? "No topic" : "Add a topic")));
+  topic.type = "button";
   if (!row.retired) {
-    actions.append(workerAction("SSH", "ssh", () => openTerminal(row), "primary"),
-      workerAction("Start job", "start", () => form("start", row)));
-    const menu = element("details", null, "worker-action-menu");
-    const trigger = element("summary", null, "worker-action");
-    trigger.append(actionIcon("more"), "More");
-    trigger.setAttribute("aria-label", "More worker actions");
-    const items = element("div", null, "worker-action-items");
-    for (const [label, action] of [["Extend", "extend"], ["Edit topic", "topic"], ["Claim", "claim"],
-      ["Register log", "register"], ["Renew token", "renew-token"]]) {
-      items.append(workerAction(label, action, () => { menu.open = false; form(action, row); }));
-    }
-    items.append(workerAction("Copy SSH command", "copy", () => {
-      menu.open = false;
-      copy("rworker ssh " + row.name);
-    }), workerAction("Copy builder entry", "copy", async () => {
-        menu.open = false;
-        try { await copy(await request("builder/" + encodeURIComponent(row.name))); }
-        catch (error) { notice(error.message, true); }
-      }), workerAction("Delete worker", "delete", () => {
-        menu.open = false;
-        form("delete", row);
-      }, "destructive"));
-    menu.append(trigger, items);
-    menu.addEventListener("keydown", (event) => {
-      if (event.key === "Escape" && menu.open) {
-        menu.open = false;
-        trigger.focus();
-      }
-    });
-    actions.append(menu);
+    topic.append(icon("pencil"));
+    topic.title = "Edit topic (T)";
+    topic.addEventListener("click", editTopic);
+  } else topic.disabled = true;
+  const nameBlock = el("div", "detail-name", titleLine, topic);
+
+  const actions = el("div", "detail-actions");
+  if (!row.retired) {
+    actions.append(button("SSH", () => openTerminal(row), { cls: "btn primary", ic: "terminal", title: "Open an SSH terminal (S)" }),
+      button("Start job", () => form("start", row), { cls: "btn", ic: "play" }));
+    if (!isPool(row)) actions.append(button("Extend", () => form("extend", row), { cls: "btn", ic: "clock", title: "Extend the lease (E)" }));
+    actions.append(workerMenuButton(row, "btn icon"));
   }
 
+  const title = el("div", "detail-title", workerTile(row), nameBlock, actions);
+  const parts = [];
+  if (!split) {
+    const index = state.order.indexOf(row.name);
+    const crumbs = el("div", "crumbs");
+    if (index >= 0 && state.order.length > 1) {
+      const step = (delta) => {
+        const next = state.order[index + delta];
+        if (next) select(workerFor(next));
+      };
+      const previous = iconButton("chev-l", "Previous worker (K)", () => step(-1), "btn sm icon");
+      const next = iconButton("chev-r", "Next worker (J)", () => step(1), "btn sm icon");
+      previous.disabled = index === 0;
+      next.disabled = index === state.order.length - 1;
+      crumbs.append(el("span", "stepper", `${index + 1} of ${state.order.length}`, previous, next));
+    }
+    if (crumbs.childElementCount) parts.push(crumbs);
+  }
+  parts.push(title);
+
+  const facts = el("dl", "facts");
+  const profile = state.rows.profiles?.find((item) => item.name === row.profile);
+  const fact = (label, value, cls = "") => facts.append(el("div", "fact" + (cls ? " " + cls : ""), el("dt", null, label), el("dd", null, value)));
+  if (row.profile) {
+    const value = el("span", null, glyph(profile ? profileGlyph(profile) : openstackGlyph, profile ? providerKey(profile) : "openstack"), " ", row.profile);
+    if (profile) value.append(el("span", "muted", " · " + profileSpecs(profile).slice(0, 2).join(" · ")));
+    fact("Profile", value);
+  }
+  fact("Agent", agentLabel(row.agent, row.agent_id));
+  if (row.owner) fact("Owner", el("span", null, row.owner));
+  if (lease.kind === "lease") fact("Lease", el("span", null, el("span", "lease-text" + (lease.tone ? " " + lease.tone : ""), lease.long), leaseBar(lease, true)), "lease-fact");
+  else if (lease.kind === "pool") fact("Pool", el("span", null, el("span", "lease-text", (row.pool || row.kind) + " · " + lease.long.toLowerCase()), leaseBar(lease, true)), "lease-fact");
+  else if (row.retired) fact("Created", el("span", null, clock(row.created_at)));
+  parts.push(facts);
+  $("detail-head").replaceChildren(...parts);
+}
+
+function editTopic() {
+  const row = state.selected;
+  if (!row || row.retired) return;
+  const trigger = $("detail-head").querySelector(".topic-button");
+  if (!trigger) return;
+  const input = el("input", "topic-input");
+  input.type = "text";
+  input.maxLength = 255;
+  input.value = row.topic || "";
+  input.setAttribute("aria-label", "Topic");
+  input.placeholder = "What is this worker for?";
+  let done = false;
+  const finish = async (save) => {
+    if (done) return;
+    done = true;
+    const value = input.value.trim();
+    lastHeadKey = "";
+    if (save && value !== (row.topic || "")) {
+      row.topic = value;
+      renderDetailHead();
+      await runAction({ action: "topic", worker: row.name, topic: value }, "Topic saved.");
+    } else renderDetailHead();
+  };
+  input.addEventListener("keydown", (event) => {
+    if (event.key === "Enter") { event.preventDefault(); finish(true); }
+    if (event.key === "Escape") { event.preventDefault(); event.stopPropagation(); finish(false); }
+  });
+  input.addEventListener("blur", () => finish(false));
+  trigger.replaceWith(input);
+  input.focus();
+  input.select();
+}
+
+function renderTabs() {
+  const row = state.selected;
+  if (!row) return;
   const tabs = $("detail-tabs");
   tabs.replaceChildren();
-  for (const [key, title] of [["logs", "Logs"], ["jobs", "Jobs"], ["inspect", "Inspect"], ["processes", "Processes"]]) {
-    if (row.retired && !["logs", "jobs", "inspect"].includes(key)) continue;
+  const running = state.detailJobs?.filter((job) => filterTests.jobs.active(job)).length;
+  for (const [key, title, ic] of [["logs", "Logs", "terminal"], ["jobs", "Jobs", "jobs"], ["processes", "Processes", "cpu"], ["details", "Details", "info"]]) {
+    if (row.retired && key === "processes") continue;
     const tab = button(title, () => {
       state.tab = key;
-      detailPanel();
+      renderTabs();
       updateDetail(true);
-    });
-    tab.setAttribute("aria-pressed", String(state.tab === key));
+    }, { cls: "tab", ic });
+    tab.setAttribute("role", "tab");
+    tab.setAttribute("aria-selected", String(state.tab === key));
+    if (key === "jobs" && state.detailJobs?.length) tab.append(el("span", "n", running ? running + " running" : state.detailJobs.length));
     tabs.append(tab);
   }
 }
@@ -690,14 +1075,14 @@ function openTerminal(row) {
   const screen = $("terminal-screen");
   const status = $("terminal-status");
   const terminal = new Terminal({
-    fontFamily: '"IBM Plex Mono", ui-monospace, monospace',
+    fontFamily: '"JetBrains Mono", "IBM Plex Mono", ui-monospace, monospace',
     cursorBlink: true,
     scrollback: 2000,
     theme: { background: "#101419", foreground: "#e8ecf5", cursor: "#9dcfff" },
   });
   const fit = new FitAddon.FitAddon();
   terminal.loadAddon(fit);
-  $("terminal-title").textContent = "SSH · " + row.name;
+  $("terminal-title").textContent = row.name;
   status.textContent = "Connecting…";
   dialog.showModal();
   terminal.open(screen);
@@ -760,22 +1145,6 @@ function openTerminal(row) {
   terminal.focus();
 }
 
-$("terminal-close").addEventListener("click", () => $("terminal-dialog").close());
-
-function checkbox(label, checked, change) {
-  const node = element("label", null, "toggle");
-  const input = element("input");
-  input.type = "checkbox";
-  input.checked = checked;
-  input.addEventListener("change", () => change(input.checked));
-  node.append(input, element("span", label));
-  return node;
-}
-
-function stripAnsi(value) {
-  return value.replace(/\u001b\[[0-?]*[ -/]*[@-~]/g, "");
-}
-
 function closeLogStream() {
   const socket = logSocket;
   logSocket = undefined;
@@ -783,9 +1152,114 @@ function closeLogStream() {
   socket?.close();
 }
 
-function followLogs(path, content, indicator) {
+// Log viewer
+function liveIndicator(text, tone = "") {
+  const node = $("detail-output").querySelector(".live");
+  if (!node) return;
+  node.textContent = text;
+  node.className = "live" + (tone ? " " + tone : "");
+}
+
+function logElements() {
+  const output = $("detail-output");
+  return { pre: output.querySelector(".log-frame pre"), jump: output.querySelector(".jump") };
+}
+
+function setLog(text, { keepEnd = true } = {}) {
+  state.logText = text;
+  const { pre, jump } = logElements();
+  if (!pre) return;
+  const atEnd = pre.scrollHeight - pre.clientHeight - pre.scrollTop < 12;
+  const query = state.logQuery.toLowerCase();
+  const display = query ? text.split("\n").filter((line) => line.toLowerCase().includes(query)).join("\n") : text;
+  pre.textContent = display || (query ? "No lines match “" + state.logQuery + "”." : "No output yet.");
+  if (keepEnd && (atEnd || !pre.dataset.seen) && state.follow) pre.scrollTop = pre.scrollHeight;
+  pre.dataset.seen = "1";
+  if (jump) jump.hidden = pre.scrollHeight - pre.clientHeight - pre.scrollTop < 12;
+}
+
+function renderLogTools() {
+  const row = state.selected;
+  const tools = $("detail-output").querySelector(".log-tools");
+  if (!row || !tools) return;
+  const select = tools.querySelector("select");
+  if (select) {
+    const jobs = state.detailJobs || [];
+    const options = [["", "All jobs"], ...jobs.map((job) => [job.job, job.job + " · " + job.state])];
+    if (state.job && !jobs.some((job) => job.job === state.job)) options.push([state.job, state.job]);
+    select.replaceChildren(...options.map(([value, label]) => {
+      const option = el("option", null, label);
+      option.value = value;
+      return option;
+    }));
+    select.value = state.job || "";
+  }
+}
+
+function buildLogPane(row) {
+  const output = $("detail-output");
+  const tools = el("div", "log-tools");
+  const jobSelect = el("select");
+  jobSelect.setAttribute("aria-label", "Job");
+  jobSelect.addEventListener("change", () => select(row, jobSelect.value || null));
+  const live = el("span", "live", row.retired ? "Archived" : "Snapshot");
+  const search = el("label", "search", icon("search"));
+  const input = el("input");
+  input.type = "search";
+  input.placeholder = "Filter lines";
+  input.value = state.logQuery;
+  input.setAttribute("aria-label", "Filter log lines");
+  input.addEventListener("input", () => { state.logQuery = input.value; setLog(state.logText, { keepEnd: false }); });
+  search.append(input);
+  const toggle = (label, ic, on, change, title) => {
+    const node = iconButton(ic, title, () => {
+      change();
+      node.classList.toggle("on");
+      node.setAttribute("aria-pressed", String(node.classList.contains("on")));
+    }, "btn sm icon" + (on ? " on" : ""));
+    node.setAttribute("aria-pressed", String(on));
+    return node;
+  };
+  tools.append(jobSelect, live, el("span", "spacer"), search);
+  if (!row.retired) {
+    const follow = button(state.follow ? "Following" : "Paused", () => setFollow(!state.follow), { cls: "btn sm follow" + (state.follow ? " on" : ""), ic: state.follow ? "pause" : "play", title: "Follow new output (F)" });
+    follow.setAttribute("aria-pressed", String(state.follow));
+    tools.append(follow);
+  }
+  tools.append(
+    toggle("Wrap", "wrap", state.wrap, () => { state.wrap = !state.wrap; output.querySelector(".log-frame")?.classList.toggle("wrap", state.wrap); }, "Wrap long lines (W)"),
+    toggle("Redact", "shield", state.redact, () => { state.redact = !state.redact; updateDetail(true); }, "Redact secrets"),
+    iconButton("copy", "Copy log", () => copy(state.logText), "btn sm icon"),
+    iconButton("download", "Download log", () => download(state.logText, `${row.name}${state.job ? "-" + state.job : ""}.log`), "btn sm icon"));
+  const frame = el("div", "log-frame" + (state.wrap ? " wrap" : ""));
+  const pre = el("pre", null, "Loading…");
+  pre.tabIndex = 0;
+  const jump = button("Jump to latest", () => { pre.scrollTop = pre.scrollHeight; if (!state.follow && !row.retired) setFollow(true); }, { cls: "btn sm jump", ic: "down" });
+  jump.hidden = true;
+  pre.addEventListener("scroll", () => { jump.hidden = pre.scrollHeight - pre.clientHeight - pre.scrollTop < 12; }, { passive: true });
+  frame.append(pre, jump);
+  output.replaceChildren(tools, frame);
+  renderLogTools();
+}
+
+function setFollow(enabled) {
+  state.follow = enabled;
+  const button = $("detail-output").querySelector(".follow");
+  if (button) {
+    button.classList.toggle("on", enabled);
+    button.setAttribute("aria-pressed", String(enabled));
+    button.replaceChildren(icon(enabled ? "pause" : "play"), el("span", null, enabled ? "Following" : "Paused"));
+  }
+  if (enabled) updateDetail(true);
+  else {
+    closeLogStream();
+    liveIndicator("Paused");
+  }
+}
+
+function followLogs(path) {
   if (logSocket || Date.now() < logRetryAt) return;
-  indicator.textContent = "Connecting…";
+  liveIndicator("Connecting…", "wait");
   const url = new URL("/v1/ui/follow/" + path, location.href);
   url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
   const socket = new WebSocket(url);
@@ -796,23 +1270,74 @@ function followLogs(path, content, indicator) {
   socket.onopen = () => { if (state.token) socket.send(state.token); };
   socket.onmessage = ({data}) => {
     if (logSocket !== socket) return;
-    const atEnd = !buffer || content.scrollHeight - content.clientHeight - content.scrollTop < 8;
     if (typeof data === "string") {
       buffer = JSON.parse(data).snapshot;
-      indicator.textContent = "Cached";
+      liveIndicator("Cached");
     } else {
       buffer = (buffer + decoder.decode(data, {stream: true})).slice(-262144);
-      indicator.textContent = "Live";
+      liveIndicator("Live", "on");
     }
-    content.textContent = stripAnsi(buffer);
-    if (atEnd) content.scrollTop = content.scrollHeight;
+    setLog(stripAnsi(buffer));
   };
   socket.onclose = () => {
     if (logSocket !== socket) return;
     logSocket = undefined;
     logRetryAt = Date.now() + 5000;
-    indicator.textContent = "Reconnecting…";
+    liveIndicator("Reconnecting…", "wait");
   };
+}
+
+function flattenDetails(data, prefix = "", out = []) {
+  for (const [key, value] of Object.entries(data || {})) {
+    if (key === "metadata" || value == null || value === "" || (Array.isArray(value) && !value.length)) continue;
+    const name = prefix + key;
+    if (typeof value === "object" && !Array.isArray(value)) flattenDetails(value, name + ".", out);
+    else out.push([name, value]);
+  }
+  return out;
+}
+
+const detailOrder = ["name", "status", "profile", "flavor", "owner", "agent", "agent_id", "topic", "ip", "ips.netbird", "ips.tailscale", "created_at", "expires_at", "grace_until", "max_lifetime_end", "niks3_token_expires_at", "image_name", "image_id", "availability_zone", "host_key", "run_url", "job_url"];
+const timeFields = new Set(["created_at", "expires_at", "grace_until", "max_lifetime_end", "niks3_token_expires_at", "last_busy", "last_active", "last_seen"]);
+const detailLabels = { ip: "IP", "ips.netbird": "NetBird IP", "ips.tailscale": "Tailscale IP", agent_id: "Agent ID", run_url: "GitHub run", job_url: "GitHub job", niks3_token_expires_at: "Cache token expires", max_lifetime_end: "Maximum lifetime", availability_zone: "Zone", host_key: "Host key", image_id: "Image ID", image_name: "Image" };
+
+function renderDetails(data, boot) {
+  const output = $("detail-output");
+  const pane = el("div", "pane-pad");
+  const tools = el("div", "pane-tools");
+  const rawToggle = button(state.raw ? "Show fields" : "Raw JSON", () => { state.raw = !state.raw; renderDetails(data, boot); }, { cls: "btn sm", ic: state.raw ? "info" : "file" });
+  tools.append(rawToggle, iconButton("copy", "Copy JSON", () => copy(JSON.stringify(boot || data, null, 2)), "btn sm icon"));
+  if (!state.selected?.retired && !boot) {
+    tools.append(button("Load boot metadata", async () => {
+      try { renderDetails(data, await request("boot/" + encodeURIComponent(state.selected.name))); } catch (error) { fail(error.message); }
+    }, { cls: "btn sm", ic: "download" }));
+  }
+  pane.append(tools);
+  if (state.raw || boot || typeof data !== "object") {
+    pane.append(el("pre", "raw", typeof data === "string" && !boot ? data : JSON.stringify(boot || data, null, 2)));
+  } else {
+    const fields = flattenDetails(data);
+    const rank = (key) => { const index = detailOrder.indexOf(key); return index < 0 ? 999 : index; };
+    fields.sort((a, b) => rank(a[0]) - rank(b[0]));
+    const grid = el("dl", "kv-grid");
+    for (const [key, value] of fields) {
+      if (timeFields.has(key) && !(Number(value) > 0 || typeof value === "string")) continue;
+      const shown = timeFields.has(key) ? clock(value) : Array.isArray(value) ? value.join(", ") : String(value);
+      const label = detailLabels[key] || key.replaceAll("_", " ").replace(/^./, (c) => c.toUpperCase());
+      const dd = el("dd");
+      if (/^https:\/\//.test(shown)) {
+        const link = el("a", null, shown);
+        link.href = shown;
+        link.target = "_blank";
+        link.rel = "noopener";
+        dd.append(link);
+      } else dd.append(el("span", null, shown));
+      dd.append(iconButton("copy", "Copy " + label, () => copy(String(value))));
+      grid.append(el("div", "kv", el("dt", null, label), dd));
+    }
+    pane.append(grid);
+  }
+  output.replaceChildren(pane);
 }
 
 async function updateDetail(reset = false) {
@@ -826,78 +1351,66 @@ async function updateDetail(reset = false) {
   const destination = $("detail-output");
   if (reset) {
     closeLogStream();
-    destination.replaceChildren(element("p", "Loading…", "empty"));
+    if (tab === "logs") buildLogPane(row);
+    else destination.replaceChildren(emptyState("loader", "Loading…"));
   }
   try {
-    let data;
     if (tab === "logs") {
+      if (!destination.querySelector(".log-frame")) buildLogPane(row);
       const live = !row.retired && state.follow;
-      const useArchive = row.retired;
-      const endpoint = useArchive ? (state.redact ? "archived-logs" : "raw-archive") : (state.redact ? "logs" : "raw-logs");
+      const endpoint = row.retired ? (state.redact ? "archived-logs" : "raw-archive") : (state.redact ? "logs" : "raw-logs");
+      const path = target + (job ? "/" + encodeURIComponent(job) : "");
       if (live && Date.now() >= logRetryAt) {
-        data = reset ? "" : destination.querySelector("pre")?.textContent || "";
+        if (reset) setLog("");
       } else {
-        data = await request(endpoint + "/" + target + (job ? "/" + encodeURIComponent(job) : "")).catch((error) => {
+        const data = await request(endpoint + "/" + path).catch((error) => {
           if (!live) throw error;
-          return destination.querySelector("pre")?.textContent || "";
+          return state.logText;
         });
+        if (id !== detailRequest) return;
+        setLog(stripAnsi(String(data ?? "")));
+        if (!live) liveIndicator(row.retired ? "Archived" : state.follow ? "Reconnecting…" : "Paused", state.follow && !row.retired ? "wait" : "");
       }
-    } else if (row.retired && tab === "inspect") {
-      data = row;
-    } else {
-      data = await request(tab + "/" + target);
+      if (live) followLogs((state.redact ? "logs" : "raw-logs") + "/" + path);
+      return;
     }
+    let data;
+    if (row.retired && tab === "details") data = row;
+    else data = await request((tab === "details" ? "inspect" : tab) + "/" + target);
     if (id !== detailRequest) return;
     if (tab === "jobs") {
-      destination.replaceChildren(data.length ? table([["Job"], ["State"]], data.map((entry) => ({
-        cells: [named(entry.job, "", () => selected(row, entry.job)), badge(entry.state)],
-      }))) : element("p", "No jobs on this worker.", "empty"));
-      return;
-    }
-    if (tab === "processes" && data.trim().split("\n").length <= 1) {
-      destination.replaceChildren(element("p", "No running job processes.", "empty"));
-      return;
-    }
-    const old = destination.querySelector("pre");
-    const stayAtEnd = !old || old.scrollHeight - old.clientHeight - old.scrollTop < 8;
-    const previousScroll = old?.scrollTop || 0;
-    const options = element("div", null, "detail-options");
-    const indicator = element("small", "Snapshot", "secondary");
-    if (tab === "logs") {
-      options.append(checkbox("Redact secrets", state.redact, (enabled) => { state.redact = enabled; updateDetail(true); }));
-      if (!row.retired) {
-        options.append(checkbox("Follow", state.follow, (enabled) => {
-          state.follow = enabled;
-          if (enabled) updateDetail(true);
-          else { closeLogStream(); indicator.textContent = "Snapshot"; }
-        }), indicator);
+      state.detailJobs = Array.isArray(data) ? data : [];
+      renderTabs();
+      if (!state.detailJobs.length) {
+        destination.replaceChildren(emptyState("jobs", "No jobs on this worker yet.", row.retired ? null : button("Start job", () => form("start", row), { cls: "btn primary", ic: "play" })));
+        return;
       }
-      if (job) options.append(button("All jobs", () => selected(row)));
-    } else if (tab === "inspect" && !row.retired) {
-      options.append(button("Load boot metadata", async () => {
-        try {
-          const metadata = await request("boot/" + target);
-          if (id === detailRequest) destination.querySelector("pre").textContent = JSON.stringify(metadata, null, 2);
-        } catch (error) { notice(error.message, true); }
-      }));
+      const list = el("div", "list");
+      for (const entry of state.detailJobs) {
+        const [tone, ic] = jobTone(entry.state);
+        list.append(el("div", "item", icon(ic, "tone-" + (tone || "info")), el("span", "name", entry.job), el("span", "pill" + (tone ? " " + tone : ""), entry.state),
+          button("Logs", () => { state.tab = "logs"; select(row, entry.job); }, { cls: "btn sm", ic: "terminal" })));
+      }
+      destination.replaceChildren(el("div", "pane-pad", list));
+      return;
     }
-    const content = element("pre", typeof data === "string" ? (stripAnsi(data) || "No output yet.") : JSON.stringify(data, null, 2));
-    destination.replaceChildren(options, content);
-    if (state.follow && stayAtEnd && tab === "logs") content.scrollTop = content.scrollHeight;
-    else content.scrollTop = previousScroll;
-    if (tab === "logs" && !row.retired && state.follow) {
-      const view = state.redact ? "logs" : "raw-logs";
-      followLogs(view + "/" + target + (job ? "/" + encodeURIComponent(job) : ""), content, indicator);
+    if (tab === "processes") {
+      if (String(data).trim().split("\n").length <= 1) {
+        destination.replaceChildren(emptyState("cpu", "No running job processes."));
+        return;
+      }
+      destination.replaceChildren(el("div", "pane-pad", el("pre", "raw", stripAnsi(String(data)))));
+      return;
     }
+    renderDetails(data);
   } catch (error) {
-    if (id === detailRequest) {
-      if (tab === "processes" && state.authenticated) {
-        const unavailable = element("div", null, "empty process-unavailable");
-        unavailable.append(element("p", error.message),
-          workerAction("Copy CLI command", "copy", () => copy("rworker ps " + row.name)));
-        destination.replaceChildren(unavailable);
-      } else destination.replaceChildren(element("p", error.message, "empty"));
-    }
+    if (id !== detailRequest) return;
+    if (tab === "processes" && state.authenticated) {
+      destination.replaceChildren(emptyState("cpu", error.message, button("Copy CLI command", () => copy("rworker ps " + row.name), { cls: "btn", ic: "copy" })));
+    } else if (tab === "logs") {
+      setLog(error.message);
+      liveIndicator("Unavailable");
+    } else destination.replaceChildren(emptyState("alert", error.message));
   } finally {
     if (id === detailRequest) detailLoading = false;
   }
@@ -906,107 +1419,522 @@ async function updateDetail(reset = false) {
 async function copy(value) {
   try {
     await navigator.clipboard.writeText(value);
-    notice("Copied to clipboard.");
+    toast("Copied to the clipboard.", { timeout: 2200 });
   } catch {
-    notice("Could not access the clipboard.", true);
+    fail("Could not access the clipboard.");
   }
 }
 
+function download(text, filename) {
+  const link = el("a");
+  link.href = URL.createObjectURL(new Blob([text], { type: "text/plain" }));
+  link.download = filename.replace(/[^A-Za-z0-9._-]/g, "_");
+  document.body.append(link);
+  link.click();
+  link.remove();
+  setTimeout(() => URL.revokeObjectURL(link.href), 1000);
+}
+
+// Menus: a popover on desktop, a bottom sheet on phones (CSS).
+let menuState;
+function closeMenu() {
+  if (!menuState) return;
+  menuState.menu.remove();
+  menuState.scrim.remove();
+  menuState = undefined;
+}
+
+function openMenu(anchor, items) {
+  closeMenu();
+  const scrim = el("div", "menu-scrim");
+  const menu = el("div", "menu");
+  menu.setAttribute("role", "menu");
+  for (const item of items) {
+    if (item === "-") { menu.append(el("hr")); continue; }
+    const entry = el("button", item.danger ? "danger-quiet" : "", icon(item.icon), el("span", null, item.label), item.hint ? el("small", null, item.hint) : null);
+    entry.type = "button";
+    entry.setAttribute("role", "menuitem");
+    entry.addEventListener("click", () => { closeMenu(); anchor.focus({ preventScroll: true }); item.run(); });
+    menu.append(entry);
+  }
+  scrim.addEventListener("click", closeMenu);
+  menu.addEventListener("keydown", (event) => {
+    const entries = [...menu.querySelectorAll("button")];
+    const index = entries.indexOf(document.activeElement);
+    if (event.key === "Escape") { event.preventDefault(); closeMenu(); anchor.focus(); }
+    if (event.key === "ArrowDown") { event.preventDefault(); entries[(index + 1) % entries.length].focus(); }
+    if (event.key === "ArrowUp") { event.preventDefault(); entries[(index - 1 + entries.length) % entries.length].focus(); }
+    if (event.key === "Tab") closeMenu();
+  });
+  document.body.append(scrim, menu);
+  const box = anchor.getBoundingClientRect();
+  const top = box.bottom + 6 + menu.offsetHeight > innerHeight - 8 ? box.top - menu.offsetHeight - 6 : box.bottom + 6;
+  menu.style.top = Math.max(8, top) + "px";
+  menu.style.left = Math.min(Math.max(8, box.right - menu.offsetWidth), innerWidth - menu.offsetWidth - 8) + "px";
+  menuState = { menu, scrim };
+  menu.querySelector("button")?.focus();
+}
+
+// Action forms
 const formTitles = {
   create: ["New worker", "Create worker"], extend: ["Extend lease", "Extend"],
   topic: ["Edit topic", "Save topic"], claim: ["Claim worker", "Claim worker"],
   delete: ["Delete worker", "Delete worker"], start: ["Start job", "Start job"],
-  register: ["Register log", "Register log"], "renew-token": ["Renew cache token", "Renew token"],
+  register: ["Register log file", "Register log"], "renew-token": ["Renew cache token", "Renew token"],
 };
+const lifetimes = ["30m", "1h", "2h", "4h", "8h", "24h"];
 
-async function form(action, worker, profile) {
+function field(label, name, { value = "", kind = "input", required = true, help, placeholder, attrs = {} } = {}) {
+  const wrap = el("div", "field");
+  const input = el(kind);
+  input.id = "field-" + name;
+  input.name = name;
+  input.value = value;
+  if (placeholder) input.placeholder = placeholder;
+  input.required = required;
+  for (const [key, attr] of Object.entries(attrs)) input.setAttribute(key, attr);
+  const caption = el("label", null, label);
+  caption.htmlFor = input.id;
+  wrap.append(caption, input);
+  if (help) wrap.append(el("small", null, help));
+  return wrap;
+}
+
+function lifetimeField(initial = "2h", help) {
+  const wrap = el("fieldset", "field");
+  wrap.append(el("legend", null, "Lifetime"));
+  const segs = el("div", "segs");
+  const custom = el("input");
+  custom.name = "ttl_custom";
+  custom.id = "field-ttl-custom";
+  custom.placeholder = "e.g. 90m or 12h";
+  custom.setAttribute("aria-label", "Custom lifetime");
+  const preset = lifetimes.includes(initial);
+  for (const value of [...lifetimes, "custom"]) {
+    const input = el("input");
+    input.type = "radio";
+    input.name = "ttl";
+    input.value = value;
+    input.checked = preset ? value === initial : value === "custom";
+    input.addEventListener("change", () => { custom.hidden = value !== "custom"; if (value === "custom") custom.focus(); });
+    segs.append(el("label", "seg", input, el("span", null, value === "custom" ? "Custom" : value)));
+  }
+  custom.hidden = preset;
+  if (!preset) custom.value = initial;
+  wrap.append(segs, custom);
+  if (help) wrap.append(el("small", null, help));
+  return wrap;
+}
+
+function toggleField(title, name, detail, checked = false, ic) {
+  const input = el("input");
+  input.type = "checkbox";
+  input.name = name;
+  input.checked = checked;
+  const label = el("label", "switch");
+  if (ic) label.append(icon(ic));
+  label.append(el("span", null, el("strong", null, title), detail ? el("small", null, detail) : null), input);
+  return label;
+}
+
+async function form(action, worker, options = {}) {
+  if (!state.authenticated) return;
+  closeMenu();
   currentAction = { action, ...(worker ? { worker: worker.name } : {}) };
+  const dialog = $("dialog");
   const [title, submit] = formTitles[action];
+  dialog.classList.toggle("drawer", action === "create");
   $("dialog-title").textContent = title;
-  $("confirm").textContent = submit;
-  $("confirm").classList.toggle("danger", action === "delete");
+  $("dialog-note").textContent = worker ? worker.name : "";
+  $("dialog-note").className = "dialog-note" + (worker ? " mono" : "");
+  $("dialog-hint").textContent = "";
+  $("confirm").replaceChildren(submit);
+  $("confirm").className = "btn " + (action === "delete" ? "danger" : "primary");
   $("form-error").hidden = true;
-  $("form-fields").replaceChildren();
   const fields = $("form-fields");
-  const field = (label, name, initial = "", kind = "input", choices = [], parent = fields) => {
-    const wrap = element("div", null, "form-field");
-    const node = element(kind);
-    node.id = "field-" + name;
-    node.name = name;
-    if (kind === "select") {
-      node.classList.add("profile-select");
-      for (const choice of choices) {
-        const option = element("option", profileGlyph(choice) + " " + choice.name);
-        option.value = choice.name;
-        option.setAttribute("aria-label", choice.name);
-        node.append(option);
-      }
-    }
-    node.value = initial;
-    node.required = name !== "topic";
-    if (name === "topic") node.maxLength = 255;
-    const caption = element("label", label);
-    caption.htmlFor = node.id;
-    wrap.append(caption, node);
-    parent.append(wrap);
-    return node;
-  };
-  let profileInput;
+  fields.replaceChildren();
   if (action === "create") {
     let profiles = state.rows.profiles;
     if (!profiles) {
-      try { profiles = await request("profiles"); state.rows.profiles = profiles; }
-      catch { profiles = []; }
+      try { profiles = await request("profiles"); state.rows.profiles = profiles; } catch { profiles = []; }
     }
     if (!state.authenticated) return;
-    const initial = profile || profiles.find((item) => item.default)?.name || profiles[0]?.name || "standard";
-    profileInput = profiles.length ? field("Profile", "profile", initial, "select", profiles) :
-      field("Profile", "profile", initial);
-    field("Lifetime", "ttl", "2h");
-  }
-  if (action === "extend") field("Lifetime", "ttl", "2h");
-  if (["create", "topic", "claim"].includes(action)) field("Topic", "topic", worker?.topic || "");
-  if (profileInput) {
-    const options = element("details", null, "create-options");
-    options.append(element("summary", "More options"));
-    const overrides = element("fieldset");
-    overrides.append(element("legend", "OpenStack"));
-    const flavor = field("Flavor override", "flavor", "", "input", [], overrides);
-    const disk = field("Disk override (GiB)", "disk", "", "input", [], overrides);
-    disk.type = "number";
-    disk.min = "1";
-    disk.max = "4294967295";
-    disk.step = "1";
-    const agent = field("Agent ID", "agent_id", "", "input", [], overrides);
-    agent.maxLength = 128;
-    agent.pattern = "[A-Za-z0-9._:][A-Za-z0-9._:\\-]*";
-    for (const node of [flavor, disk, agent]) node.required = false;
-    const toggle = (title, name) => {
-      const label = checkbox(title, false, () => {});
-      label.querySelector("input").name = name;
-      return label;
-    };
-    overrides.append(toggle("Scratch worker (up to 7 days)", "scratch"),
-      toggle("Skip niks3 push token", "no_niks3_token"));
-    options.append(overrides, toggle("Open SSH after creation", "open_ssh"));
-    fields.append(options);
+    const live = (state.rows.workers || []).filter((row) => !row.retired && !isPool(row)).length;
+    $("dialog-note").textContent = live ? `${live} ad-hoc worker${live === 1 ? "" : "s"} running` : "";
+    const initial = options.profile || profiles.find((item) => item.default)?.name || profiles[0]?.name || "standard";
+    const picker = el("fieldset", "field");
+    picker.append(el("legend", null, "Profile"));
+    const list = el("div", "picker");
+    if (profiles.length) {
+      for (const profile of profiles) {
+        const input = el("input");
+        input.type = "radio";
+        input.name = "profile";
+        input.value = profile.name;
+        input.checked = profile.name === initial;
+        const sub = [ciProviders[profile.provider], ...profileSpecs(profile)].filter(Boolean).join(" · ");
+        list.append(el("label", "pick", input, profileTile(profile),
+          el("span", null, el("strong", null, profile.name), profile.default ? el("span", "tag default", "default") : null, el("small", null, sub || profile.flavor || "")),
+          profile.arch ? el("span", "tag", profile.arch) : el("span")));
+      }
+    } else list.append(field("Profile name", "profile", { value: initial }));
+    picker.append(list);
+    fields.append(picker, lifetimeField(options.ttl || "2h", "Workers still in use when their lease ends get up to an hour of grace."),
+      field("Topic", "topic", { value: options.topic || "", required: false, placeholder: "What is this worker for?", attrs: { maxlength: "255" } }),
+      toggleField("Open SSH when ready", "open_ssh", "The terminal opens once the host key is pinned.", true, "terminal"));
+    const advanced = el("details", "advanced");
+    const overrides = el("div", "grid2",
+      field("Flavor override", "flavor", { required: false }),
+      field("Disk override (GiB)", "disk", { required: false, attrs: { type: "number", min: "1", max: "4294967295", step: "1" } }),
+      field("Agent ID", "agent_id", { required: false, attrs: { maxlength: "128", pattern: "[A-Za-z0-9._:][A-Za-z0-9._:\\-]*" } }));
+    advanced.append(el("summary", null, "Advanced: flavor, disk, agent ID, scratch, cache token"), overrides,
+      el("div", "list", toggleField("Scratch worker", "scratch", "Lives up to 7 days instead of 24 hours."),
+        toggleField("Skip the niks3 push token", "no_niks3_token", null)));
+    fields.append(advanced);
     const updateProvider = () => {
-      const profile = state.rows.profiles?.find((row) => row.name === profileInput.value);
-      const ci = Object.hasOwn(ciProviders, profile?.provider) || /^(gh-(aarch64|x86_64)|gl-x86_64(-lease)?)$/.test(profileInput.value);
-      overrides.hidden = overrides.disabled = ci;
-      flavor.placeholder = ci ? "" : profile?.flavor || "Use profile default";
-      disk.placeholder = ci || !profile?.disk ? "Use profile default" : String(profile.disk);
+      const name = fields.querySelector('input[name="profile"]:checked')?.value || fields.querySelector('[name="profile"]')?.value;
+      const profile = profiles.find((row) => row.name === name);
+      const ci = Object.hasOwn(ciProviders, profile?.provider) || /^(gh-(aarch64|x86_64)|gl-x86_64(-lease)?)$/.test(name || "");
+      advanced.hidden = ci;
+      for (const node of advanced.querySelectorAll("input")) node.disabled = ci;
+      fields.querySelector("#field-flavor").placeholder = profile?.flavor || "Profile default";
+      fields.querySelector("#field-disk").placeholder = profile?.disk ? String(profile.disk) : "Profile default";
     };
-    profileInput.addEventListener("input", updateProvider);
+    list.addEventListener("change", updateProvider);
     updateProvider();
+    $("dialog-hint").textContent = "Ready in 1 to 4 minutes";
   }
-  if (["start", "register"].includes(action)) field("Job name", "job");
-  if (action === "start") field("Command", "command", "", "textarea");
-  if (action === "register") field("Absolute log path on the worker", "path");
-  if (action === "delete") fields.append(element("p", "Delete " + worker.name + " and release its compute resources?"));
-  if (action === "renew-token") fields.append(element("p", "Renew the cache token for " + worker.name + "?"));
-  $("dialog").showModal();
+  if (action === "extend") {
+    fields.append(lifetimeField(options.ttl || "2h", "Sets the expiry to now plus this duration, up to the worker's maximum lifetime."));
+  }
+  if (["topic", "claim"].includes(action)) {
+    fields.append(field("Topic", "topic", { value: worker?.topic || "", required: action === "claim", placeholder: "What is this worker for?", attrs: { maxlength: "255" } }));
+    if (action === "claim") fields.prepend(el("p", "confirm-text muted", "Take over this worker: it is recorded as yours, with this topic."));
+  }
+  if (action === "start") {
+    fields.append(field("Job name", "job", { placeholder: "e.g. cargo-test" }),
+      field("Command", "command", { kind: "textarea", placeholder: "cd repo && nix develop -c cargo test", help: "Runs on the worker from the home directory. Output appears under Logs." }));
+  }
+  if (action === "register") {
+    fields.append(field("Job name", "job"), field("Absolute log path on the worker", "path", { placeholder: "/home/agent/build.log" }));
+  }
+  if (action === "delete") {
+    const running = state.selected?.name === worker.name ? (state.detailJobs || []).filter((job) => filterTests.jobs.active(job)) : [];
+    fields.append(el("p", "confirm-text", "Delete ", el("span", "mono", worker.name), " and release its compute? Everything on the worker is lost."));
+    if (running.length) fields.append(el("div", "warn-box", icon("alert"), el("span", null, `${running.length} job${running.length === 1 ? " is" : "s are"} still running: ${running.map((job) => job.job).join(", ")}.`)));
+  }
+  if (action === "renew-token") fields.append(el("p", "confirm-text", "Issue a new niks3 cache token for ", el("span", "mono", worker.name), "?"));
+  dialog.showModal();
+  const first = fields.querySelector("input:not([type=radio]):not([type=checkbox]), textarea") ;
+  if (action !== "create" && first) first.focus();
+  else if (action === "delete") $("dismiss").focus();
 }
+
+function collectForm(target) {
+  const data = Object.fromEntries(new FormData(target));
+  const action = { ...currentAction };
+  for (const [key, value] of Object.entries(data)) if (key !== "ttl_custom") action[key] = typeof value === "string" ? value.trim() : value;
+  if (data.ttl === "custom") action.ttl = String(data.ttl_custom || "").trim();
+  return action;
+}
+
+async function runAction(action, message) {
+  try {
+    await request("action", action);
+    toast(message);
+    lastHeadKey = "";
+    await refresh(true);
+    if (state.selected && !logSocket && action.action !== "delete") updateDetail();
+    if (state.selected) loadDetailJobs(state.selected);
+    return true;
+  } catch (error) {
+    fail(error.message);
+    return false;
+  }
+}
+
+async function createWorker(action) {
+  const openSsh = action.open_ssh === "on";
+  delete action.open_ssh;
+  for (const key of ["flavor", "disk", "agent_id"]) if (!action[key]) delete action[key];
+  if (action.disk) action.disk = Number(action.disk);
+  for (const key of ["scratch", "no_niks3_token"]) action[key] = action[key] === "on";
+  const started = Date.now();
+  const label = `${action.profile} · ${action.ttl}${action.topic ? " · " + action.topic : ""}`;
+  const progress = toast("Creating a worker…", { tone: "busy", detail: label });
+  const timer = setInterval(() => {
+    const seconds = Math.floor((Date.now() - started) / 1000);
+    progress.update("Creating a worker…", { tone: "busy", detail: `${label} · ${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, "0")}` });
+  }, 1000);
+  try {
+    const result = await request("action", action);
+    clearInterval(timer);
+    progress.close();
+    const name = result?.worker;
+    toast(name ? `${name} is ready.` : "Worker is ready.", {
+      timeout: 12000,
+      actions: name ? [{ label: "Open", run: () => select({ name }) }, { label: "SSH", run: () => openTerminal({ name }) }] : [],
+    });
+    if (openSsh && name) openTerminal({ name });
+    await refresh(true);
+  } catch (error) {
+    clearInterval(timer);
+    progress.close();
+    toast("Could not create the worker.", { tone: "error", detail: error.message, actions: [{ label: "Try again", run: () => form("create", null, action) }] });
+  }
+}
+
+const actionMessages = {
+  extend: (a) => `${a.worker} now expires in ${a.ttl}.`,
+  topic: () => "Topic saved.",
+  claim: (a) => `You now own ${a.worker}.`,
+  start: (a) => `Started ${a.job}.`,
+  register: (a) => `Registered ${a.job}.`,
+  "renew-token": () => "Cache token renewed.",
+  delete: (a) => `Deleted ${a.worker}.`,
+};
+
+$("action-form").addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const action = collectForm(event.target);
+  const missing = [...event.target.querySelectorAll("[required]")].find((node) => !node.disabled && !node.closest("[hidden]") && !node.value.trim());
+  const problem = missing ? `Fill in ${missing.labels?.[0]?.textContent || missing.name}.` :
+    ["create", "extend"].includes(action.action) && !/^\d[\dhm]{0,15}$/.test(action.ttl || "") ? "Enter a lifetime such as 90m, 2h or 1h30m." : "";
+  if (problem) {
+    $("form-error").textContent = problem;
+    $("form-error").hidden = false;
+    (missing || $("field-ttl-custom"))?.focus();
+    return;
+  }
+  if (action.action === "create") {
+    $("dialog").close();
+    createWorker(action);
+    return;
+  }
+  $("confirm").disabled = true;
+  $("confirm").prepend(icon("loader", "spin"));
+  $("form-error").hidden = true;
+  try {
+    await request("action", action);
+    $("dialog").close();
+    toast(actionMessages[action.action](action));
+    if (action.action === "delete") location.hash = "workers";
+    lastHeadKey = "";
+    await refresh(true);
+    if (state.selected && action.action !== "delete") {
+      loadDetailJobs(state.selected);
+      if (action.action === "start") { state.tab = "logs"; select(state.selected, action.job); }
+      else if (!logSocket) updateDetail();
+    }
+  } catch (error) {
+    $("form-error").textContent = error.message;
+    $("form-error").hidden = false;
+  } finally {
+    $("confirm").disabled = false;
+    $("confirm").querySelector(".spin")?.remove();
+  }
+});
+$("action-form").addEventListener("keydown", (event) => {
+  if (event.key === "Enter" && (event.ctrlKey || event.metaKey)) {
+    event.preventDefault();
+    $("action-form").requestSubmit();
+  }
+});
+
+// Command palette
+const palette = { items: [], active: 0 };
+
+function paletteEntries(ttl) {
+  const entries = [];
+  const add = (section, ic, label, keywords, run, hint = "") => {
+    const entry = { section, ic, label, keywords: keywords.toLowerCase(), run, hint };
+    entries.push(entry);
+    return entry;
+  };
+  const selected = state.selected;
+  if (selected && !selected.retired) {
+    const name = selected.name;
+    const tag = (text) => el("span", null, text + " ", el("span", "mono", name));
+    add("This worker", "terminal", tag("Open SSH on"), "ssh terminal shell " + name, () => openTerminal(selected), "S");
+    if (!isPool(selected)) add("This worker", "clock", ttl ? el("span", null, "Extend ", el("span", "mono", name), " to " + ttl + " from now") : tag("Extend"), "extend lease ttl " + name, () => ttl ? runAction({ action: "extend", worker: name, ttl }, `${name} now expires in ${ttl}.`) : form("extend", selected), "E");
+    add("This worker", "play", tag("Start a job on"), "start job run command " + name, () => form("start", selected));
+    add("This worker", "pencil", tag("Edit topic of"), "topic rename edit " + name, () => editTopic(), "T");
+    add("This worker", "copy", tag("Copy SSH command for"), "copy ssh command " + name, () => copy("rworker ssh " + name));
+    add("This worker", "trash", tag("Delete"), "delete down remove destroy " + name, () => form("delete", selected), "D");
+  }
+  add("Actions", "plus", el("span", null, "New worker"), "new create worker up", () => form("create", null, ttl ? { ttl } : {}), "N");
+  for (const profile of state.rows.profiles || []) {
+    add("Actions", "plus", el("span", null, "New worker from ", el("span", "mono", profile.name)), "new create worker profile " + profile.name + " " + (profile.arch || ""), () => form("create", null, { profile: profile.name, ...(ttl ? { ttl } : {}) }));
+  }
+  for (const row of (state.rows.workers || []).filter((item) => !item.retired)) {
+    const now = Date.now() / 1000;
+    const label = el("span", null, el("span", "mono", row.name), el("small", null, " · " + [workerSub(row), leaseInfo(row, now).text].filter(Boolean).join(" · ")));
+    add("Workers", null, label, ["open", row.name, row.topic, row.agent, row.owner, row.profile].filter(Boolean).join(" "), () => select(row), "open").glyphRow = row;
+    if (!isPool(row) && row.name !== selected?.name) {
+      add("Workers", "clock", ttl ? el("span", null, "Extend ", el("span", "mono", row.name), " to " + ttl + " from now") : el("span", null, "Extend ", el("span", "mono", row.name)),
+        "extend lease ttl " + row.name + " " + (row.topic || ""), () => ttl ? runAction({ action: "extend", worker: row.name, ttl }, `${row.name} now expires in ${ttl}.`) : form("extend", row));
+      add("Workers", "terminal", el("span", null, "SSH into ", el("span", "mono", row.name)), "ssh terminal " + row.name + " " + (row.topic || ""), () => openTerminal(row));
+    }
+  }
+  for (const [view, label] of Object.entries(views)) add("Go to", { workers: "server", jobs: "jobs", events: "activity", profiles: "layers" }[view], el("span", null, label), "go view " + view, () => { location.hash = view; });
+  add("Settings", prefs.layout === "split" ? "grid" : "columns", el("span", null, prefs.layout === "split" ? "Switch to cards layout" : "Switch to split view"), "layout cards split view switch", () => setPref("layout", prefs.layout === "split" ? "cards" : "split"));
+  add("Settings", "sun", el("span", null, "Theme: system, dark or light"), "theme dark light mode appearance", () => openSettings());
+  add("Settings", "keyboard", el("span", null, "Keyboard shortcuts"), "keyboard shortcuts help keys", () => showKeys(), "?");
+  if (state.token) add("Settings", "lock", el("span", null, "Lock console"), "lock sign out logout", () => lock());
+  return entries;
+}
+
+function itemNode(item, index) {
+  const node = el("button", "palette-item");
+  node.type = "button";
+  node.id = "palette-item-" + index;
+  node.setAttribute("role", "option");
+  node.setAttribute("aria-selected", String(index === palette.active));
+  if (item.glyphRow) node.append(glyph(workerGlyph(item.glyphRow)));
+  else node.append(icon(item.ic || "info"));
+  node.append(el("span", "text", item.label), item.hint ? el("span", "hint", item.hint.length === 1 ? el("kbd", null, item.hint) : item.hint) : el("span"));
+  node.addEventListener("click", () => runPalette(index));
+  node.addEventListener("mousemove", () => { if (palette.active !== index) { palette.active = index; highlightPalette(); } });
+  return node;
+}
+
+function renderPalette() {
+  const query = $("palette-input").value.trim().toLowerCase();
+  const words = query.split(/\s+/).filter(Boolean);
+  const ttl = words.find((word) => /^\d+[hm](\d+m)?$/.test(word));
+  const terms = words.filter((word) => word !== ttl);
+  let items = paletteEntries(ttl).filter((item) => terms.every((term) => item.keywords.includes(term)));
+  if (!terms.length && !ttl) items = items.filter((item) => item.section !== "Workers" || item.glyphRow);
+  palette.items = items.slice(0, 60);
+  palette.active = Math.min(palette.active, Math.max(0, palette.items.length - 1));
+  const list = $("palette-list");
+  list.replaceChildren();
+  if (!palette.items.length) {
+    list.append(el("div", "palette-empty", "Nothing matches. Try a worker name, “ssh”, “extend 1h” or “new”."));
+    return;
+  }
+  let section = "";
+  palette.items.forEach((item, index) => {
+    if (item.section !== section) {
+      section = item.section;
+      list.append(el("div", "palette-section", section));
+    }
+    list.append(itemNode(item, index));
+  });
+  highlightPalette();
+}
+
+function highlightPalette() {
+  $("palette-list").querySelectorAll(".palette-item").forEach((node, index) => node.setAttribute("aria-selected", String(index === palette.active)));
+  const active = $("palette-item-" + palette.active);
+  active?.scrollIntoView({ block: "nearest" });
+  $("palette-input").setAttribute("aria-activedescendant", active ? active.id : "");
+}
+
+function runPalette(index) {
+  const item = palette.items[index];
+  if (!item) return;
+  $("palette").close();
+  item.run();
+}
+
+function openPalette() {
+  if (!state.authenticated) return;
+  closeMenu();
+  for (const dialog of document.querySelectorAll("dialog[open]")) if (dialog.id !== "terminal-dialog") dialog.close();
+  palette.active = 0;
+  $("palette-input").value = "";
+  renderPalette();
+  $("palette").showModal();
+  $("palette-input").focus();
+}
+
+$("palette-input").addEventListener("input", () => { palette.active = 0; renderPalette(); });
+$("palette-input").addEventListener("keydown", (event) => {
+  if (event.key === "ArrowDown") { event.preventDefault(); palette.active = Math.min(palette.items.length - 1, palette.active + 1); highlightPalette(); }
+  if (event.key === "ArrowUp") { event.preventDefault(); palette.active = Math.max(0, palette.active - 1); highlightPalette(); }
+  if (event.key === "Enter") { event.preventDefault(); runPalette(palette.active); }
+});
+$("palette").addEventListener("click", (event) => { if (event.target === $("palette")) $("palette").close(); });
+
+// Settings and shortcut help
+function openSettings() {
+  for (const [key, value] of Object.entries(prefs)) {
+    for (const input of document.querySelectorAll(`#settings input[name="${key}"]`)) input.checked = input.value === value;
+  }
+  $("settings").showModal();
+}
+document.querySelectorAll("#settings input[type=radio]").forEach((input) => input.addEventListener("change", () => setPref(input.name, input.value)));
+
+const shortcuts = [
+  [["Ctrl", "K"], "Jump to a worker or run an action"], [["/"], "Filter the current view"],
+  [["1"], "Workers"], [["2"], "Jobs"], [["3"], "Events"], [["4"], "Profiles"],
+  [["N"], "New worker"], [["J"], "Next worker"], [["K"], "Previous worker"], [["Enter"], "Open the focused worker"],
+  [["Esc"], "Close the worker or dialog"], [["S"], "SSH into the open worker"], [["E"], "Extend its lease"],
+  [["T"], "Edit its topic"], [["D"], "Delete it"], [["L"], "Show its logs"], [["F"], "Follow or pause the log"],
+  [["W"], "Wrap long log lines"], [["R"], "Refresh"], [["?"], "This list"],
+];
+function showKeys() {
+  $("keys-list").replaceChildren(...shortcuts.flatMap(([keys, text]) => [el("dt", null, ...keys.map((key) => el("kbd", null, key))), el("dd", null, text)]));
+  $("keys").showModal();
+}
+
+function moveSelection(delta) {
+  if (state.view !== "workers") return;
+  if (state.selected) {
+    const index = state.order.indexOf(state.selected.name);
+    const next = state.order[index < 0 ? 0 : index + delta];
+    if (next) select(workerFor(next));
+    return;
+  }
+  const items = [...document.querySelectorAll("#results .worker-item, #results .card .name, #results .pool-member")];
+  if (!items.length) return;
+  const index = items.indexOf(document.activeElement);
+  (items[index < 0 ? (delta > 0 ? 0 : items.length - 1) : Math.min(items.length - 1, Math.max(0, index + delta))]).focus();
+}
+
+document.addEventListener("keydown", (event) => {
+  if (!state.authenticated) return;
+  if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "k") {
+    event.preventDefault();
+    if ($("palette").open) $("palette").close();
+    else openPalette();
+    return;
+  }
+  if (event.defaultPrevented || event.altKey || event.ctrlKey || event.metaKey) return;
+  if (document.querySelector("dialog[open]") || menuState) return;
+  const target = event.target;
+  if (target.closest?.("input, textarea, select, [contenteditable=true], .xterm")) {
+    if (event.key === "Escape" && target.id === "search") {
+      target.value = "";
+      target.blur();
+      render();
+    }
+    return;
+  }
+  const row = state.selected;
+  const live = row && !row.retired;
+  const keys = {
+    "/": () => $("search-box").hidden || $("search").focus(),
+    "?": showKeys,
+    "1": () => { location.hash = "workers"; }, "2": () => { location.hash = "jobs"; },
+    "3": () => { location.hash = "events"; }, "4": () => { location.hash = "profiles"; },
+    n: () => form("create"), j: () => moveSelection(1), k: () => moveSelection(-1),
+    r: () => refresh(true),
+    Escape: () => { if (row) location.hash = "workers"; },
+    s: () => live && openTerminal(row),
+    e: () => live && !isPool(row) && form("extend", row),
+    t: () => live && editTopic(),
+    d: () => live && form("delete", row),
+    l: () => { if (row) { state.tab = "logs"; renderTabs(); updateDetail(true); } },
+    f: () => live && state.tab === "logs" && setFollow(!state.follow),
+    w: () => row && state.tab === "logs" && $("detail-output").querySelector('[aria-label^="Wrap"]')?.click(),
+  };
+  const handler = keys[event.key];
+  if (!handler) return;
+  event.preventDefault();
+  handler();
+});
 
 function followInventory() {
   if (!state.authenticated || stream) return;
@@ -1033,18 +1961,24 @@ async function openConsole(token = "", automatic = false) {
       try { sessionStorage.setItem("rworker.operator", token); } catch { /* Storage disabled. */ }
     }
     $("login").hidden = true;
+    $("login-error").hidden = true;
     $("console").hidden = false;
+    $("toolbar").hidden = false;
     $("lock").hidden = !token;
+    $("session-detail").textContent = token ? "Operator token" : "Signed in";
     if (!token && session?.signOutUrl?.startsWith("https://")) {
       $("sign-out").href = session.signOutUrl;
       $("sign-out").hidden = false;
     }
-    notice("");
     navigate();
     followInventory();
+    loadBackground();
   } catch (error) {
     lock();
-    if (!automatic || error.message !== "Enter the console access token.") notice(error.message, true);
+    if (!automatic || error.message !== "Enter the console access token.") {
+      $("login-error").textContent = error.message;
+      $("login-error").hidden = false;
+    }
   }
 }
 
@@ -1054,62 +1988,32 @@ $("unlock").addEventListener("submit", (event) => {
   $("token").value = "";
   if (token) openConsole(token);
 });
-$("lock").addEventListener("click", () => { lock(); notice(""); });
+$("lock").addEventListener("click", () => lock());
 $("create").addEventListener("click", () => form("create"));
+$("fab").addEventListener("click", () => form("create"));
+$("back").addEventListener("click", () => { location.hash = state.view; });
+$("palette-open").addEventListener("click", openPalette);
+$("settings-open").addEventListener("click", openSettings);
+$("settings-mobile").addEventListener("click", openSettings);
+$("settings-close").addEventListener("click", () => $("settings").close());
+$("keys-close").addEventListener("click", () => $("keys").close());
+$("terminal-close").addEventListener("click", () => $("terminal-dialog").close());
 $("profile-close").addEventListener("click", () => $("profile-dialog").close());
-$("search").addEventListener("input", () => { state.limit = 200; render(); });
-$("extra").addEventListener("change", () => {
-  state.showFinished = $("extra").checked;
-  state.limit = 200;
-  render();
-});
-for (const control of filterButtons) {
-  control.addEventListener("click", () => {
-    state.workerFilter = control.dataset.workerFilter;
-    state.limit = 200;
-    render();
-  });
-}
-$("refresh").addEventListener("click", () => refresh(true));
 $("cancel").addEventListener("click", () => $("dialog").close());
 $("dismiss").addEventListener("click", () => $("dialog").close());
-$("action-form").addEventListener("submit", async (event) => {
-  event.preventDefault();
-  const action = { ...currentAction, ...Object.fromEntries(new FormData(event.target)) };
-  const openSsh = action.open_ssh === "on";
-  if (action.action === "create") {
-    delete action.open_ssh;
-    for (const key of ["flavor", "disk", "agent_id"]) {
-      if (!action[key]?.trim()) delete action[key];
-    }
-    if (action.disk) action.disk = Number(action.disk);
-    for (const key of ["scratch", "no_niks3_token"]) action[key] = action[key] === "on";
-  }
-  $("confirm").disabled = true;
-  $("form-error").hidden = true;
-  try {
-    const result = await request("action", action);
-    $("dialog").close();
-    notice(action.action === "create" ? "Worker is ready." : "Action completed.");
-    if (action.action === "delete") location.hash = "workers";
-    if (openSsh && result?.worker) openTerminal({ name: result.worker });
-    await refresh(true);
-    if (state.selected && !logSocket && action.action !== "delete") updateDetail();
-  } catch (error) {
-    $("form-error").textContent = error.message;
-    $("form-error").hidden = false;
-    if (!$("dialog").open) notice(error.message, true);
-  } finally {
-    $("confirm").disabled = false;
-  }
-});
+$("search").addEventListener("input", () => { state.limit = 200; render(); });
+for (const dialog of document.querySelectorAll("dialog:not(#terminal-dialog)")) {
+  dialog.addEventListener("click", (event) => { if (event.target === dialog) dialog.close(); });
+}
+narrow.addEventListener("change", () => { detailPanel(); lastRenderKey = ""; render(); });
 window.addEventListener("hashchange", navigate);
-document.addEventListener("click", (event) => {
-  const menu = document.querySelector(".worker-action-menu[open]");
-  if (menu && !menu.contains(event.target)) menu.open = false;
-});
-setInterval(() => { if (state.authenticated && !document.hidden && state.view !== "profiles") refresh(); }, 5000);
-setInterval(() => { if (state.authenticated && !document.hidden && state.selected && state.tab === "logs" && state.follow && !logSocket) updateDetail(); }, 2500);
+setInterval(() => {
+  if (!state.authenticated || document.hidden) return;
+  if (state.view !== "profiles") refresh();
+  else render();
+}, 5000);
+setInterval(() => { if (state.authenticated && !document.hidden && state.selected && state.tab === "logs" && state.follow && !state.selected.retired && !logSocket) updateDetail(); }, 2500);
+$("toolbar").hidden = true;
 navigate();
 let savedToken = "";
 try { savedToken = sessionStorage.getItem("rworker.operator") || ""; } catch { /* Storage disabled. */ }

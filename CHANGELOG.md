@@ -4,6 +4,8 @@
 
 The Rust client and controller replace the original Bash client.
 
+- Redesign the web console: a sidebar with a split view (worker list beside the open worker), one icon set and button style, a full-height log viewer with job picker, line filter, follow, wrap, copy and download, toasts instead of banners, a non-blocking new-worker drawer with lifetime presets, an expiry banner with one-click extension, a command palette (Ctrl+K) and keyboard shortcuts, and a phone layout with bottom tabs and sheets.
+- Add console settings for a cards layout with full worker pages, a light theme and a compact density.
 - Replace the logo with a hard-hat ant and show it beside the name in the README, with a rimmed variant for dark mode.
 - Use the hard-hat ant as the web console favicon and header mark, and show it on the sign-in card.
 - Use the hard-hat ant for the Home Assistant integration icon and logo, with dark-theme variants, rendered by `scripts/brand-icons.sh`.
