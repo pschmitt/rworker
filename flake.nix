@@ -156,6 +156,20 @@
     in
     eachSystem
     // {
+      circus.consumerBuilds.nixos-config = {
+        repository = "pschmitt/nixos-config";
+        ref = "main";
+        input = "rworker";
+        follows = [
+          "nixpkgs"
+          "flake-utils"
+        ];
+        packages.aarch64-linux = [
+          "rworker"
+          "rworker-mcp"
+        ];
+      };
+
       # Expose both Linux architectures to Circus.
       hydraJobs = nixpkgs.lib.genAttrs [ "x86_64-linux" "aarch64-linux" ] (system: {
         packages = self.packages.${system};
