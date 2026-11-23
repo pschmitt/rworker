@@ -4,6 +4,7 @@
 
 The Rust client and controller replace the original Bash client.
 
+- Log why the Home Assistant integration's inventory stream failed, once per outage.
 - Keep the inventory cache files group-readable whatever the writer's umask: the builder gateway's 0077 hid the inventory from the web and automation API, which then streamed no snapshots (Home Assistant stayed unavailable).
 - Refuse a builder gateway `authorizedKeysFile` in the Nix store: sshd's StrictModes rejects it, so every gateway login failed. The docs show a copied `/etc` file.
 - Record who deleted a worker and why (the reaper's reason, `down` by its caller, the builder gateway, the autoscaler, a failed `up`) as the details of its `worker-deleted` event.

@@ -88,6 +88,9 @@ class Runtime:
                         self.connected.async_set_updated_data(True)
                         delay = 1
             except (ClientError, OSError, TimeoutError, ValueError) as err:
+                # Name the cause once per outage, not on every retry.
+                log = LOGGER.warning if self.connected.data else LOGGER.debug
+                log("rworker inventory stream failed: %s", err or type(err).__name__)
                 self.connected.async_set_updated_data(False)
                 self.coordinator.async_set_update_error(
                     UpdateFailed("Inventory stream disconnected")
