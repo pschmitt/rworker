@@ -365,6 +365,11 @@ pub fn cmd_builder(ctx: &Ctx, args: &[String]) -> R {
         crate::help::show(ctx, "builder");
         return Err(Fail(2));
     };
+    let hosted = state::hosted_id(name);
+    if hosted.is_some() && !ctx.json.get() {
+        ctx.err("Hosted builder connections require builder --json and its SSH configuration");
+        return Err(Fail(2));
+    }
     let ip = state::worker_ip(ctx, name)?;
     let key = state::worker_field(ctx, name, "host_key").map_err(|_| Fail(1))?;
     // `jq -r` printed the key with a newline, and base64 encoded it too.
@@ -380,11 +385,53 @@ pub fn cmd_builder(ctx: &Ctx, args: &[String]) -> R {
     if std::fs::File::open(&identity).is_err() {
         identity = "-".to_string();
     }
-    let line = format!(
-        "ssh-ng://agent@{ip} x86_64-linux {identity} 16 1 nixos-test,benchmark,big-parallel,kvm - {key}"
-    );
+    let (line, ssh_config) = if let Some((forge, _)) = hosted {
+        let profile = state::worker_field(ctx, name, "profile")?;
+        let Some(profile) =
+            crate::github_profiles::from_name(&profile).filter(|p| p.forge == forge)
+        else {
+            ctx.err("Unknown hosted builder profile");
+            return Err(Fail(1));
+        };
+        let port = state::worker_field(ctx, name, "github_port")?
+            .parse::<u64>()
+            .ok()
+            .filter(|port| (1024..=65535).contains(port))
+            .ok_or_else(|| {
+                ctx.err("Invalid hosted builder relay port");
+                Fail(1)
+            })?;
+        let proxy = state::hosted_proxy_command(ctx, port);
+        if forge != crate::github_profiles::Forge::GitHub {
+            ctx.err("This hosted profile does not provide an isolated Nix builder store");
+            return Err(Fail(2));
+        }
+        let features = if state::worker_field(ctx, name, "kvm").as_deref() == Ok("true") {
+            "kvm"
+        } else {
+            "-"
+        };
+        (
+            format!(
+                "ssh-ng://rworker-build@{name}?remote-program=/home/rworker-build/.local/bin/rworker-nix-daemon {} {identity} 1 1 {features} - {key}",
+                profile.system,
+            ),
+            Some(format!("Host {name}\n  ProxyCommand {proxy}\n")),
+        )
+    } else {
+        (
+            format!(
+                "ssh-ng://agent@{ip} x86_64-linux {identity} 16 1 nixos-test,benchmark,big-parallel,kvm - {key}"
+            ),
+            None,
+        )
+    };
     if ctx.json.get() {
-        crate::ctx::json_out(ctx, &jq::compact(&json!({"name": name, "builder": line})));
+        let mut result = json!({"name": name, "builder": line});
+        if let Some(config) = ssh_config {
+            result["ssh_config"] = json!(config);
+        }
+        crate::ctx::json_out(ctx, &jq::compact(&result));
     } else {
         outln(&line);
     }

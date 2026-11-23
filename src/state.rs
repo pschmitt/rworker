@@ -395,6 +395,25 @@ pub fn ssh_opts(ctx: &Ctx, name: &str) -> Vec<String> {
     ssh_opts_with_relay(ctx, name, false)
 }
 
+pub fn hosted_proxy_command(ctx: &Ctx, port: u64) -> String {
+    let target = format!("127.0.0.1:{port}");
+    proc::quote_words(&[
+        "ssh",
+        "-q",
+        "-o",
+        "BatchMode=yes",
+        "-o",
+        "StrictHostKeyChecking=yes",
+        "-W",
+        &target,
+        "--",
+        &ctx.control_host,
+    ])
+    .replace('%', "%%")
+    .trim_end()
+    .to_owned()
+}
+
 pub fn ssh_opts_with_relay(ctx: &Ctx, name: &str, local_relay: bool) -> Vec<String> {
     let Ok(key) = worker_field(ctx, name, "host_key") else {
         return Vec::new();
@@ -433,18 +452,7 @@ pub fn ssh_opts_with_relay(ctx: &Ctx, name: &str, local_relay: bool) -> Vec<Stri
                 port.to_string(),
             ]);
         } else if let Some(port) = port {
-            let target = format!("127.0.0.1:{port}");
-            let proxy = proc::quote_words(&[
-                "ssh",
-                "-q",
-                "-o",
-                "BatchMode=yes",
-                "-W",
-                &target,
-                "--",
-                &ctx.control_host,
-            ])
-            .replace('%', "%%");
+            let proxy = hosted_proxy_command(ctx, port);
             options.extend(["-o".into(), format!("ProxyCommand={proxy}")]);
         }
     }

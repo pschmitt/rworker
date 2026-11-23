@@ -1,6 +1,7 @@
 """Run one controller assignment on a Linux CI runner."""
 
 from contextlib import ExitStack, contextmanager
+import base64
 import grp
 import json
 import os
@@ -27,6 +28,7 @@ ARCHITECTURES.update(dict.fromkeys(GITLAB_PROFILES, "x86_64"))
 LEASE_IMAGE = Path("/etc/rworker/lease-image").is_file()
 AUDIENCE = "rworker-job"
 BUILD_USER = "rworker-build"
+NIX_BUILDER_PATH = ".local/bin/rworker-nix-daemon"
 
 
 class NoRedirect(urllib.request.HTTPRedirectHandler):
@@ -158,6 +160,22 @@ def prepare_gitlab_nix():
     run_as_build_user(["nix-store", "--init"], check=True)
 
 
+def prepare_github_nix_builder():
+    # Remote Nix clients need write permission to the store. Give the lease
+    # its own store, under the build user's home and separate from the runner
+    # daemon and the Nix tools used by the agent.
+    run_as_build_user(
+        ["/bin/bash", "-eu", "-c", 'umask 077; mkdir -p "${1%/*}"; cat > "$1"; chmod 0700 "$1"',
+         "rworker-nix-daemon", str(Path(pwd.getpwnam(BUILD_USER).pw_dir) / NIX_BUILDER_PATH)],
+        input="""#!/bin/sh
+export NIX_CONFIG="build-users-group =
+sandbox = true"
+exec nix-daemon --store "$HOME/.local/share/nix/rworker" "$@"
+""",
+        text=True, check=True,
+    )
+
+
 @contextmanager
 def gitlab_nix_daemon():
     with subprocess.Popen(["nix-daemon"], stdin=subprocess.DEVNULL, start_new_session=True) as daemon:
@@ -186,6 +204,8 @@ def build_environment(profile):
                 stack.enter_context(gitlab_nix_daemon())
             else:
                 prepare_gitlab_nix()
+        else:
+            prepare_github_nix_builder()
         yield kvm_capabilities(), volume
 
 
@@ -264,7 +284,10 @@ def start_ssh_worker(url, token, assignment, mesh):
                 if sshd.poll() is not None:
                     raise RuntimeError("Runner SSH server stopped")
                 expires_at = assignment["expires_at"]
-                endpoint = {"port": int(port), "host_key": host_key.with_suffix(".pub").read_text().strip()}
+                endpoint = {
+                    "port": int(port),
+                    "host_key": " ".join(host_key.with_suffix(".pub").read_text().split()[:2]),
+                }
                 if update_lease(f"{url}/ready", token, endpoint, expires_at) is None:
                     return
                 result = {}
@@ -480,6 +503,8 @@ def check_runtime(profile):
                     raise RuntimeError("Runtime SSH user mismatch")
                 if Path(output[1]).read_text().strip() != "ready":
                     raise RuntimeError("Runtime Nix build produced unexpected output")
+                if profile not in GITLAB_PROFILES:
+                    check_github_nix_builder(key, host_key, ARCHITECTURES[profile] + "-linux", marker)
                 if volume is not None:
                     subprocess.run([
                         *ssh, f'printf ready > "$HOME/{marker}" && '
@@ -505,6 +530,27 @@ def check_runtime(profile):
                 if daemon.poll() is None:
                     daemon.terminate()
     print("rworker runtime check passed", flush=True)
+
+
+def check_github_nix_builder(key, host_key, system, marker):
+    public_key = " ".join(host_key.with_suffix(".pub").read_text().split()[:2]) + "\n"
+    host_public_key = base64.b64encode(public_key.encode()).decode()
+    home = pwd.getpwnam(BUILD_USER).pw_dir
+    store = f"ssh-ng://{BUILD_USER}@127.0.0.1:22222?remote-program={home}/{NIX_BUILDER_PATH}"
+    builder = f"{store} {system} {key} 1 1 - - {host_public_key}"
+    revision = json.loads(Path("flake.lock").read_text())["nodes"]["nixpkgs"]["locked"]["rev"]
+    expression = (
+        f'let pkgs = (builtins.getFlake "github:NixOS/nixpkgs/{revision}").legacyPackages.{system}; '
+        f'in pkgs.runCommand "{marker}-distributed" {{ }} "echo ready > $out"'
+    )
+    output = subprocess.check_output(
+        ["nix", "build", "--impure", "--max-jobs", "0", "--builders", builder,
+         "--option", "builders-use-substitutes", "true", "--no-link", "--print-out-paths",
+         "--expr", expression],
+        text=True, timeout=300,
+    ).strip()
+    if Path(output).read_text().strip() != "ready":
+        raise RuntimeError("Distributed Nix build produced unexpected output")
 
 
 def mesh_tools(providers):

@@ -1,4 +1,8 @@
-Usage: __ME__ builder NAME
+Usage: __ME__ builder NAME [--json]
 
 Print a Nix builders line for the worker, e.g.:
   nix build --max-jobs 0 --builders "$(__ME__ builder NAME)" .#pkg
+
+For hosted workers, use --json. The result includes ssh_config for the
+worker's pinned relay connection. Prepend it to the client's SSH config.
+Nix operation permissions still depend on the runner's Nix store.
