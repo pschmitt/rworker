@@ -450,7 +450,7 @@ function render() {
       }));
       break;
     default:
-      columns = [["Profile"], ["Arch"], ["vCPUs"], ["RAM"], ["Disk"], ["Flavor", true], ["Image tags", true]];
+      columns = [["Profile"], ["Arch"], ["vCPUs"], ["RAM"], ["Disk"], ["Flavor", true], ["Tags", true]];
       if (state.authenticated) columns.push(["Actions", false, false]);
       rows = visible.map((row) => {
         const tags = (row.image_tags || []).join(", ");
@@ -548,7 +548,7 @@ async function openProfile(row) {
         profile.ram_mib != null ? (profile.ram_mib * 2 ** 20 / 1e9).toFixed(1) + " GB" : null],
       ["Disk", profile.disk_total_bytes != null ? (profile.disk_total_bytes / 1e9).toFixed(1) + " GB" :
         profile.disk != null ? (profile.disk * 2 ** 30 / 1e9).toFixed(1) + " GB" : null],
-      ["Image tags", profile.image_tags?.join(", ")],
+      ["Tags", profile.image_tags?.join(", ")],
       ["Image name", profile.image_name || profile.image_status],
       ["Image ID", profile.image_id], ["Image created", profile.image_created_at],
     ];

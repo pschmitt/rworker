@@ -263,7 +263,7 @@ pub fn cmd_profiles(ctx: &Ctx, args: &[String]) -> R {
         crate::ctx::json_out(ctx, &jq::pretty(&Value::Array(list)));
         return Ok(());
     }
-    let mut rows = vec!["PROFILE\tARCH\tFLAVOR\tVCPU\tRAM (GB)\tDISK (GB)\tIMAGE TAGS".to_string()];
+    let mut rows = vec!["PROFILE\tARCH\tFLAVOR\tVCPU\tRAM (GB)\tDISK (GB)\tTAGS".to_string()];
     if wide {
         rows[0].push_str("\tPROVIDER\tIMAGE / RUNNER\tIMAGE ID\tIMAGE CREATED");
     }

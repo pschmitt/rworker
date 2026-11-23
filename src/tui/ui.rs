@@ -786,7 +786,7 @@ fn draw_profiles(f: &mut Frame, area: Rect, profiles: &mut Profiles, icons: bool
         widths.push(Constraint::Length(20));
     }
     if show_tags {
-        header.push("IMAGE TAGS");
+        header.push("TAGS");
         widths.push(Constraint::Length(24));
     }
     let rows = profiles.rows.iter().map(|profile| {
