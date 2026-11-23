@@ -304,6 +304,7 @@ select { height: 32px; padding: 0 28px 0 10px; border: 1px solid var(--line2); b
 .tab:hover { color: var(--ink); }
 .tab[aria-selected="true"] { color: var(--ink); border-bottom-color: var(--acc); }
 .tab .n { padding: 1px 6px; border-radius: 999px; background: var(--s3); color: var(--mut); font-size: 11.5px; }
+.tab .n.busy { background: var(--amb-soft); color: var(--amb); font-weight: 600; }
 .detail-body { display: flex; flex-direction: column; flex: 1; min-height: 0; overflow-y: auto; }
 .pane-pad { padding: 14px 22px 22px; }
 .log-tools { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 10px 22px; }

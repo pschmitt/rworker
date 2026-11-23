@@ -1375,7 +1375,7 @@ function renderTabs() {
     }, { cls: "tab", ic });
     tab.setAttribute("role", "tab");
     tab.setAttribute("aria-selected", String(state.tab === key));
-    if (key === "jobs" && state.detailJobs?.length) tab.append(el("span", "n", running ? running + " running" : state.detailJobs.length));
+    if (key === "jobs" && running) tab.append(el("span", "n busy", String(running)));
     tabs.append(tab);
   }
 }
