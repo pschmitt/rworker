@@ -27,6 +27,39 @@ fn emit_event(ctx: &Ctx, event: &Event) {
         paint(ctx, color, kind),
         paint::event_target(ctx, target)
     );
+    if matches!(kind, "worker-added" | "worker-deleted") {
+        let worker = &event.worker;
+        if !worker.profile.is_empty() {
+            let forge = crate::github_profiles::Forge::from_key(&worker.provider)
+                .or_else(|| crate::github_profiles::from_name(&worker.profile).map(|p| p.forge));
+            let glyph = crate::pool_icon::provider_glyph(forge);
+            let color = match glyph {
+                crate::pool_icon::GITHUB => "38;2;0;0;0",
+                crate::pool_icon::GITLAB => "38;2;226;67;41",
+                _ => "38;2;218;26;50",
+            };
+            let icon = if ctx.icons.get() {
+                format!("{} ", paint(ctx, color, glyph))
+            } else {
+                String::new()
+            };
+            text += &format!(" profile={icon}{}", paint::vm(ctx, &worker.profile));
+        }
+        if !worker.agent.is_empty() {
+            let glyph = crate::table::glyph(&worker.agent);
+            let icon = if ctx.icons.get() && !glyph.is_empty() {
+                let glyph = if ctx.color {
+                    paint::agents(glyph)
+                } else {
+                    glyph.to_owned()
+                };
+                format!("{glyph} ")
+            } else {
+                String::new()
+            };
+            text += &format!(" agent={icon}{}", worker.agent);
+        }
+    }
     if !details.is_empty() {
         if let Some((a, b)) = details.split_once(" -> ") {
             text += &format!(" {} -> {}", paint::value(ctx, a), paint::value(ctx, b));

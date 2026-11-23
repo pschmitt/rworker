@@ -4,6 +4,8 @@
 
 The Rust client and controller replace the original Bash client.
 
+- Show profile and agent icons and colors on worker creation and deletion events.
+
 - Add on-demand setup and repair for ephemeral NetBird and Tailscale on CI workers.
 
 - Move manual niks3 token reissue and existing log registration under `setup`, with matching MCP tools.

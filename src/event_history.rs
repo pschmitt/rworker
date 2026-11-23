@@ -16,6 +16,10 @@ pub(crate) type Jobs = BTreeMap<String, BTreeMap<String, String>>;
 
 #[derive(Clone, Default, Deserialize, PartialEq, Eq, Serialize)]
 pub(crate) struct Worker {
+    #[serde(default)]
+    pub profile: String,
+    #[serde(default)]
+    pub provider: String,
     pub agent: String,
     pub agent_id: String,
     pub topic: String,
@@ -206,6 +210,12 @@ pub(crate) fn observe_workers(dir: &Path, inventory: &Value) -> io::Result<()> {
             Some((
                 name,
                 Worker {
+                    profile: row["profile"]
+                        .as_str()
+                        .filter(|profile| !profile.is_empty())
+                        .unwrap_or("standard")
+                        .to_owned(),
+                    provider: field("provider"),
                     agent: field("agent"),
                     agent_id: field("agent_id"),
                     topic: field("topic"),
@@ -275,6 +285,8 @@ mod tests {
         let mut history = History::default();
         let worker = Worker {
             agent: "fixture".into(),
+            profile: "gh-x86_64".into(),
+            provider: "github".into(),
             status: "BUILD".into(),
             ..Worker::default()
         };
@@ -312,7 +324,19 @@ mod tests {
             ]
         );
         assert_eq!(history.events.back().unwrap().worker.agent, "fixture");
+        assert_eq!(history.events.back().unwrap().worker.profile, "gh-x86_64");
+        assert_eq!(history.events.back().unwrap().worker.provider, "github");
         assert_eq!(history.events[3].details, "running -> exit 0");
         assert_eq!(history.events.back().unwrap().id, 6);
+    }
+
+    #[test]
+    fn old_history_without_profile_remains_readable() {
+        let worker: Worker = serde_json::from_str(
+            r#"{"agent":"codex","agent_id":"","topic":"","owner":"","status":"ACTIVE"}"#,
+        )
+        .unwrap();
+        assert!(worker.profile.is_empty());
+        assert!(worker.provider.is_empty());
     }
 }
