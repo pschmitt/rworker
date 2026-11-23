@@ -565,12 +565,13 @@ def mesh_environment(assignment):
             else:
                 env.update(
                     NB_USE_NETSTACK_MODE="true",
+                    NB_STATE_DIR=str(directory),
                     NB_SOCKS5_LISTENER_ADDRESS=host,
                     NB_SOCKS5_LISTENER_PORT=str(port),
                 )
                 daemon = [
-                    tools["netbird"], "up", "--foreground-mode",
-                    "--config", directory / "netbird.json", "--log-file", "console",
+                    tools["netbird"], "up", "--foreground-mode", "--no-browser",
+                    "--log-file", "console",
                     "--management-url", peer["management_url"], "--setup-key-file", key,
                     "--hostname", mesh["hostname"],
                 ]
