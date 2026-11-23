@@ -239,11 +239,14 @@ pub fn adopt(ctx: &Ctx, name: &str) -> R {
     if hosted_id(name).is_some() {
         return remember_hosted(ctx, name, info);
     }
-    // agent's keys are the creator's; everyone else logs in as themselves.
+    // On ad-hoc workers agent's keys are the creator's, so other owners log
+    // in as themselves. Pool workers carry the operator's keys for agent in
+    // their image: log in as agent there, as the web console does, so both
+    // see the same jobs.
+    let kind = jq::get(info, "kind").as_str();
+    let pool = !matches!(kind, None | Some("adhoc" | "unknown"));
     let mut user = ctx.user.clone();
-    if jq::get(info, "kind").as_str() == Some("adhoc")
-        && jq::raw(jq::get(info, "owner")) == ctx.owner()
-    {
+    if pool || (kind == Some("adhoc") && jq::raw(jq::get(info, "owner")) == ctx.owner()) {
         user = "agent".to_string();
     }
     fs::create_dir_all(&ctx.state_dir).map_err(|_| Fail(1))?;
