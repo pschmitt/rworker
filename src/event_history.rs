@@ -49,6 +49,9 @@ struct Deletion {
 
 /// Notes the inventory never confirms (a failed deletion) expire.
 const DELETION_NOTE_SECONDS: i64 = 86400;
+/// OpenStack can list a deleted server once more, as DELETING, right after
+/// it vanished; within this window that is not a new worker.
+const DELETED_ECHO_SECONDS: i64 = 120;
 
 #[derive(Default, Deserialize, Serialize)]
 struct History {
@@ -58,6 +61,9 @@ struct History {
     jobs: Jobs,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     deletions: BTreeMap<String, Deletion>,
+    /// When each recently deleted worker vanished, to ignore its echoes.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    deleted: BTreeMap<String, i64>,
 }
 
 pub(crate) fn directory() -> Option<PathBuf> {
@@ -127,7 +133,12 @@ impl History {
         });
     }
 
-    fn workers(&mut self, now: i64, current: BTreeMap<String, Worker>) -> bool {
+    fn workers(&mut self, now: i64, mut current: BTreeMap<String, Worker>) -> bool {
+        self.deleted
+            .retain(|_, at| now.saturating_sub(*at) < DELETED_ECHO_SECONDS);
+        current.retain(|name, worker| {
+            !(self.deleted.contains_key(name) && worker.status.eq_ignore_ascii_case("DELETING"))
+        });
         if self.workers == current {
             return false;
         }
@@ -157,6 +168,7 @@ impl History {
         for (name, worker) in old {
             if !self.workers.contains_key(&name) {
                 self.jobs.remove(&name);
+                self.deleted.insert(name.clone(), now);
                 let details = self
                     .deletions
                     .remove(&name)
@@ -413,6 +425,38 @@ mod tests {
         let old: History =
             serde_json::from_str(r#"{"next_id":0,"events":[],"workers":{},"jobs":{}}"#).unwrap();
         assert!(old.deletions.is_empty());
+    }
+
+    #[test]
+    fn a_deleting_echo_after_deletion_is_not_a_new_worker() {
+        let mut history = History::default();
+        let worker = |status: &str| Worker {
+            status: status.into(),
+            ..Worker::default()
+        };
+        let one = |status: &str| BTreeMap::from([("w".to_owned(), worker(status))]);
+        assert!(history.workers(1, one("ACTIVE")));
+        assert!(history.workers(2, one("DELETING")));
+        assert!(history.workers(3, BTreeMap::new()));
+        // The echo, then the final disappearance: no events.
+        assert!(!history.workers(4, one("DELETING")));
+        assert!(!history.workers(5, BTreeMap::new()));
+        // A worker of the same name created later is new again.
+        assert!(history.workers(3 + DELETED_ECHO_SECONDS, one("BUILD")));
+        let kinds: Vec<_> = history
+            .events
+            .iter()
+            .map(|event| event.kind.as_str())
+            .collect();
+        assert_eq!(
+            kinds,
+            [
+                "worker-added",
+                "worker-state",
+                "worker-deleted",
+                "worker-added"
+            ]
+        );
     }
 
     #[test]

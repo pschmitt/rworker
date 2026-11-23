@@ -4,6 +4,7 @@
 
 The Rust client and controller replace the original Bash client.
 
+- Ignore a deleted worker that OpenStack lists once more as DELETING: the event history recorded it as added and deleted a second time, without the deletion reason.
 - Leave builder gateway workers out of job polling and `logs -f`, and use the console's key only on pool workers: refused logins got the controller penalized by the workers' sshd, and the gateway then deleted healthy leases within minutes.
 - Log why the Home Assistant integration's inventory stream failed, once per outage.
 - Keep the inventory cache files group-readable whatever the writer's umask: the builder gateway's 0077 hid the inventory from the web and automation API, which then streamed no snapshots (Home Assistant stayed unavailable).
