@@ -72,13 +72,14 @@ fn ssh_command_with_options(ctx: &Ctx, args: &[String], extra: &[&str]) -> R<Com
     }
     let ip = state::worker_ip(ctx, &t.name)?;
     let web_terminal = !extra.is_empty();
-    let user = if web_terminal && state::hosted_id(&t.name).is_some() {
+    let local_relay = web_terminal || state::local_relay();
+    let user = if local_relay && state::hosted_id(&t.name).is_some() {
         // The controller may set a default login for its OpenStack workers.
         state::worker_field(ctx, &t.name, "user")?
     } else {
         target_user(ctx, &t).map_err(|_| Fail(1))?
     };
-    let mut opts = state::ssh_opts_with_relay(ctx, &t.name, web_terminal);
+    let mut opts = state::ssh_opts_with_relay(ctx, &t.name, local_relay);
     if let Ok(identity) = std::env::var("RWORKER_LOG_CACHE_IDENTITY") {
         if opts.is_empty() {
             return Err(Fail(1));

@@ -392,7 +392,14 @@ pub fn worker_ip(ctx: &Ctx, name: &str) -> R<String> {
 /// rather than reach whichever worker holds that IP now. A failure leaves
 /// no options if the host key is unavailable.
 pub fn ssh_opts(ctx: &Ctx, name: &str) -> Vec<String> {
-    ssh_opts_with_relay(ctx, name, false)
+    ssh_opts_with_relay(ctx, name, local_relay())
+}
+
+/// Commands the web console runs on the control host reach hosted workers
+/// through the local relay port, as its terminal does, instead of an SSH
+/// proxy back into the control host.
+pub fn local_relay() -> bool {
+    std::env::var_os("RWORKER_LOCAL_RELAY").is_some_and(|value| !value.is_empty())
 }
 
 pub fn hosted_proxy_command(ctx: &Ctx, port: u64) -> String {

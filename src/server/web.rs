@@ -292,6 +292,7 @@ async fn run(args: Vec<String>, seconds: u16) -> Result<String, Failure> {
             .arg(exe)
             .args(args)
             .env("NO_COLOR", "1")
+            .env("RWORKER_LOCAL_RELAY", "1")
             .env_remove("SSH_CONNECTION")
             .stdin(Stdio::null())
             .stdout(Stdio::piped())

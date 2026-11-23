@@ -9,6 +9,7 @@ The Rust client and controller replace the original Bash client.
 - Show ANSI colors in the web log viewer, such as the colored worker/job prefixes of combined logs.
 - Add right-click menus for workers and jobs in the web console, and kind icons in the console layout.
 - Wrap the worker actions below the name in narrow detail panes instead of drawing them over it.
+- Fix web console jobs, logs, processes and job starts on GitHub Actions workers: the console's commands now use the controller's local relay and the runner's login, like its terminal.
 - Add a special-keys bar (Esc, Tab, sticky Ctrl, ^C, ^L, ^U, arrows, ...) and a capture-all-keys mode (full screen with keyboard lock) to the web SSH terminal.
 - Wrap the web console's filter chips on phones instead of cutting them off, and let the SSH terminal fill its sheet.
 - Redesign the web console: a sidebar with a split view (worker list beside the open worker), one icon set and button style, a full-height log viewer with job picker, line filter, follow, wrap, copy and download, toasts instead of banners, a non-blocking new-worker drawer with lifetime presets, an expiry banner with one-click extension, a command palette (Ctrl+K) and keyboard shortcuts, and a phone layout with bottom tabs and sheets.

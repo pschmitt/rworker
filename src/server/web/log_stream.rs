@@ -134,6 +134,7 @@ fn spawn(args: &[String]) -> std::io::Result<LogProcess> {
     let mut cmd = Command::new(std::env::current_exe()?);
     cmd.args(args)
         .env("NO_COLOR", "1")
+        .env("RWORKER_LOCAL_RELAY", "1")
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::null())
