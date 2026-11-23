@@ -70,6 +70,47 @@ pub(super) fn routes(router: Router<PathBuf>) -> Router<PathBuf> {
             "/assets/logo.svg",
             get(|| async { asset("image/svg+xml", include_str!("../web/logo.svg")) }),
         )
+        .route(
+            "/assets/manifest.webmanifest",
+            get(|| async {
+                asset(
+                    "application/manifest+json",
+                    include_str!("../web/manifest.webmanifest"),
+                )
+            }),
+        )
+        .route(
+            // Under /assets/ like the rest, but allowed to control the whole
+            // console, so a proxy needs no extra location for it.
+            "/assets/sw.js",
+            get(|| async {
+                let mut response = asset(
+                    "text/javascript; charset=utf-8",
+                    include_str!("../web/sw.js"),
+                );
+                response.headers_mut().insert(
+                    header::HeaderName::from_static("service-worker-allowed"),
+                    header::HeaderValue::from_static("/"),
+                );
+                response
+            }),
+        )
+        .route(
+            "/assets/icon-192.png",
+            get(|| async { binary("image/png", include_bytes!("../web/icon-192.png")) }),
+        )
+        .route(
+            "/assets/icon-512.png",
+            get(|| async { binary("image/png", include_bytes!("../web/icon-512.png")) }),
+        )
+        .route(
+            "/assets/icon-maskable-512.png",
+            get(|| async { binary("image/png", include_bytes!("../web/icon-maskable-512.png")) }),
+        )
+        .route(
+            "/assets/apple-touch-icon.png",
+            get(|| async { binary("image/png", include_bytes!("../web/apple-touch-icon.png")) }),
+        )
         .merge(log_stream::routes())
         .merge(terminal::routes())
         .route(
@@ -163,14 +204,24 @@ fn same_origin(headers: &HeaderMap) -> bool {
         .is_some_and(|(provided, configured)| provided == configured)
 }
 
+const CONSOLE_CSP: &str = "default-src 'none'; script-src 'self'; style-src 'self'; style-src-elem 'self' 'unsafe-inline'; font-src 'self'; img-src 'self'; connect-src 'self'; manifest-src 'self'; worker-src 'self'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'";
+
 fn asset(content_type: &'static str, body: &'static str) -> Response {
-    ([
-        (header::CONTENT_TYPE, content_type),
-        (header::CACHE_CONTROL, "no-cache"),
-        (header::CONTENT_SECURITY_POLICY, "default-src 'none'; script-src 'self'; style-src 'self'; style-src-elem 'self' 'unsafe-inline'; font-src 'self'; img-src 'self'; connect-src 'self'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'"),
-        (header::X_CONTENT_TYPE_OPTIONS, "nosniff"),
-        (header::REFERRER_POLICY, "no-referrer"),
-    ], body).into_response()
+    binary(content_type, body.as_bytes())
+}
+
+fn binary(content_type: &'static str, body: &'static [u8]) -> Response {
+    (
+        [
+            (header::CONTENT_TYPE, content_type),
+            (header::CACHE_CONTROL, "no-cache"),
+            (header::CONTENT_SECURITY_POLICY, CONSOLE_CSP),
+            (header::X_CONTENT_TYPE_OPTIONS, "nosniff"),
+            (header::REFERRER_POLICY, "no-referrer"),
+        ],
+        body,
+    )
+        .into_response()
 }
 
 fn reply(status: StatusCode, data: Value) -> Response {
@@ -322,11 +373,16 @@ async fn run(args: Vec<String>, seconds: u16) -> Result<String, RunFailure> {
     tokio::task::spawn_blocking(move || {
         let _permit = permit;
         let exe = std::env::current_exe().map_err(|_| command_error)?;
-        let mut child = Command::new("timeout")
+        let mut command = Command::new("timeout");
+        // Logs keep the colors already in them (job prefixes, compiler
+        // output) for the console's viewer; everything else is plain text.
+        if args.first().map(String::as_str) != Some("logs") {
+            command.env("NO_COLOR", "1");
+        }
+        let mut child = command
             .args(["--kill-after=5s", &format!("{seconds}s")])
             .arg(exe)
             .args(args)
-            .env("NO_COLOR", "1")
             .env("RWORKER_LOCAL_RELAY", "1")
             .env_remove("SSH_CONNECTION")
             .stdin(Stdio::null())

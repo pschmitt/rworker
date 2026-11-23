@@ -5,11 +5,15 @@
 The Rust client and controller replace the original Bash client.
 
 - Poll jobs for lifecycle events only on workers that carry the log collector's key: logins refused on pool workers got the controller's address penalized by sshd, which made the web console's job list lose workers.
+- Show job states with icons in the web console, including an archive icon for archived jobs.
+- Keep the colors of redacted logs in the web console, so combined logs show the colored worker/job prefixes.
+- Make the web console an installable app (PWA): manifest with app icons and shortcuts, theme colors, and a service worker that keeps the shell for offline starts without caching console data.
 - Add `ssh -i FILE` (`--identity`) to log in to a worker with a specific private key.
 - Log in to pool workers as `agent`, like the web console, so jobs started from the CLI and the console are the same jobs.
 - List jobs of pool workers in the web console: it polls reachable workers alongside the log collector, and autoscalers authorize the console's restricted SSH key on new pool workers (`autoscalers.<name>.webConsoleAccess`).
 - Mark the current web console view with a filled background and accent icon instead of a side bar.
 - Sort the console layout's worker table by clicking a column header.
+- Show agent icons in the console layout's worker table.
 - Show why a web console action failed: the controller's error message, with secrets masked, instead of a generic error.
 - Add a console layout to the web console: a dense worker table with the selected worker's logs below and a shortcut bar.
 - Show the new expiry when choosing a lifetime for a new or extended worker.

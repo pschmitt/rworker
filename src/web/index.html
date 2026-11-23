@@ -6,6 +6,13 @@
   <meta name="color-scheme" content="dark light">
   <title>Workers · rworker</title>
   <link rel="icon" href="/assets/favicon.svg" type="image/svg+xml">
+  <!-- Credentials: behind a sign-in proxy the manifest needs the session cookie. -->
+  <link rel="manifest" href="/assets/manifest.webmanifest" crossorigin="use-credentials">
+  <link rel="apple-touch-icon" href="/assets/apple-touch-icon.png">
+  <meta name="theme-color" content="#10151b" media="(prefers-color-scheme: dark)">
+  <meta name="theme-color" content="#ffffff" media="(prefers-color-scheme: light)">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-title" content="rworker">
   <!-- Vendored xterm.js 6.0.0 and addon-fit 0.11.0, distributed under MIT. -->
   <link rel="stylesheet" href="/assets/xterm.css">
   <link rel="stylesheet" href="/assets/app.css">
@@ -63,6 +70,7 @@
     <symbol id="i-sun" viewBox="0 0 24 24"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></symbol>
     <symbol id="i-moon" viewBox="0 0 24 24"><path d="M21 12.8A9 9 0 1 1 11.2 3 7 7 0 0 0 21 12.8z"/></symbol>
     <symbol id="i-monitor" viewBox="0 0 24 24"><rect x="2" y="4" width="20" height="13" rx="2"/><path d="M8 21h8M12 17v4"/></symbol>
+    <symbol id="i-archive" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="5" rx="1"/><path d="M5 9v10a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1V9M10 13h4"/></symbol>
     <symbol id="i-expand" viewBox="0 0 24 24"><path d="M15 3h6v6M9 21H3v-6M21 3l-7 7M3 21l7-7"/></symbol>
     <symbol id="i-sort" viewBox="0 0 24 24"><path d="M3 6h13M3 12h9M3 18h5M17 9l3-3 3 3M20 6v13"/></symbol>
   </svg>
@@ -76,8 +84,9 @@
       <nav class="nav" id="nav" aria-label="Views">
         <a href="#workers" data-view="workers" title="Workers (1)"><svg class="i"><use href="#i-server"/></svg><span class="lbl">Workers</span><span class="count lbl" data-count="workers"></span></a>
         <a href="#jobs" data-view="jobs" title="Jobs (2)"><svg class="i"><use href="#i-jobs"/></svg><span class="lbl">Jobs</span><span class="count lbl" data-count="jobs"></span></a>
-        <a href="#events" data-view="events" title="Events (3)"><svg class="i"><use href="#i-activity"/></svg><span class="lbl">Events</span></a>
-        <a href="#profiles" data-view="profiles" title="Profiles (4)"><svg class="i"><use href="#i-layers"/></svg><span class="lbl">Profiles</span><span class="count lbl" data-count="profiles"></span></a>
+        <a href="#logs" data-view="logs" title="Logs (3)"><svg class="i"><use href="#i-terminal"/></svg><span class="lbl">Logs</span></a>
+        <a href="#events" data-view="events" title="Events (4)"><svg class="i"><use href="#i-activity"/></svg><span class="lbl">Events</span></a>
+        <a href="#profiles" data-view="profiles" title="Profiles (5)"><svg class="i"><use href="#i-layers"/></svg><span class="lbl">Profiles</span><span class="count lbl" data-count="profiles"></span></a>
       </nav>
       <div class="rail-foot">
         <button class="btn quiet" id="palette-open" type="button" title="Jump to (Ctrl K)"><svg class="i"><use href="#i-command"/></svg><span class="lbl">Jump to…</span><kbd class="lbl">Ctrl K</kbd></button>
@@ -147,6 +156,7 @@
     <nav class="tabbar" id="tabbar" aria-label="Views">
       <a href="#workers" data-view="workers"><svg class="i"><use href="#i-server"/></svg>Workers</a>
       <a href="#jobs" data-view="jobs"><svg class="i"><use href="#i-jobs"/></svg>Jobs</a>
+      <a href="#logs" data-view="logs"><svg class="i"><use href="#i-terminal"/></svg>Logs</a>
       <a href="#events" data-view="events"><svg class="i"><use href="#i-activity"/></svg>Events</a>
       <a href="#profiles" data-view="profiles"><svg class="i"><use href="#i-layers"/></svg>Profiles</a>
     </nav>

@@ -3,7 +3,7 @@
 const $ = (id) => document.getElementById(id);
 const root = document.documentElement;
 const SVG_NS = "http://www.w3.org/2000/svg";
-const views = { workers: "Workers", jobs: "Jobs", events: "Events", profiles: "Profiles" };
+const views = { workers: "Workers", jobs: "Jobs", logs: "Logs", events: "Events", profiles: "Profiles" };
 const narrow = matchMedia("(max-width: 1180px)");
 const leaseWarningSeconds = 15 * 60;
 
@@ -36,6 +36,7 @@ const state = {
   filters: { workers: "live", jobs: "active", events: "all" }, sort: "newest", tableSort: null,
   redact: true, follow: true, wrap: true, logQuery: "", logText: "", logRendered: "", logSgr: {}, limit: 200,
   detailJobs: null, raw: false, dismissed: new Set(), order: [],
+  logsWorker: "", logsJob: "", logsJobs: null, logsKey: "",
 };
 let stream;
 let logSocket;
@@ -174,6 +175,12 @@ function lock() {
 
 // Routing: #workers, #workers/NAME, #workers/NAME/JOB, #jobs, #events, #profiles.
 function navigate() {
+  // The installed app's "New worker" shortcut opens #new.
+  if (location.hash === "#new") {
+    history.replaceState(null, "", "#workers");
+    if (state.authenticated) setTimeout(() => form("create"));
+    else state.pendingCreate = true;
+  }
   const [requested, worker, job] = location.hash.slice(1).split("/");
   const view = Object.hasOwn(views, requested) ? requested : "workers";
   if (view !== state.view) {
@@ -185,7 +192,11 @@ function navigate() {
     if (link.dataset.view === state.view) link.setAttribute("aria-current", "page");
     else link.removeAttribute("aria-current");
   });
-  $("search").placeholder = { workers: "Filter workers", jobs: "Filter jobs", events: "Filter events", profiles: "Filter profiles" }[view];
+  $("search").placeholder = { workers: "Filter workers", jobs: "Filter jobs", logs: "Filter lines", events: "Filter events", profiles: "Filter profiles" }[view];
+  if (view === "logs") {
+    state.logsWorker = worker ? decodeURIComponent(worker) : "";
+    state.logsJob = worker && job ? decodeURIComponent(job) : "";
+  }
   if (state.authenticated && view === "workers" && worker) {
     openWorker(workerFor(decodeURIComponent(worker)), job ? decodeURIComponent(job) : null);
   } else {
@@ -362,7 +373,19 @@ function jobTone(value) {
   if (key === "running") return ["busy", "play"];
   if (key === "exit 0") return ["good", "check"];
   if (/^exit /.test(key) || /error|failed/.test(key)) return ["bad", "x"];
-  return ["", "file"];
+  if (key === "archived") return ["", "archive"];
+  return ["", "clock"];
+}
+
+// A job state pill: running and registered keep the live dot, finished and
+// archived jobs show what happened instead.
+function jobPill(value) {
+  const [tone, ic] = jobTone(value);
+  const live = ["running", "registered"].includes(String(value).toLowerCase());
+  const pill = el("span", "pill" + (tone ? " " + tone : "") + (live ? "" : " plain"));
+  if (!live) pill.append(icon(ic));
+  pill.append(String(value));
+  return pill;
 }
 
 function stripAnsi(value) {
@@ -379,6 +402,7 @@ function emptyState(ic, message, extra) {
 const viewFilters = {
   workers: [["live", "Live"], ["pool", "Pools"], ["expiring", "Expiring"], ["retired", "Retired"]],
   jobs: [["active", "Active"], ["all", "All"]],
+  logs: [],
   events: [["all", "All", "activity"], ["workers", "Workers", "server"], ["jobs", "Jobs", "jobs"], ["state", "State changes", "swap"], ["failures", "Failures", "alert"]],
   profiles: [],
 };
@@ -490,6 +514,11 @@ function render() {
   renderFilters(now);
   renderBanner(now);
   const view = state.view;
+  $("inventory").classList.toggle("fill", view === "logs");
+  if (view === "logs") {
+    renderLogsView();
+    return;
+  }
   const source = state.rows[view];
   const results = $("results");
   const search = $("search").value.trim().toLowerCase();
@@ -624,7 +653,7 @@ function tableRow(row, now) {
   const glyphChar = workerGlyph(row);
   const glyphClass = glyphChar === githubGlyph ? "github" : glyphChar === gitlabGlyph ? "gitlab" : isPool(row) ? "pool" : "adhoc";
   const node = el("a", "ctr worker-item", el("span", "mark"), el("span", "nm", row.name), el("span", "kd", glyph(glyphChar, glyphClass), el("span", "muted", kind)), el("span", "st-" + status[1], status[0]),
-    el("span", null, row.agent || "—"), el("span", "tp", row.topic || ""),
+    agentLabel(row.agent), el("span", "tp", row.topic || ""),
     el("span", "ls", leaseBar(lease), el("span", "lease-text" + (lease.tone && lease.kind !== "pool" ? " " + lease.tone : ""), lease.kind === "pool" ? lease.text : lease.text.replace(" left", ""))),
     el("span", "muted", relative(row.created_at, now).replace(" ago", "")));
   node.href = workerHash(row);
@@ -769,7 +798,7 @@ function renderJobs(visible) {
   const sorted = visible.slice().sort((a, b) => Number(filterTests.jobs.active(b)) - Number(filterTests.jobs.active(a)));
   for (const row of sorted.slice(0, state.limit)) {
     const [tone, ic] = jobTone(row.state);
-    const link = el("a", "job-row", icon(ic, "tone-" + (tone || "info")), el("span", "name", row.job), el("span", "worker", row.worker), el("span", "pill" + (tone ? " " + tone : ""), row.state));
+    const link = el("a", "job-row", icon(ic, "tone-" + (tone || "info")), el("span", "name", row.job), el("span", "worker", row.worker), jobPill(row.state));
     link.href = workerHash({ name: row.worker }, row.job);
     link.dataset.worker = row.worker;
     link.dataset.job = row.job;
@@ -850,12 +879,122 @@ function renderProfiles(visible) {
   $("results").replaceChildren(grid);
 }
 
+// Logs view: all jobs on all workers (like `rworker logs -f`), or one
+// worker's or job's, with a line filter.
+function logsPath() {
+  const view = state.redact ? "logs" : "raw-logs";
+  if (!state.logsWorker) return view;
+  return view + "/" + encodeURIComponent(state.logsWorker) + (state.logsJob ? "/" + encodeURIComponent(state.logsJob) : "");
+}
+
+function startLogsStream(reset = true) {
+  closeLogStream();
+  if (reset) setLog("");
+  if (state.follow) followLogs(logsPath());
+  else liveIndicator("Paused");
+}
+
+function logsHash(worker, job) {
+  return "#logs" + (worker ? "/" + encodeURIComponent(worker) + (job ? "/" + encodeURIComponent(job) : "") : "");
+}
+
+function fillLogsPickers(root) {
+  const [workerSelect, jobSelect] = root.querySelectorAll(".log-tools select");
+  const live = (state.rows.workers || []).filter((row) => !row.retired).map((row) => row.name).sort();
+  if (state.logsWorker && !live.includes(state.logsWorker)) live.unshift(state.logsWorker);
+  const option = (value, label) => { const node = el("option", null, label); node.value = value; return node; };
+  const workerKey = live.join(",");
+  if (workerSelect.dataset.key !== workerKey) {
+    workerSelect.dataset.key = workerKey;
+    workerSelect.replaceChildren(option("", "All workers"), ...live.map((name) => option(name, name)));
+  }
+  workerSelect.value = state.logsWorker;
+  const jobs = state.logsWorker ? (state.logsJobs || []) : [];
+  const names = [...new Map(jobs.map((job) => [job.job, job])).values()]
+    .sort((a, b) => Number(filterTests.jobs.active(b)) - Number(filterTests.jobs.active(a)) || a.job.localeCompare(b.job));
+  if (state.logsJob && !names.some((job) => job.job === state.logsJob)) names.unshift({ job: state.logsJob, state: "" });
+  const jobKey = state.logsWorker + "|" + names.map((job) => job.job + job.state).join(",");
+  if (jobSelect.dataset.key !== jobKey) {
+    jobSelect.dataset.key = jobKey;
+    jobSelect.replaceChildren(option("", state.logsWorker ? "All jobs" : "Pick a worker first"),
+      ...names.map((job) => option(job.job, job.state ? job.job + " · " + job.state : job.job)));
+  }
+  jobSelect.disabled = !state.logsWorker;
+  jobSelect.value = state.logsJob;
+}
+
+function renderLogsView() {
+  const results = $("results");
+  const key = JSON.stringify([state.logsWorker, state.logsJob, state.redact]);
+  const existing = results.querySelector(".logs-view");
+  if (existing && state.logsKey === key) {
+    fillLogsPickers(existing);
+    return;
+  }
+  state.logsKey = key;
+  if (state.logsWorker && !state.logsJobs) {
+    request("jobs/" + encodeURIComponent(state.logsWorker)).then((jobs) => {
+      state.logsJobs = jobs;
+      const view = $("results").querySelector(".logs-view");
+      if (view) fillLogsPickers(view);
+    }).catch(() => {});
+  }
+  const container = el("div", "logs-view");
+  const tools = el("div", "log-tools");
+  const workerSelect = el("select");
+  workerSelect.setAttribute("aria-label", "Worker");
+  workerSelect.addEventListener("change", () => { state.logsJobs = null; location.hash = logsHash(workerSelect.value); });
+  const jobSelect = el("select");
+  jobSelect.setAttribute("aria-label", "Job");
+  jobSelect.addEventListener("change", () => { location.hash = logsHash(state.logsWorker, jobSelect.value); });
+  const search = el("label", "search", icon("search"));
+  const input = el("input");
+  input.type = "search";
+  input.id = "logs-filter";
+  input.placeholder = "Filter lines";
+  input.value = state.logQuery;
+  input.setAttribute("aria-label", "Filter log lines");
+  input.addEventListener("input", () => { state.logQuery = input.value; setLog(state.logText, { keepEnd: false }); });
+  search.append(input);
+  const follow = button(state.follow ? "Following" : "Paused", () => setFollow(!state.follow), { cls: "btn sm follow" + (state.follow ? " on" : ""), ic: state.follow ? "pause" : "play", title: "Follow new output (F)" });
+  follow.setAttribute("aria-pressed", String(state.follow));
+  const toggle = (ic, title, on, change) => {
+    const node = iconButton(ic, title, () => { change(); node.classList.toggle("on"); node.setAttribute("aria-pressed", String(node.classList.contains("on"))); }, "btn sm icon" + (on ? " on" : ""));
+    node.setAttribute("aria-pressed", String(on));
+    return node;
+  };
+  const frame = el("div", "log-frame" + (state.wrap ? " wrap" : ""));
+  tools.append(workerSelect, jobSelect, el("span", "live", "Connecting…"), el("span", "spacer"), search, follow,
+    toggle("wrap", "Wrap long lines (W)", state.wrap, () => { state.wrap = !state.wrap; frame.classList.toggle("wrap", state.wrap); }),
+    toggle("shield", "Redact secrets", state.redact, () => { state.redact = !state.redact; render(); }),
+    iconButton("copy", "Copy log", () => copy(stripAnsi(state.logText)), "btn sm icon"),
+    iconButton("download", "Download log", () => download(stripAnsi(state.logText), (state.logsWorker || "all-workers") + (state.logsJob ? "-" + state.logsJob : "") + ".log"), "btn sm icon"));
+  const pre = el("pre", null, "Connecting…");
+  pre.tabIndex = 0;
+  const jump = button("Jump to latest", () => { pre.scrollTop = pre.scrollHeight; if (!state.follow) setFollow(true); }, { cls: "btn sm jump", ic: "down" });
+  jump.hidden = true;
+  pre.addEventListener("scroll", () => { jump.hidden = pre.scrollHeight - pre.clientHeight - pre.scrollTop < 12; }, { passive: true });
+  frame.append(pre, jump);
+  container.append(tools, frame);
+  results.replaceChildren(container);
+  fillLogsPickers(container);
+  state.logText = "";
+  startLogsStream();
+}
+
 async function refresh(manual = false) {
   if (!state.authenticated || loading) return;
   loading = true;
   const view = state.view;
   const access = state.token;
   try {
+    if (view === "logs") {
+      state.rows.workers = await request("workers");
+      if (state.logsWorker) state.logsJobs = await request("jobs/" + encodeURIComponent(state.logsWorker)).catch(() => state.logsJobs);
+      connection("Live", "online");
+      if (state.view === "logs") render();
+      return;
+    }
     const data = await request(view);
     if (state.token !== access) return;
     state.rows[view] = Array.isArray(data) ? data : [];
@@ -1018,7 +1157,7 @@ function layoutWorkspace() {
   $("app").classList.toggle("detail-open", fullPage);
   $("back").hidden = !fullPage;
   $("filters").hidden = fullPage;
-  $("search-box").hidden = fullPage;
+  $("search-box").hidden = fullPage || state.view === "logs";
   if (fullPage) $("banner").hidden = true;
   $("create").hidden = !state.authenticated;
   $("fab").hidden = !state.authenticated;
@@ -1295,15 +1434,19 @@ function closeLogStream() {
 }
 
 // Log viewer
+function logRoot() {
+  return state.view === "logs" && !state.selected ? $("results") : $("detail-output");
+}
+
 function liveIndicator(text, tone = "") {
-  const node = $("detail-output").querySelector(".live");
+  const node = logRoot().querySelector(".live");
   if (!node) return;
   node.textContent = text;
   node.className = "live" + (tone ? " " + tone : "");
 }
 
 function logElements() {
-  const output = $("detail-output");
+  const output = logRoot();
   return { pre: output.querySelector(".log-frame pre"), jump: output.querySelector(".jump") };
 }
 
@@ -1349,18 +1492,31 @@ function applySgr(st, params) {
   }
 }
 
+let logHighlight = "";
 function ansiInto(target, text, st) {
   const pattern = /\x1b\[([0-9;?]*)[ -/]*([@-~])|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)|\x1b[^[\]]/g;
   let last = 0;
   const fragment = document.createDocumentFragment();
+  // Mark the filter's matches inside each colored chunk.
+  const appendMarked = (parent, chunk) => {
+    if (!logHighlight) { parent.append(chunk); return; }
+    const lower = chunk.toLowerCase();
+    let index = 0;
+    for (let at = lower.indexOf(logHighlight); at >= 0; at = lower.indexOf(logHighlight, index)) {
+      if (at > index) parent.append(chunk.slice(index, at));
+      parent.append(el("mark", null, chunk.slice(at, at + logHighlight.length)));
+      index = at + logHighlight.length;
+    }
+    if (index < chunk.length) parent.append(chunk.slice(index));
+  };
   const flush = (chunk) => {
     if (!chunk) return;
     const cls = [st.bold ? "b" : "", st.dim ? "d" : "", st.italic ? "it" : "", st.underline ? "u" : "", st.fg != null ? "f" + st.fg : ""].filter(Boolean).join(" ");
-    if (!cls && !st.color) { fragment.append(chunk); return; }
+    if (!cls && !st.color) { appendMarked(fragment, chunk); return; }
     const span = document.createElement("span");
     if (cls) span.className = cls;
     if (st.color) span.style.color = st.color;
-    span.append(chunk);
+    appendMarked(span, chunk);
     fragment.append(span);
   };
   for (const match of text.matchAll(pattern)) {
@@ -1386,8 +1542,10 @@ function setLog(text, { keepEnd = true } = {}) {
   } else if (query) {
     const lines = safe.split("\n").filter((line) => stripAnsi(line).toLowerCase().includes(query));
     pre.replaceChildren();
+    logHighlight = query;
     if (lines.length) ansiInto(pre, lines.join("\n"), {});
     else pre.textContent = "No lines match “" + state.logQuery + "”.";
+    logHighlight = "";
     pre.dataset.mode = "filter";
   } else if (pre.dataset.mode === "full" && safe.startsWith(state.logRendered)) {
     ansiInto(pre, safe.slice(state.logRendered.length), state.logSgr);
@@ -1470,14 +1628,16 @@ function buildLogPane(row) {
 
 function setFollow(enabled) {
   state.follow = enabled;
-  const button = $("detail-output").querySelector(".follow");
+  const button = logRoot().querySelector(".follow");
   if (button) {
     button.classList.toggle("on", enabled);
     button.setAttribute("aria-pressed", String(enabled));
     button.replaceChildren(icon(enabled ? "pause" : "play"), el("span", null, enabled ? "Following" : "Paused"));
   }
-  if (enabled) updateDetail(true);
-  else {
+  if (enabled) {
+    if (state.view === "logs" && !state.selected) startLogsStream();
+    else updateDetail(true);
+  } else {
     closeLogStream();
     liveIndicator("Paused");
   }
@@ -1614,7 +1774,7 @@ async function updateDetail(reset = false) {
       const list = el("div", "list");
       for (const entry of state.detailJobs) {
         const [tone, ic] = jobTone(entry.state);
-        list.append(el("div", "item", icon(ic, "tone-" + (tone || "info")), el("span", "name", entry.job), el("span", "pill" + (tone ? " " + tone : ""), entry.state),
+        list.append(el("div", "item", icon(ic, "tone-" + (tone || "info")), el("span", "name", entry.job), jobPill(entry.state),
           button("Logs", () => { state.tab = "logs"; select(row, entry.job); }, { cls: "btn sm", ic: "terminal" })));
       }
       destination.replaceChildren(el("div", "pane-pad", list));
@@ -2044,7 +2204,7 @@ function paletteEntries(ttl) {
       add("Workers", "terminal", el("span", null, "SSH into ", el("span", "mono", row.name)), "ssh terminal " + row.name + " " + (row.topic || ""), () => openTerminal(row));
     }
   }
-  for (const [view, label] of Object.entries(views)) add("Go to", { workers: "server", jobs: "jobs", events: "activity", profiles: "layers" }[view], el("span", null, label), "go view " + view, () => { location.hash = view; });
+  for (const [view, label] of Object.entries(views)) add("Go to", { workers: "server", jobs: "jobs", logs: "terminal", events: "activity", profiles: "layers" }[view], el("span", null, label), "go view " + view, () => { location.hash = view; });
   for (const [layout, label, ic] of [["split", "split view", "columns"], ["cards", "cards", "grid"], ["console", "console", "terminal"]]) {
     if (layout !== prefs.layout) add("Settings", ic, el("span", null, "Switch to the " + label + " layout"), "layout switch view design " + layout + " " + label, () => setPref("layout", layout));
   }
@@ -2138,7 +2298,7 @@ document.querySelectorAll("#settings input[type=radio]").forEach((input) => inpu
 
 const shortcuts = [
   [["Ctrl", "K"], "Jump to a worker or run an action"], [["/"], "Filter the current view"],
-  [["1"], "Workers"], [["2"], "Jobs"], [["3"], "Events"], [["4"], "Profiles"],
+  [["1"], "Workers"], [["2"], "Jobs"], [["3"], "Logs"], [["4"], "Events"], [["5"], "Profiles"],
   [["N"], "New worker"], [["J"], "Next worker"], [["K"], "Previous worker"], [["Enter"], "Open the focused worker"],
   [["Esc"], "Close the worker or dialog"], [["S"], "SSH into the open worker"], [["E"], "Extend its lease"],
   [["T"], "Edit its topic"], [["D"], "Delete it"], [["L"], "Show its logs"], [["F"], "Follow or pause the log"],
@@ -2185,10 +2345,10 @@ document.addEventListener("keydown", (event) => {
   const row = state.selected;
   const live = row && !row.retired;
   const keys = {
-    "/": () => $("search-box").hidden || $("search").focus(),
+    "/": () => state.view === "logs" && !row ? $("logs-filter")?.focus() : $("search-box").hidden || $("search").focus(),
     "?": showKeys,
     "1": () => { location.hash = "workers"; }, "2": () => { location.hash = "jobs"; },
-    "3": () => { location.hash = "events"; }, "4": () => { location.hash = "profiles"; },
+    "3": () => { location.hash = "logs"; }, "4": () => { location.hash = "events"; }, "5": () => { location.hash = "profiles"; },
     n: () => form("create"), j: () => moveSelection(1), k: () => moveSelection(-1),
     r: () => refresh(true),
     Escape: () => { if (row) location.hash = "workers"; },
@@ -2197,8 +2357,8 @@ document.addEventListener("keydown", (event) => {
     t: () => live && editTopic(),
     d: () => live && form("delete", row),
     l: () => { if (row) { state.tab = "logs"; renderTabs(); updateDetail(true); } },
-    f: () => live && state.tab === "logs" && setFollow(!state.follow),
-    w: () => row && state.tab === "logs" && $("detail-output").querySelector('[aria-label^="Wrap"]')?.click(),
+    f: () => ((live && state.tab === "logs") || (state.view === "logs" && !row)) && setFollow(!state.follow),
+    w: () => ((row && state.tab === "logs") || state.view === "logs") && logRoot().querySelector('[aria-label^="Wrap"]')?.click(),
   };
   const handler = keys[event.key];
   if (!handler) return;
@@ -2271,6 +2431,10 @@ async function openConsole(token = "", automatic = false) {
     navigate();
     followInventory();
     loadBackground();
+    if (state.pendingCreate) {
+      state.pendingCreate = false;
+      form("create");
+    }
   } catch (error) {
     lock();
     if (!automatic || error.message !== "Enter the console access token.") {
@@ -2310,8 +2474,13 @@ setInterval(() => {
   if (state.view !== "profiles") refresh();
   else render();
 }, 5000);
-setInterval(() => { if (state.authenticated && !document.hidden && state.selected && state.tab === "logs" && state.follow && !state.selected.retired && !logSocket) updateDetail(); }, 2500);
+setInterval(() => {
+  if (!state.authenticated || document.hidden || !state.follow || logSocket) return;
+  if (state.selected && state.tab === "logs" && !state.selected.retired) updateDetail();
+  else if (state.view === "logs" && !state.selected && Date.now() >= logRetryAt) followLogs(logsPath());
+}, 2500);
 $("toolbar").hidden = true;
+if ("serviceWorker" in navigator) navigator.serviceWorker.register("/assets/sw.js", { scope: "/" }).catch(() => {});
 navigate();
 let savedToken = "";
 try { savedToken = sessionStorage.getItem("rworker.operator") || ""; } catch { /* Storage disabled. */ }

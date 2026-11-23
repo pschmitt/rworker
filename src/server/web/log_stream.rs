@@ -18,8 +18,21 @@ static STREAMS: Semaphore = Semaphore::const_new(8);
 
 pub(super) fn routes() -> Router<PathBuf> {
     Router::new()
+        .route("/v1/ui/follow/{view}", get(all))
         .route("/v1/ui/follow/{view}/{worker}", get(worker))
         .route("/v1/ui/follow/{view}/{worker}/{job}", get(job))
+}
+
+/// Every job on every worker, like `rworker logs -f`.
+async fn all(Path(view): Path<String>, headers: HeaderMap, upgrade: WebSocketUpgrade) -> Response {
+    if !matches!(view.as_str(), "logs" | "raw-logs") {
+        return failure(super::NOT_FOUND);
+    }
+    let mut args = super::words(&["logs", "--follow", "--no-events", "--lines", "50"]);
+    if view == "logs" {
+        args.push("--redact".into());
+    }
+    serve(&headers, upgrade, args, None)
 }
 
 async fn worker(
@@ -45,15 +58,6 @@ fn follow(
     worker: &str,
     job: Option<&str>,
 ) -> Response {
-    if !same_origin(headers) {
-        return failure((StatusCode::FORBIDDEN, "Invalid WebSocket origin."));
-    }
-    let check = authorized(headers);
-    if let Err(error) = check
-        && error.0 != StatusCode::UNAUTHORIZED
-    {
-        return failure(error);
-    }
     let args = match log_args(view, worker, job) {
         Ok(args) => args,
         Err(error) => return failure(error),
@@ -67,6 +71,26 @@ fn follow(
         Ok((args, _)) => args,
         Err(error) => return failure(error),
     };
+    serve(headers, upgrade, args, Some(archive))
+}
+
+/// Stream ARGS' output to the socket; without output, fall back to polling
+/// the ARCHIVE command when there is one.
+fn serve(
+    headers: &HeaderMap,
+    upgrade: WebSocketUpgrade,
+    args: Vec<String>,
+    archive: Option<Vec<String>>,
+) -> Response {
+    if !same_origin(headers) {
+        return failure((StatusCode::FORBIDDEN, "Invalid WebSocket origin."));
+    }
+    let check = authorized(headers);
+    if let Err(error) = check
+        && error.0 != StatusCode::UNAUTHORIZED
+    {
+        return failure(error);
+    }
     let Ok(permit) = STREAMS.try_acquire() else {
         return failure((StatusCode::SERVICE_UNAVAILABLE, "Too many log streams."));
     };
@@ -78,7 +102,9 @@ fn follow(
             if check.is_err() && !authenticate(&mut socket).await {
                 return;
             }
-            if matches!(stream(&mut socket, &args).await, End::NoOutput) {
+            if matches!(stream(&mut socket, &args).await, End::NoOutput)
+                && let Some(archive) = archive
+            {
                 cached(&mut socket, archive).await;
             }
         })
@@ -132,8 +158,9 @@ fn spawn(args: &[String]) -> std::io::Result<LogProcess> {
     use std::os::unix::process::CommandExt;
 
     let mut cmd = Command::new(std::env::current_exe()?);
+    // No NO_COLOR: the console's viewer renders the colors already in the
+    // logs, such as the worker/job prefixes.
     cmd.args(args)
-        .env("NO_COLOR", "1")
         .env("RWORKER_LOCAL_RELAY", "1")
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
