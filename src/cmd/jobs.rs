@@ -350,12 +350,21 @@ fn names(list: &Value) -> Vec<String> {
 }
 
 /// Workers that can be reached already (they have an IP and a host key).
+/// The agent the builder gateway records on its leased workers.
+const BUILDER_GATEWAY_AGENT: &str = "nix build";
+
+/// Workers with registered jobs to poll or follow: reachable ones, minus
+/// the builder gateway's leases. Those serve only the Nix daemon, carry
+/// none of the operators' keys, and a refused login gets the controller's
+/// address penalized by their sshd, which breaks the gateway's own checks.
 fn ready(list: &Value) -> Vec<String> {
     jq::items(list)
         .unwrap_or_default()
         .into_iter()
         .filter(|w| {
-            !jq::or_empty(get(w, "ip")).is_empty() && !jq::or_empty(get(w, "host_key")).is_empty()
+            !jq::or_empty(get(w, "ip")).is_empty()
+                && !jq::or_empty(get(w, "host_key")).is_empty()
+                && get(w, "agent").as_str() != Some(BUILDER_GATEWAY_AGENT)
         })
         .map(|w| jq::raw(get(w, "name")))
         .collect()
@@ -389,13 +398,26 @@ pub(super) fn observed_jobs(ctx: &Ctx, inventory: &Value) -> crate::event_histor
         let pool = std::env::var("RWORKER_POOL_IDENTITY")
             .ok()
             .filter(|path| !path.is_empty());
+        // The console's key is only on pool workers (their autoscalers add
+        // it); other operators' ad-hoc workers have neither key.
+        let pools: Vec<String> = jq::items(inventory)
+            .unwrap_or_default()
+            .into_iter()
+            .filter(|worker| {
+                !matches!(
+                    get(worker, "kind").as_str(),
+                    None | Some("" | "adhoc" | "unknown")
+                )
+            })
+            .map(|worker| jq::raw(get(worker, "name")))
+            .collect();
         let mut kept = Vec::new();
         identities.clear();
         for name in names {
             if reachable.contains(&name) {
                 kept.push(name);
                 identities.push(None);
-            } else if let Some(pool) = &pool {
+            } else if let Some(pool) = pool.as_ref().filter(|_| pools.contains(&name)) {
                 kept.push(name);
                 identities.push(Some(pool.clone()));
             }
@@ -954,5 +976,15 @@ mod tests {
         assert!(!collector_reaches("pschmitt", &other));
         assert!(!collector_reaches("pschmitt", &pool));
         assert!(!collector_reaches("circus", &pool));
+    }
+
+    #[test]
+    fn builder_gateway_leases_are_not_polled() {
+        let list = json!([
+            {"name": "adhoc-1", "ip": "192.0.2.1", "host_key": "k", "agent": "claude"},
+            {"name": "adhoc-2", "ip": "192.0.2.2", "host_key": "k", "agent": "nix build"},
+            {"name": "adhoc-3", "ip": "", "host_key": "k", "agent": "claude"},
+        ]);
+        assert_eq!(ready(&list), ["adhoc-1"]);
     }
 }
