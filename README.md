@@ -1,5 +1,12 @@
 <div align="center">
-  <img src="assets/rworker.svg" width="160" alt="rworker logo: a server stack whose bottom slab dissolves into particles, with a padlock">
+  <h1>
+    <picture>
+      <source media="(prefers-color-scheme: dark)" srcset="assets/rworker-dark.svg">
+      <img src="assets/rworker.svg" width="96" align="middle" alt="">
+    </picture>
+    rworker
+  </h1>
+  <p>Disposable build workers on OpenStack, GitHub Actions, and GitLab CI.</p>
   <p>
     <a href="https://nixbot.brkn.lol/repos/github/pschmitt/rworker"><img src="https://nixbot.brkn.lol/repos/github/pschmitt/rworker/badge.svg?branch=main" alt="nixbot"></a>
     <a href="https://github.com/pschmitt/rworker/actions/workflows/build.yaml"><img src="https://github.com/pschmitt/rworker/actions/workflows/build.yaml/badge.svg" alt="build"></a>
@@ -7,8 +14,6 @@
     <a href="https://github.com/pschmitt/rworker/actions/workflows/lint.yaml"><img src="https://github.com/pschmitt/rworker/actions/workflows/lint.yaml/badge.svg" alt="lint"></a>
     <a href="https://my.home-assistant.io/redirect/marketplace_repository/?owner=pschmitt&amp;repository=rworker&amp;category=integration"><img src="https://my.home-assistant.io/badges/marketplace_repository.svg" alt="Install the Home Assistant integration"></a>
   </p>
-  <h1 align="center">rworker</h1>
-  <p align="center">Disposable build workers on OpenStack, GitHub Actions, and GitLab CI.</p>
 </div>
 
 Heavy compiles (Rust, Android, large Nix builds) do not belong on a laptop.
