@@ -56,13 +56,14 @@ _rworker_rows() {
   (( has_icons )) && _rworker_icon_colors
   if [[ "$tag" == workers && "$_rworker_action" == cp ]]
   then
-    _all_labels workers expl worker compadd -S : -o match -d _rw_labels -a _rw_matches
+    compadd "${_rw_worker_options[@]}" -S : -o match -d _rw_labels -a _rw_matches
   else
     _wanted "$tag" expl "$heading" compadd -o match -d _rw_labels -a _rw_matches
   fi
 }
 
 _rworker_workers() {
+  local -a _rw_worker_options=("$@")
   if [[ "$PREFIX" == *@* ]]
   then
     compset -P '*@'
