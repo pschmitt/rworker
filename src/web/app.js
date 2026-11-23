@@ -893,6 +893,11 @@ function renderJobs(visible) {
   const sorted = visible.slice().sort((a, b) => Number(filterTests.jobs.active(b)) - Number(filterTests.jobs.active(a)));
   // Jobs have no topic or agent of their own: show their worker's.
   const workers = new Map((state.rows.workers || []).map((worker) => [worker.name, worker]));
+  if (sorted.length) {
+    const head = el("div", "job-row head", el("span"), el("span", "name", "Job"), el("span", "topic", "Topic"), el("span", "agent", "Agent"), el("span", "worker", "Worker"), el("span", "state", "State"));
+    head.setAttribute("aria-hidden", "true");
+    container.append(head);
+  }
   for (const row of sorted.slice(0, state.limit)) {
     const [tone, ic] = jobTone(row.state);
     const worker = workers.get(row.worker) || {};
