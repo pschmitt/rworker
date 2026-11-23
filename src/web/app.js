@@ -680,6 +680,68 @@ function workerKind(row) {
   return row.name.startsWith("gha-") ? "github" : row.provider === "gitlab" || row.name.startsWith("glci-") ? "gitlab" : isPool(row) ? (row.pool || row.kind) : row.kind || "";
 }
 
+// Column widths of the console table, dragged in the header and kept in
+// this browser. Columns without one keep their default track.
+const tableTracks = ["minmax(150px, 1.3fr)", "110px", "84px", "minmax(90px, .8fr)", "minmax(0, 2fr)", "130px", "64px"];
+const columnWidths = {};
+try { Object.assign(columnWidths, JSON.parse(localStorage.getItem("rworker.columns") || "{}")); } catch { /* Storage disabled. */ }
+
+function applyColumnWidths(table) {
+  const tracks = tableColumns.map(([, key], index) => columnWidths[key] ? columnWidths[key] + "px" : tableTracks[index]);
+  table.style.setProperty("--ctr-cols", "14px " + tracks.join(" "));
+}
+
+function saveColumnWidths() {
+  try { localStorage.setItem("rworker.columns", JSON.stringify(columnWidths)); } catch { /* Storage disabled. */ }
+}
+
+function columnResizer(table, cell, key, label) {
+  const handle = el("span", "col-resize");
+  handle.setAttribute("role", "separator");
+  handle.setAttribute("aria-orientation", "vertical");
+  handle.setAttribute("aria-label", "Resize the " + label.toLowerCase() + " column");
+  handle.tabIndex = 0;
+  const set = (width) => {
+    columnWidths[key] = Math.max(40, Math.min(900, Math.round(width)));
+    applyColumnWidths(table);
+  };
+  handle.addEventListener("pointerdown", (event) => {
+    if (event.button !== 0) return;
+    event.preventDefault();
+    event.stopPropagation();
+    handle.setPointerCapture(event.pointerId);
+    handle.classList.add("dragging");
+    document.body.classList.add("resizing", "col");
+    const left = cell.getBoundingClientRect().left;
+    const move = (moved) => set(moved.clientX - left);
+    const done = () => {
+      handle.removeEventListener("pointermove", move);
+      handle.classList.remove("dragging");
+      document.body.classList.remove("resizing", "col");
+      saveColumnWidths();
+    };
+    handle.addEventListener("pointermove", move);
+    handle.addEventListener("pointerup", done, { once: true });
+    handle.addEventListener("pointercancel", done, { once: true });
+  });
+  handle.addEventListener("click", (event) => event.stopPropagation());
+  handle.addEventListener("dblclick", (event) => {
+    event.stopPropagation();
+    delete columnWidths[key];
+    saveColumnWidths();
+    applyColumnWidths(table);
+  });
+  handle.addEventListener("keydown", (event) => {
+    const step = event.shiftKey ? 40 : 10;
+    const delta = { ArrowLeft: -step, ArrowRight: step }[event.key];
+    if (!delta) return;
+    event.preventDefault();
+    set(cell.getBoundingClientRect().width + delta);
+    saveColumnWidths();
+  });
+  return handle;
+}
+
 // Column sort for the console table: [label, key, value].
 const tableColumns = [
   ["NAME", "name", (row) => row.name],
@@ -709,6 +771,7 @@ function tableSorted(rows, now) {
 function renderWorkerTable(visible, now) {
   const table = el("div", "ctable");
   table.setAttribute("role", "list");
+  applyColumnWidths(table);
   const head = el("div", "ctr head", el("span"));
   for (const [label, key] of tableColumns) {
     const active = state.tableSort?.key === key;
@@ -718,7 +781,9 @@ function renderWorkerTable(visible, now) {
     }, { cls: "sort", title: "Sort by " + label.toLowerCase() });
     heading.append(label, el("span", "arrow", active ? (state.tableSort.desc ? "↓" : "↑") : ""));
     if (active) heading.setAttribute("aria-sort", state.tableSort.desc ? "descending" : "ascending");
-    head.append(heading);
+    const cell = el("span", "th", heading);
+    cell.append(columnResizer(table, cell, key, label));
+    head.append(cell);
   }
   table.append(head);
   const order = [];

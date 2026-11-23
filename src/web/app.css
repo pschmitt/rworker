@@ -591,7 +591,7 @@ details.advanced .grid2 { display: grid; grid-template-columns: repeat(2, minmax
 :root[data-layout="console"] .detail-name h2 { font-size: 16px; }
 :root[data-layout="console"] .facts { padding: 8px 12px; }
 .ctable { font: 12.5px/1.5 var(--mono); }
-.ctr { display: grid; grid-template-columns: 14px minmax(150px, 1.3fr) 110px 84px minmax(90px, .8fr) minmax(0, 2fr) 130px 64px; align-items: center; gap: 14px; padding: 5px 16px; border-bottom: 1px solid color-mix(in srgb, var(--line) 60%, transparent); color: inherit; text-decoration: none; }
+.ctr { display: grid; grid-template-columns: var(--ctr-cols, 14px minmax(150px, 1.3fr) 110px 84px minmax(90px, .8fr) minmax(0, 2fr) 130px 64px); align-items: center; gap: 14px; padding: 5px 16px; border-bottom: 1px solid color-mix(in srgb, var(--line) 60%, transparent); color: inherit; text-decoration: none; }
 .ctr > * { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .ctr.head { position: sticky; top: 0; z-index: 1; padding-block: 7px; background: var(--bg); color: var(--dim); font-size: 11px; font-weight: 700; letter-spacing: .06em; border-bottom-color: var(--line); }
 a.ctr:hover { background: var(--hover); }
@@ -631,6 +631,11 @@ a.ctr[aria-current] .mark::before { content: "›"; color: #ff8b0f; font-weight:
 .ctr.head .sort { display: inline-flex; align-items: center; gap: 4px; min-width: 0; padding: 0; border: 0; background: none; color: inherit; font: inherit; letter-spacing: inherit; text-align: left; cursor: pointer; }
 .ctr.head .sort:hover, .ctr.head .sort[aria-sort] { color: var(--ink); }
 .ctr.head .sort .arrow { color: var(--acc); }
+.ctr.head .th { position: relative; display: flex; align-items: center; min-width: 0; overflow: visible; }
+.ctr.head .col-resize { position: absolute; top: -7px; bottom: -7px; right: -11px; width: 8px; cursor: col-resize; touch-action: none; }
+.ctr.head .col-resize::after { content: ""; position: absolute; top: 25%; bottom: 25%; left: 3px; width: 2px; border-radius: 1px; background: var(--line2); opacity: 0; transition: opacity .15s; }
+.ctr.head:hover .col-resize::after { opacity: 1; }
+.ctr.head .col-resize:hover::after, .ctr.head .col-resize.dragging::after, .ctr.head .col-resize:focus-visible::after { opacity: 1; background: var(--acc); }
 
 /* Logs view: one viewer for all jobs on all workers, or one worker's. */
 .inventory.fill { display: flex; flex-direction: column; padding: 0; overflow: hidden; }
@@ -654,6 +659,7 @@ a.ctr[aria-current] .mark::before { content: "›"; color: #ff8b0f; font-weight:
 .splitter:focus-visible { outline: none; }
 body.resizing { cursor: col-resize; user-select: none; }
 :root[data-layout="console"] body.resizing { cursor: row-resize; }
+body.resizing.col, :root[data-layout="console"] body.resizing.col { cursor: col-resize; }
 
 /* Dropdowns */
 .dropdown { justify-content: flex-start; min-width: 170px; max-width: 300px; font-weight: 600; }

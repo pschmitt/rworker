@@ -4,6 +4,7 @@
 
 The Rust client and controller replace the original Bash client.
 
+- Resize the columns of the web console's worker table by dragging the header dividers (arrow keys when focused, double-click resets); widths are kept in the browser.
 - Show only the number of running jobs on a worker's Jobs tab, amber like the sidebar's count, and nothing when no job is running.
 - Move `builder` and `nix-cache` under `setup`: `setup nix-builder` and `setup nix-cache`; the old top-level actions are gone. Without a worker name, `setup nix-builder` prints a line for the on-demand builder gateway (`--profile`, `--arch`, `--pool`, `--gateway`, `--identity`, `--host-key`, `--system`, `--jobs`, `--features`; Home Manager `programs.rworker.builderGateway`). The MCP tool `builder` becomes `setup_nix_builder` with the gateway selectors, and `nix_cache` is gone (use `setup_nix` with `auth=false`).
 - Pick the builder gateway's worker per machine entry: `?remote-program=profile:NAME`, `arch:ARCH` or `pool:NAME` leases a worker of that profile, architecture or pool, each with its own lease and idle timer; `arch:aarch64` and `profile:gh-aarch64` lease a GitHub runner and build in its isolated store. The NixOS client module gains `selector` and `extraMachines`.
