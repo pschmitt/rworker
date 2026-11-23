@@ -164,13 +164,24 @@ def prepare_github_nix_builder():
     # Remote Nix clients need write permission to the store. Give the lease
     # its own store, under the build user's home and separate from the runner
     # daemon and the Nix tools used by the agent.
+    daemon = Path("/nix/var/nix/profiles/default/bin/nix-daemon")
+    restriction = Path("/proc/sys/kernel/apparmor_restrict_unprivileged_userns")
+    if restriction.exists() and restriction.read_text().strip() == "1":
+        # Attach to the daemon executable so Ubuntu permits its build
+        # namespaces even when unprivileged profile transitions are disabled.
+        profile = f'''abi <abi/4.0>,
+profile rworker-nix-builder "{daemon.resolve(strict=True)}" flags=(unconfined) {{
+  userns,
+}}
+'''
+        subprocess.run(privileged("apparmor_parser", "--replace"), input=profile, text=True, check=True)
     run_as_build_user(
         ["/bin/bash", "-eu", "-c", 'umask 077; mkdir -p "${1%/*}"; cat > "$1"; chmod 0700 "$1"',
          "rworker-nix-daemon", str(Path(pwd.getpwnam(BUILD_USER).pw_dir) / NIX_BUILDER_PATH)],
-        input="""#!/bin/sh
+        input=f"""#!/bin/sh
 export NIX_CONFIG="build-users-group =
 sandbox = true"
-exec nix-daemon --store "$HOME/.local/share/nix/rworker" "$@"
+exec {daemon} --store "$HOME/.local/share/nix/rworker" "$@"
 """,
         text=True, check=True,
     )
