@@ -231,7 +231,12 @@ pub(super) fn up(cfg: &Value, args: Args<'_>) -> Result<Value, String> {
             if matches!(result, Ok(None)) {
                 eprintln!("{}", boot_diagnostics(cfg, &compute, &id, &name));
             }
-            mutations::delete(cfg, &compute, &netbird, &id, &name, &metadata)?;
+            let why = if matches!(result, Ok(None)) {
+                "did not come up"
+            } else {
+                "creation failed"
+            };
+            mutations::delete(cfg, &compute, &netbird, &id, &name, &metadata, ("up", why))?;
             result?.ok_or_else(|| format!("{name} did not come up; deleted it"))
         }
     }

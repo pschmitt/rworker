@@ -723,7 +723,15 @@ impl Pool<'_> {
             if let Some(key) = worker["setupKeyId"].as_str() {
                 metadata.insert("setup_key_id".into(), json!(key));
             }
-            mutations::delete(self.cfg, &self.compute, &self.netbird, id, name, &metadata)?;
+            mutations::delete(
+                self.cfg,
+                &self.compute,
+                &self.netbird,
+                id,
+                name,
+                &metadata,
+                ("autoscaler", reason),
+            )?;
         }
         Ok(())
     }

@@ -38,12 +38,26 @@ pub(crate) struct Event {
     pub worker: Worker,
 }
 
+/// Who deleted a worker and why, noted by the deleting process until the
+/// inventory diff turns it into the `worker-deleted` event's details.
+#[derive(Clone, Deserialize, Serialize)]
+struct Deletion {
+    by: String,
+    reason: String,
+    at: i64,
+}
+
+/// Notes the inventory never confirms (a failed deletion) expire.
+const DELETION_NOTE_SECONDS: i64 = 86400;
+
 #[derive(Default, Deserialize, Serialize)]
 struct History {
     next_id: u64,
     events: VecDeque<Event>,
     workers: BTreeMap<String, Worker>,
     jobs: Jobs,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    deletions: BTreeMap<String, Deletion>,
 }
 
 pub(crate) fn directory() -> Option<PathBuf> {
@@ -143,9 +157,16 @@ impl History {
         for (name, worker) in old {
             if !self.workers.contains_key(&name) {
                 self.jobs.remove(&name);
-                self.push(now, "worker-deleted", &name, String::new(), &worker);
+                let details = self
+                    .deletions
+                    .remove(&name)
+                    .map(|note| format!("by {}: {}", note.by, note.reason))
+                    .unwrap_or_default();
+                self.push(now, "worker-deleted", &name, details, &worker);
             }
         }
+        self.deletions
+            .retain(|_, note| now.saturating_sub(note.at) < DELETION_NOTE_SECONDS);
         true
     }
 
@@ -195,6 +216,28 @@ impl History {
             }
         }
         changed
+    }
+}
+
+/// Record who deleted a worker and why, for its `worker-deleted` event.
+/// Best effort: without an event directory there is no history to annotate.
+pub(crate) fn note_deletion(name: &str, by: &str, reason: &str) {
+    let Some(dir) = directory() else {
+        return;
+    };
+    let note = Deletion {
+        by: by.to_owned(),
+        reason: reason.to_owned(),
+        at: 0,
+    };
+    let result = update(&dir, |history, now| {
+        history
+            .deletions
+            .insert(name.to_owned(), Deletion { at: now, ..note });
+        true
+    });
+    if let Err(error) = result {
+        eprintln!("Record the deletion of {name}: {error}");
     }
 }
 
@@ -328,6 +371,48 @@ mod tests {
         assert_eq!(history.events.back().unwrap().worker.provider, "github");
         assert_eq!(history.events[3].details, "running -> exit 0");
         assert_eq!(history.events.back().unwrap().id, 6);
+    }
+
+    #[test]
+    fn deletion_notes_become_event_details() {
+        let mut history = History::default();
+        let workers = BTreeMap::from([
+            ("reaped".to_owned(), Worker::default()),
+            ("vanished".to_owned(), Worker::default()),
+        ]);
+        assert!(history.workers(1, workers));
+        history.deletions.insert(
+            "reaped".into(),
+            Deletion {
+                by: "reaper".into(),
+                reason: "expired and idle".into(),
+                at: 2,
+            },
+        );
+        history.deletions.insert(
+            "stale".into(),
+            Deletion {
+                by: "pschmitt@host".into(),
+                reason: "down".into(),
+                at: 2 - DELETION_NOTE_SECONDS,
+            },
+        );
+        assert!(history.workers(3, BTreeMap::new()));
+        let details: BTreeMap<_, _> = history
+            .events
+            .iter()
+            .filter(|event| event.kind == "worker-deleted")
+            .map(|event| (event.target.as_str(), event.details.as_str()))
+            .collect();
+        assert_eq!(details["reaped"], "by reaper: expired and idle");
+        assert_eq!(details["vanished"], "");
+        assert!(
+            history.deletions.is_empty(),
+            "consumed and expired notes go"
+        );
+        let old: History =
+            serde_json::from_str(r#"{"next_id":0,"events":[],"workers":{},"jobs":{}}"#).unwrap();
+        assert!(old.deletions.is_empty());
     }
 
     #[test]

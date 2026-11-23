@@ -178,9 +178,21 @@ pub(super) fn down(
         args.force,
     )?;
 
-    delete(settings, compute, &netbird, &id, name, &metadata)
+    let by = args.owner.unwrap_or("operator");
+    let reason = if args.force { "down --force" } else { "down" };
+    delete(
+        settings,
+        compute,
+        &netbird,
+        &id,
+        name,
+        &metadata,
+        (by, reason),
+    )
 }
 
+/// Delete a worker. `why` (who, reason) becomes the details of its
+/// `worker-deleted` event.
 pub(super) fn delete(
     settings: &Value,
     compute: &super::openstack::OpenStack,
@@ -188,6 +200,7 @@ pub(super) fn delete(
     id: &str,
     name: &str,
     metadata: &Map<String, Value>,
+    why: (&str, &str),
 ) -> Result<(), String> {
     if let Some(key) = metadata
         .get("setup_key_id")
@@ -214,5 +227,6 @@ pub(super) fn delete(
         }
     }
     compute.command(&["server", "delete", "--", id])?;
+    crate::event_history::note_deletion(name, why.0, why.1);
     netbird.delete_peer(name)
 }

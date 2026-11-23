@@ -781,6 +781,7 @@ in
             environment.RWORKER_BUILDER_LOG_LIMITS = builderLogLimits;
             description = "On-demand rworker Nix daemon connection";
             environment.RWORKER_INVENTORY_DIRECTORY = inventoryDirectory;
+            environment.RWORKER_EVENT_DIRECTORY = eventDirectory;
             path = runtimeTools;
             serviceConfig = builderService // {
               ExecStart = builderCommand "stdio";
@@ -793,6 +794,8 @@ in
             environment.RWORKER_BUILDER_LOG_LIMITS = builderLogLimits;
             description = "Delete the idle rworker builder lease";
             environment.RWORKER_INVENTORY_DIRECTORY = inventoryDirectory;
+            # Deletions note their reason for the worker-deleted event.
+            environment.RWORKER_EVENT_DIRECTORY = eventDirectory;
             path = runtimeTools;
             serviceConfig = builderService // {
               Type = "oneshot";
@@ -975,6 +978,8 @@ in
       systemd.services.rworker-reaper = {
         description = "Reap expired rworker instances";
         path = runtimeTools;
+        # Deletions note their reason for the worker-deleted event.
+        environment = eventEnvironment;
         serviceConfig = {
           Type = "oneshot";
           User = cfg.user;

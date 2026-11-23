@@ -151,7 +151,15 @@ pub(super) fn reap(cfg: &serde_json::Value, dry_run: bool) -> Result<(), String>
                 continue;
             }
             eprintln!("deleting {name} ({reason})");
-            mutations::delete(cfg, &compute, &netbird, &id, name, &current)?;
+            mutations::delete(
+                cfg,
+                &compute,
+                &netbird,
+                &id,
+                name,
+                &current,
+                ("reaper", reason),
+            )?;
         }
     }
     Ok(())
