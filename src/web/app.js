@@ -198,6 +198,7 @@ function navigate() {
   const [requested, worker, job] = location.hash.slice(1).split("/");
   const view = Object.hasOwn(views, requested) ? requested : "workers";
   if (view !== state.view) {
+    if (state.logFullscreen) setLogFullscreen(false);
     state.limit = 200;
     $("search").value = "";
   }
@@ -1027,6 +1028,8 @@ function eventValue(value) {
 
 function eventDetails(details) {
   if (!details) return [];
+  // Deletions name who deleted the worker and why: plain text, not a state.
+  if (details.startsWith("by ")) return [" · ", el("span", "event-why", details.slice(3))];
   if (details.includes(" -> ")) {
     const [before, after] = details.split(" -> ", 2);
     return [" ", eventValue(before), " → ", eventValue(after)];
@@ -1052,10 +1055,17 @@ function renderEvents(visible, now) {
     const [worker, job] = String(row.target).split("/");
     const target = button(row.target, () => select(workerFor(worker), job), { cls: "target" });
     const meta = [row.profile, row.topic, row.agent, row.owner].filter(Boolean).join(" · ");
-    container.append(el("div", "event",
+    const node = el("div", "event",
       el("span", "event-dot " + dot, icon(ic)),
       el("div", null, el("div", "event-what", el("span", null, verb + " "), target, ...eventDetails(row.details)), meta ? el("div", "event-meta", meta) : null),
-      el("div", "event-when", el("div", null, timeOfDay(row.timestamp)), el("div", null, relative(row.timestamp, now)))));
+      el("div", "event-when", el("div", null, timeOfDay(row.timestamp)), el("div", null, relative(row.timestamp, now))));
+    // The whole row opens the event; the target keeps opening the worker.
+    node.tabIndex = 0;
+    node.setAttribute("role", "button");
+    node.setAttribute("aria-label", verb + " " + row.target + ": details");
+    node.addEventListener("click", (event) => { if (!event.target.closest(".target")) openEvent(row, verb); });
+    node.addEventListener("keydown", (event) => { if (event.key === "Enter" && event.target === node) openEvent(row, verb); });
+    container.append(node);
   }
   showMore(container, visible.length);
   $("results").replaceChildren(container);
@@ -1253,7 +1263,8 @@ function renderLogsView() {
     toggle("wrap", "Wrap long lines (W)", state.wrap, () => { state.wrap = !state.wrap; frame.classList.toggle("wrap", state.wrap); }),
     toggle("shield", "Redact secrets", state.redact, () => { state.redact = !state.redact; render(); }),
     iconButton("copy", "Copy log", () => copy(stripAnsi(state.logText)), "btn sm icon"),
-    iconButton("download", "Download log", () => download(stripAnsi(state.logText), (state.logsWorker || "all-workers") + (state.logsJob ? "-" + state.logsJob : "") + ".log"), "btn sm icon"));
+    iconButton("download", "Download log", () => download(stripAnsi(state.logText), (state.logsWorker || "all-workers") + (state.logsJob ? "-" + state.logsJob : "") + ".log"), "btn sm icon"),
+    fullscreenButton(container));
   const pre = el("pre", null, "Connecting…");
   pre.tabIndex = 0;
   const jump = button("Jump to latest", () => { pre.scrollTop = pre.scrollHeight; if (!state.follow) setFollow(true); }, { cls: "btn sm jump", ic: "down" });
@@ -1317,6 +1328,26 @@ async function loadBackground() {
   lastRenderKey = "";
   render();
   if (state.selected) renderDetailHead();
+}
+
+function openEvent(row, verb) {
+  const [worker, job] = String(row.target).split("/");
+  const when = new Date(row.timestamp * 1000);
+  $("event-title").replaceChildren(verb + " ", el("span", "mono", row.target));
+  const details = row.details?.startsWith("by ") ? row.details.slice(3) : row.details;
+  const fields = [
+    ["Event", row.kind], ["When", when.toLocaleString() + " · " + relative(row.timestamp, Date.now() / 1000)],
+    [row.kind === "worker-deleted" ? "Deleted by" : "Details", details],
+    ["Worker", worker], ["Job", job], ["Status", row.status], ["Profile", row.profile], ["Provider", row.provider],
+    ["Agent", [row.agent, row.agent_id].filter(Boolean).join(" · ")], ["Topic", row.topic], ["Owner", row.owner], ["Event ID", row.id],
+  ];
+  $("event-metadata").replaceChildren(...fields.filter(([, value]) => value != null && value !== "").map(([key, value]) =>
+    el("div", "kv", el("dt", null, key), el("dd", null, el("span", null, String(value))))));
+  $("event-open").onclick = () => {
+    $("event-dialog").close();
+    select(workerFor(worker), job);
+  };
+  $("event-dialog").showModal();
 }
 
 async function openProfile(row) {
@@ -1654,6 +1685,7 @@ function renderTabs() {
   for (const [key, title, ic] of [["logs", "Logs", "terminal"], ["jobs", "Jobs", "jobs"], ["processes", "Processes", "cpu"], ["details", "Details", "info"]]) {
     if (row.retired && key === "processes") continue;
     const tab = button(title, () => {
+      if (key !== "logs" && state.logFullscreen) setLogFullscreen(false);
       state.tab = key;
       renderTabs();
       updateDetail(true);
@@ -1939,6 +1971,30 @@ function renderLogTools() {
   }
 }
 
+// Full-window log: the tools and the log cover the console until toggled
+// back (button or Esc). Kept across job switches and re-renders.
+function fullscreenButton(target) {
+  target.classList.toggle("log-fullscreen", Boolean(state.logFullscreen));
+  const node = iconButton(state.logFullscreen ? "minimize" : "expand", state.logFullscreen ? "Exit full screen (Esc)" : "Full screen", () => {
+    setLogFullscreen(!state.logFullscreen);
+  }, "btn sm icon fullscreen" + (state.logFullscreen ? " on" : ""));
+  node.setAttribute("aria-pressed", String(Boolean(state.logFullscreen)));
+  return node;
+}
+
+function setLogFullscreen(enabled) {
+  state.logFullscreen = enabled;
+  for (const target of document.querySelectorAll(".logs-view, #detail-output")) target.classList.toggle("log-fullscreen", enabled);
+  for (const node of document.querySelectorAll(".log-tools .fullscreen")) {
+    node.classList.toggle("on", enabled);
+    node.setAttribute("aria-pressed", String(enabled));
+    node.title = enabled ? "Exit full screen (Esc)" : "Full screen";
+    node.setAttribute("aria-label", node.title);
+    node.replaceChildren(icon(enabled ? "minimize" : "expand"));
+  }
+  document.body.classList.toggle("log-fullscreen-open", enabled);
+}
+
 function buildLogPane(row) {
   const output = $("detail-output");
   const tools = el("div", "log-tools");
@@ -1971,7 +2027,8 @@ function buildLogPane(row) {
     toggle("Wrap", "wrap", state.wrap, () => { state.wrap = !state.wrap; output.querySelector(".log-frame")?.classList.toggle("wrap", state.wrap); }, "Wrap long lines (W)"),
     toggle("Redact", "shield", state.redact, () => { state.redact = !state.redact; updateDetail(true); }, "Redact secrets"),
     iconButton("copy", "Copy log", () => copy(stripAnsi(state.logText)), "btn sm icon"),
-    iconButton("download", "Download log", () => download(stripAnsi(state.logText), `${row.name}${state.job ? "-" + state.job : ""}.log`), "btn sm icon"));
+    iconButton("download", "Download log", () => download(stripAnsi(state.logText), `${row.name}${state.job ? "-" + state.job : ""}.log`), "btn sm icon"),
+    fullscreenButton(output));
   const frame = el("div", "log-frame" + (state.wrap ? " wrap" : ""));
   const pre = el("pre", null, "Loading…");
   pre.tabIndex = 0;
@@ -2831,6 +2888,11 @@ document.addEventListener("keydown", (event) => {
   }
   if (event.defaultPrevented || event.altKey || event.ctrlKey || event.metaKey) return;
   if (document.querySelector("dialog[open]") || menuState) return;
+  if (event.key === "Escape" && state.logFullscreen) {
+    event.preventDefault();
+    setLogFullscreen(false);
+    return;
+  }
   const target = event.target;
   if (target.closest?.("input, textarea, select, [contenteditable=true], .xterm")) {
     if (event.key === "Escape" && target.id === "search") {
@@ -2963,6 +3025,7 @@ $("settings-close").addEventListener("click", () => $("settings").close());
 $("keys-close").addEventListener("click", () => $("keys").close());
 $("terminal-close").addEventListener("click", () => $("terminal-dialog").close());
 $("profile-close").addEventListener("click", () => $("profile-dialog").close());
+$("event-close").addEventListener("click", () => $("event-dialog").close());
 $("cancel").addEventListener("click", () => $("dialog").close());
 $("dismiss").addEventListener("click", () => $("dialog").close());
 $("search").addEventListener("input", () => { state.limit = 200; render(); });

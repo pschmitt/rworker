@@ -4,8 +4,11 @@
 
 The Rust client and controller replace the original Bash client.
 
-- Record who deleted a worker and why (the reaper's reason, `down` by its caller, the builder gateway, the autoscaler, a failed `up`) as the details of its `worker-deleted` event.
 - Refuse a builder gateway `authorizedKeysFile` in the Nix store: sshd's StrictModes rejects it, so every gateway login failed. The docs show a copied `/etc` file.
+- Record who deleted a worker and why (the reaper's reason, `down` by its caller, the builder gateway, the autoscaler, a failed `up`) as the details of its `worker-deleted` event.
+- Open an event's details in the web console by clicking or tapping it; deletion events show who deleted the worker and why.
+- Show the log of the worker panel and the Logs view full screen (button in the log tools, Esc leaves).
+- Fix the web console's Profiles list on phones, which lost the profile names and details.
 - Order the web console's views Workers, Jobs, Logs, Profiles, Events (keys 1 to 5 follow).
 - Lay out the web console's Profiles view by the layout setting too: a list (split), a sortable table (console) or cards; a click opens the profile details.
 - Lay out the web console's Jobs view like the Workers view: split (compact list beside the job's log), console (sortable table above it) or cards. Opening a job keeps you on Jobs (`#jobs/WORKER/JOB`), J/K move between jobs and Esc closes the job.
