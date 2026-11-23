@@ -206,7 +206,7 @@ fn hosted_up(
     let action = |command| format!("{}-{command}", forge.key());
     let (code, raw) = proc::capture(
         ctx,
-        &mut state::control_cmd(
+        &mut state::control_cmd::<&str>(
             ctx,
             &[
                 &action("up"),
