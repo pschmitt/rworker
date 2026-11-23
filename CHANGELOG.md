@@ -5,7 +5,7 @@
 The Rust client and controller replace the original Bash client.
 
 - Show profile architecture in JSON, CLI, TUI and web profile listings.
-- Try profiles matching an architecture with `--profile-pool`.
+- Try profiles matching an architecture with `--arch`.
 - Label the profile tag column “Tags” throughout the interfaces.
 
 - Show profile and agent icons and colors on worker creation and deletion events.

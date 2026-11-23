@@ -356,19 +356,19 @@ fn up_inner(
     let mut rest = Vec::new();
     let mut args = args.iter();
     while let Some(arg) = args.next() {
-        if arg == "--profile-pool" {
+        if arg == "--arch" {
             pool = Some(
                 args.next()
                     .filter(|value| !value.is_empty())
                     .ok_or_else(|| {
-                        ctx.err("--profile-pool needs an architecture");
+                        ctx.err("--arch needs an architecture");
                         Fail(2)
                     })?
                     .clone(),
             );
-        } else if let Some(value) = arg.strip_prefix("--profile-pool=") {
+        } else if let Some(value) = arg.strip_prefix("--arch=") {
             if value.is_empty() {
-                ctx.err("--profile-pool needs an architecture");
+                ctx.err("--arch needs an architecture");
                 return Err(Fail(2));
             }
             pool = Some(value.to_owned());
@@ -397,7 +397,7 @@ fn up_inner(
         );
     };
     if explicit_profile {
-        ctx.err("--profile-pool cannot be combined with --profile");
+        ctx.err("--arch cannot be combined with --profile");
         return Err(Fail(2));
     }
     let raw = state::remote(ctx, &["profiles"])?;
