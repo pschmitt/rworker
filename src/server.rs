@@ -427,6 +427,7 @@ fn profiles(settings: &Value) -> io::Result<Vec<Value>> {
                     || (settings.get("defaultProfile").is_none() && name == "standard"),
                 "flavor": flavor,
                 "disk": disk,
+                "arch": profile.get("arch"),
                 "image_tags": profile.get("imageTags").cloned().unwrap_or_else(|| json!([])),
             }))
         })
@@ -438,6 +439,7 @@ fn profiles(settings: &Value) -> io::Result<Vec<Value>> {
                 "name": profile.name,
                 "provider": "github",
                 "system": profile.system,
+                "arch": profile.system.strip_suffix("-linux").unwrap_or(profile.system),
                 "flavor": profile.label,
                 "image_tags": ["github-actions"],
                 "default": false,
@@ -497,6 +499,7 @@ fn add_gitlab_profiles(settings: &Value, rows: &mut Vec<Value>) {
                 "name": profile.name,
                 "provider": gitlab.key(),
                 "system": profile.system,
+                "arch": profile.system.strip_suffix("-linux").unwrap_or(profile.system),
                 "flavor": profile.label,
                 "image_tags": gitlab.tags(),
                 "default": false,
@@ -536,4 +539,28 @@ fn epoch() -> f64 {
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap_or_default()
         .as_secs_f64()
+}
+
+#[cfg(test)]
+mod profile_arch_tests {
+    use super::*;
+
+    #[test]
+    fn architecture_comes_from_configuration_and_ci_runner() {
+        let settings = json!({
+            "adhocFlavor": "small", "adhocVolumeSize": 20,
+            "profiles": {"standard": {"arch": "x86_64"}, "unknown": {}},
+            "githubActions": {"repository": "example/repo"},
+            "gitlabCi": {"projectId": 1}
+        });
+        let mut rows = profiles(&settings).unwrap();
+        add_gitlab_profiles(&settings, &mut rows);
+        let arch =
+            |name: &str| rows.iter().find(|row| row["name"] == name).unwrap()["arch"].clone();
+        assert_eq!(arch("standard"), "x86_64");
+        assert!(arch("unknown").is_null());
+        assert_eq!(arch("gh-aarch64"), "aarch64");
+        assert_eq!(arch("gh-x86_64"), "x86_64");
+        assert_eq!(arch("gl-x86_64"), "x86_64");
+    }
 }

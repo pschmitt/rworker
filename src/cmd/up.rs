@@ -204,19 +204,25 @@ fn hosted_up(
     let owner = ctx.owner();
     let forge = profile.forge;
     let action = |command| format!("{}-{command}", forge.key());
-    let raw = state::remote::<&str>(
+    let (code, raw) = proc::capture(
         ctx,
-        &[
-            &action("up"),
-            profile.runner,
-            ttl,
-            key.trim(),
-            &owner,
-            topic,
-        ],
+        &mut state::control_cmd(
+            ctx,
+            &[
+                &action("up"),
+                profile.runner,
+                ttl,
+                key.trim(),
+                &owner,
+                topic,
+            ],
+        ),
     )?;
-    let initial: Value = serde_json::from_str(&raw).map_err(|_| Fail(1))?;
-    let id = need(&initial, "id")?;
+    if code != 0 {
+        return Err(Fail(if code == 255 { 255 } else { 1 }));
+    }
+    let initial: Value = serde_json::from_str(&raw).map_err(|_| Fail(255))?;
+    let id = need(&initial, "id").map_err(|_| Fail(255))?;
     let suffix = initial["worker_suffix"].as_str().unwrap_or(&id);
     let name = format!("{}{suffix}", forge.prefix());
     let run_url = initial["run_url"].as_str().map(str::to_owned).or_else(|| {
@@ -323,6 +329,7 @@ fn hosted_up(
         let _ = progress.send(format!(
             "Could not request cancellation of {name}; the controller will retry at expiry"
         ));
+        return Err(Fail(255));
     }
     ready
 }
@@ -343,6 +350,130 @@ fn up_inner(
     capture: bool,
     remove_after_ssh: bool,
     emit_stages: bool,
+) -> R<Option<String>> {
+    let mut pool = None;
+    let mut explicit_profile = false;
+    let mut rest = Vec::new();
+    let mut args = args.iter();
+    while let Some(arg) = args.next() {
+        if arg == "--profile-pool" {
+            pool = Some(
+                args.next()
+                    .filter(|value| !value.is_empty())
+                    .ok_or_else(|| {
+                        ctx.err("--profile-pool needs an architecture");
+                        Fail(2)
+                    })?
+                    .clone(),
+            );
+        } else if let Some(value) = arg.strip_prefix("--profile-pool=") {
+            if value.is_empty() {
+                ctx.err("--profile-pool needs an architecture");
+                return Err(Fail(2));
+            }
+            pool = Some(value.to_owned());
+        } else if matches!(
+            arg.as_str(),
+            "--profile" | "--ttl" | "--flavor" | "--disk" | "--topic" | "--agent-id" | "-l"
+        ) {
+            explicit_profile |= arg == "--profile";
+            rest.push(arg.clone());
+            if let Some(value) = args.next() {
+                rest.push(value.clone());
+            }
+        } else {
+            explicit_profile |= arg.starts_with("--profile=");
+            rest.push(arg.clone());
+        }
+    }
+    let Some(pool) = pool else {
+        return up_attempt(
+            ctx,
+            &rest,
+            capture,
+            remove_after_ssh,
+            emit_stages,
+            &std::cell::Cell::new(false),
+        );
+    };
+    if explicit_profile {
+        ctx.err("--profile-pool cannot be combined with --profile");
+        return Err(Fail(2));
+    }
+    let raw = state::remote(ctx, &["profiles"])?;
+    let rows: Vec<Value> = serde_json::from_str(&raw).map_err(|_| {
+        ctx.err("Could not decode profiles");
+        Fail(1)
+    })?;
+    let candidates = pool_candidates(&rows, &pool);
+    if candidates.is_empty() {
+        ctx.err(&format!("No profiles match architecture {pool}"));
+        return Err(Fail(1));
+    }
+    try_pool(&candidates, |name| {
+        ctx.err(&format!("Trying profile {name} ({pool})"));
+        let mut attempt = rest.clone();
+        attempt.extend(["--profile".into(), name.to_owned()]);
+        let created = std::cell::Cell::new(false);
+        match up_attempt(
+            ctx,
+            &attempt,
+            capture,
+            remove_after_ssh,
+            emit_stages,
+            &created,
+        ) {
+            Ok(result) => Ok(result),
+            Err(error) => {
+                ctx.err(&format!("Profile {name} failed"));
+                Err((error, created.get()))
+            }
+        }
+    })
+    .inspect_err(|_| {
+        ctx.err(&format!(
+            "Could not create a worker from the {pool} profile pool"
+        ));
+    })
+}
+
+fn try_pool<T>(
+    candidates: &[&str],
+    mut attempt: impl FnMut(&str) -> Result<T, (Fail, bool)>,
+) -> R<T> {
+    for name in candidates {
+        match attempt(name) {
+            Ok(result) => return Ok(result),
+            Err((error, created)) if created || error.0 == 2 || error.0 >= 128 => {
+                return Err(error);
+            }
+            Err(_) => {}
+        }
+    }
+    Err(Fail(1))
+}
+
+fn pool_candidates<'a>(rows: &'a [Value], arch: &str) -> Vec<&'a str> {
+    let mut candidates: Vec<_> = rows
+        .iter()
+        .filter(|row| row["arch"].as_str() == Some(arch))
+        .filter_map(|row| {
+            row["name"]
+                .as_str()
+                .map(|name| (row["default"] == true, name))
+        })
+        .collect();
+    candidates.sort_by(|a, b| b.0.cmp(&a.0).then_with(|| a.1.cmp(b.1)));
+    candidates.into_iter().map(|(_, name)| name).collect()
+}
+
+fn up_attempt(
+    ctx: &Ctx,
+    args: &[String],
+    capture: bool,
+    remove_after_ssh: bool,
+    emit_stages: bool,
+    created: &std::cell::Cell<bool>,
 ) -> R<Option<String>> {
     let cleanup = |name: &str| {
         remove_after_ssh.then(|| {
@@ -425,6 +556,7 @@ fn up_inner(
             drop(tx);
             result
         })?;
+        created.set(true);
         if capture {
             if !login_user.is_empty() {
                 output["ssh_user"] = json!(login_user);
@@ -512,9 +644,10 @@ fn up_inner(
     let st = child.wait().map_err(|_| Fail(1))?;
     let out = reader.join().unwrap_or_default();
     if !st.success() {
-        return Err(Fail(1));
+        return Err(Fail(if st.code() == Some(255) { 255 } else { 1 }));
     }
     let raw_info = proc::trim_nl(&String::from_utf8_lossy(&out));
+    created.set(true);
     let parsed: Value = serde_json::from_str(&raw_info).map_err(|_| Fail(1))?;
     let name = need(&parsed, "name")?;
     let _cleanup = cleanup(&name);
@@ -739,4 +872,52 @@ pub fn probe(opts: &[String], login: &str) -> bool {
         .stderr(Stdio::null())
         .status()
         .is_ok_and(|s| s.success())
+}
+
+#[cfg(test)]
+mod profile_pool_tests {
+    use super::*;
+
+    #[test]
+    fn selects_matching_architecture_default_then_name() {
+        let rows = vec![
+            json!({"name":"z", "arch":"aarch64"}),
+            json!({"name":"other", "arch":"x86_64"}),
+            json!({"name":"a", "arch":"aarch64"}),
+            json!({"name":"default", "arch":"aarch64", "default":true}),
+            json!({"name":"unknown"}),
+        ];
+        assert_eq!(pool_candidates(&rows, "aarch64"), ["default", "a", "z"]);
+        assert!(pool_candidates(&rows, "riscv64").is_empty());
+    }
+
+    #[test]
+    fn tries_next_profile_after_failure_but_stops_after_creation() {
+        let mut attempts = Vec::new();
+        let result = try_pool(&["first", "second"], |name| {
+            attempts.push(name.to_owned());
+            if name == "first" {
+                Err((Fail(1), false))
+            } else {
+                Ok(name.to_owned())
+            }
+        })
+        .unwrap();
+        assert_eq!(result, "second");
+        assert_eq!(attempts, ["first", "second"]);
+        attempts.clear();
+        let result: R<()> = try_pool(&["first", "second"], |name| {
+            attempts.push(name.to_owned());
+            Err((Fail(1), true))
+        });
+        assert!(result.is_err());
+        assert_eq!(attempts, ["first"]);
+        attempts.clear();
+        let result: R<()> = try_pool(&["first", "second"], |name| {
+            attempts.push(name.to_owned());
+            Err((Fail(255), false))
+        });
+        assert_eq!(result, Err(Fail(255)));
+        assert_eq!(attempts, ["first"]);
+    }
 }

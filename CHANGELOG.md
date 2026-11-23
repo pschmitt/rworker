@@ -4,6 +4,9 @@
 
 The Rust client and controller replace the original Bash client.
 
+- Show profile architecture in JSON, CLI, TUI and web profile listings.
+- Try profiles matching an architecture with `--profile-pool`.
+
 - Show profile and agent icons and colors on worker creation and deletion events.
 
 - Add on-demand setup and repair for ephemeral NetBird and Tailscale on CI workers.

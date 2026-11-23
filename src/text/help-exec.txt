@@ -6,7 +6,7 @@ run CMD there as agent (live output; its exit code becomes ours), copy
 results back and delete the worker again - also on errors and Ctrl-C.
 Status messages go to stderr, the command's output to stdout.
 
-  --ttl, --flavor, --disk, --profile, --scratch, --topic, --agent-id, --nix-cache, --no-nix-cache, --nix-auth, --no-nix-auth, --no-niks3-token   as for up
+  --ttl, --flavor, --disk, --profile, --profile-pool, --scratch, --topic, --agent-id, --nix-cache, --no-nix-cache, --nix-auth, --no-nix-auth, --no-niks3-token   as for up
   --sync SRC[:DEST]      rsync SRC to the worker before running (DEST
                          defaults to SRC's basename); repeatable
   --fetch REMOTE[:LOCAL] rsync REMOTE (relative to agent's home) back

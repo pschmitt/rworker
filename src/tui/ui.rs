@@ -771,11 +771,12 @@ fn draw_profiles(f: &mut Frame, area: Rect, profiles: &mut Profiles, icons: bool
         f.render_widget(Paragraph::new(Line::styled(message, dim())), area);
         return;
     }
-    let show_flavor = area.width >= 67;
-    let show_tags = area.width >= 90;
-    let mut header = vec!["PROFILE", "VCPU", "RAM (GB)", "DISK (GB)"];
+    let show_flavor = area.width >= 78;
+    let show_tags = area.width >= 101;
+    let mut header = vec!["PROFILE", "ARCH", "VCPU", "RAM (GB)", "DISK (GB)"];
     let mut widths = vec![
         Constraint::Fill(1),
+        Constraint::Length(7),
         Constraint::Length(4),
         Constraint::Length(8),
         Constraint::Length(9),
@@ -810,6 +811,7 @@ fn draw_profiles(f: &mut Frame, area: Rect, profiles: &mut Profiles, icons: bool
             .map_or_else(|| "-".into(), |n| n.to_string());
         let mut cells = vec![
             Cell::from(label),
+            Cell::from(profile["arch"].as_str().unwrap_or("-")),
             Cell::from(vcpus),
             Cell::from(ram),
             Cell::from(disk),

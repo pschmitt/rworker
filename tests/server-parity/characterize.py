@@ -41,7 +41,10 @@ def characterize(oracle, root, binary=None):
             return
         actual = run_rust("profiles")
         assert (actual.returncode, actual.stderr) == (reference.returncode, reference.stderr), actual
-        assert json.loads(actual.stdout) == json.loads(reference.stdout), actual
+        rows = json.loads(actual.stdout)
+        for row in rows:
+            assert row.pop("arch") is None
+        assert rows == json.loads(reference.stdout), actual
 
     result = run("profiles")
     assert (result.returncode, result.stderr) == (0, ""), result

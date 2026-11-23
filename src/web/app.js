@@ -280,7 +280,7 @@ const sortFields = {
   ],
   jobs: [(row) => row.job, (row) => row.state],
   events: [(row) => row.kind, (row) => row.target, (row) => timestamp(row.timestamp)],
-  profiles: [(row) => row.name, (row) => row.vcpus,
+  profiles: [(row) => row.name, (row) => row.arch, (row) => row.vcpus,
     (row) => row.ram_gb == null ? row.ram_mib : row.ram_gb * 1e9 / 2 ** 20,
     (row) => row.disk_total_bytes == null ? Number(row.disk) || null : row.disk_total_bytes / 2 ** 30, (row) => row.flavor, (row) => (row.image_tags || []).join(", ")],
 };
@@ -450,7 +450,7 @@ function render() {
       }));
       break;
     default:
-      columns = [["Profile"], ["vCPUs"], ["RAM"], ["Disk"], ["Flavor", true], ["Image tags", true]];
+      columns = [["Profile"], ["Arch"], ["vCPUs"], ["RAM"], ["Disk"], ["Flavor", true], ["Image tags", true]];
       if (state.authenticated) columns.push(["Actions", false, false]);
       rows = visible.map((row) => {
         const tags = (row.image_tags || []).join(", ");
@@ -463,7 +463,7 @@ function render() {
           row.ram_mib % 1024 === 0 ? row.ram_mib / 1024 + " GiB" : row.ram_mib + " MiB";
         const disk = row.disk_total_bytes != null ? `${(row.disk_total_bytes / 2 ** 30).toFixed(1)} GiB` :
           row.disk ? row.disk + " GiB" : "—";
-        const cells = [profileName, row.vcpus, ram, disk, row.flavor, tags || "—"];
+        const cells = [profileName, row.arch || "—", row.vcpus, ram, disk, row.flavor, tags || "—"];
         if (state.authenticated) {
           const create = button("Worker", () => form("create", null, row.name), "profile-create-action");
           create.setAttribute("aria-label", `New worker from ${row.name}`);
@@ -543,7 +543,7 @@ async function openProfile(row) {
     const ciProvider = ciProviders[profile.provider];
     const fields = [
       ["Provider", ciProvider || "OpenStack"],
-      [ciProvider ? "Runner" : "Flavor", profile.flavor], ["Architecture", profile.system],
+      [ciProvider ? "Runner" : "Flavor", profile.flavor], ["Architecture", profile.arch],
       ["vCPUs", profile.vcpus], ["RAM", profile.ram_gb != null ? profile.ram_gb + " GB" :
         profile.ram_mib != null ? (profile.ram_mib * 2 ** 20 / 1e9).toFixed(1) + " GB" : null],
       ["Disk", profile.disk_total_bytes != null ? (profile.disk_total_bytes / 1e9).toFixed(1) + " GB" :

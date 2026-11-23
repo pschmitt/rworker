@@ -1,4 +1,4 @@
-Usage: __ME__ up [--ttl DURATION] [--flavor FLAVOR] [--disk GIB] [--profile PROFILE] [--scratch] [--ssh]
+Usage: __ME__ up [--ttl DURATION] [--flavor FLAVOR] [--disk GIB] [--profile PROFILE|--profile-pool ARCH] [--scratch] [--ssh]
           [--nix-cache|--no-nix-cache] [--nix-auth|--no-nix-auth]
           [--no-niks3-token] [--topic TEXT] [-l USER]
 
@@ -12,6 +12,8 @@ print it as JSON (name, ip, host_key, user, expires_at, builder).
                    s1.2xlarge (32/64)
   --disk GIB       volume size (default 150)
   --profile NAME   standard (default), browser-daemon or large-builder
+  --profile-pool ARCH  try configured profiles matching ARCH, default first then by name;
+                   cannot be combined with --profile (e.g. aarch64)
   --scratch        scratch host: maximum lifetime 7 days instead of 24 h
   --nix-cache      push the S3 cache settings (the default when this host's
                    Nix has an s3:// cache; fails loudly when it has none)

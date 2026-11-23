@@ -263,7 +263,7 @@ pub fn cmd_profiles(ctx: &Ctx, args: &[String]) -> R {
         crate::ctx::json_out(ctx, &jq::pretty(&Value::Array(list)));
         return Ok(());
     }
-    let mut rows = vec!["PROFILE\tFLAVOR\tVCPU\tRAM (GB)\tDISK (GB)\tIMAGE TAGS".to_string()];
+    let mut rows = vec!["PROFILE\tARCH\tFLAVOR\tVCPU\tRAM (GB)\tDISK (GB)\tIMAGE TAGS".to_string()];
     if wide {
         rows[0].push_str("\tPROVIDER\tIMAGE / RUNNER\tIMAGE ID\tIMAGE CREATED");
     }
@@ -286,6 +286,7 @@ pub fn cmd_profiles(ctx: &Ctx, args: &[String]) -> R {
         };
         let mut row = [
             jq::tsv(&json!(label)),
+            jq::tsv(&json!(jq::or(&p["arch"], "-"))),
             jq::tsv(get(p, "flavor")),
             jq::tsv(&json!(
                 p.get("vcpus")
@@ -348,8 +349,8 @@ pub fn cmd_profiles(ctx: &Ctx, args: &[String]) -> R {
                         paint::paint(ctx, "32", marker)
                     )
                 }
-                1 => paint::flavor(ctx, text),
-                2 => paint::paint(ctx, "2", text),
+                2 => paint::flavor(ctx, text),
+                3 => paint::paint(ctx, "2", text),
                 _ => text.to_owned(),
             },
         ));
