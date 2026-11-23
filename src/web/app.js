@@ -621,7 +621,9 @@ function tableRow(row, now) {
   const status = row.retired ? ["retired", "idle"] : lease.kind === "pool" ? [row.pool_state, lease.tone === "busy" ? "busy" : "idle"] :
     [String(row.status || "?").toLowerCase(), /^(active|ready)$/i.test(row.status) ? "good" : /^(build|boot|deleting|pending)/i.test(row.status) ? "busy" : "bad"];
   const kind = row.name.startsWith("gha-") ? "github" : row.provider === "gitlab" || row.name.startsWith("glci-") ? "gitlab" : isPool(row) ? (row.pool || row.kind) : row.kind || "";
-  const node = el("a", "ctr worker-item", el("span", "mark"), el("span", "nm", row.name), el("span", "muted", kind), el("span", "st-" + status[1], status[0]),
+  const glyphChar = workerGlyph(row);
+  const glyphClass = glyphChar === githubGlyph ? "github" : glyphChar === gitlabGlyph ? "gitlab" : isPool(row) ? "pool" : "adhoc";
+  const node = el("a", "ctr worker-item", el("span", "mark"), el("span", "nm", row.name), el("span", "kd", glyph(glyphChar, glyphClass), el("span", "muted", kind)), el("span", "st-" + status[1], status[0]),
     el("span", null, row.agent || "—"), el("span", "tp", row.topic || ""),
     el("span", "ls", leaseBar(lease), el("span", "lease-text" + (lease.tone && lease.kind !== "pool" ? " " + lease.tone : ""), lease.kind === "pool" ? lease.text : lease.text.replace(" left", ""))),
     el("span", "muted", relative(row.created_at, now).replace(" ago", "")));
@@ -663,6 +665,7 @@ function renderWorkerCards(visible, now) {
     for (const row of single.slice(0, state.limit)) {
       const lease = leaseInfo(row, now);
       const card = el("article", "card");
+      card.dataset.worker = row.name;
       const name = el("a", "name", row.name);
       name.href = workerHash(row);
       const profile = state.rows.profiles?.find((item) => item.name === row.profile);
@@ -703,6 +706,7 @@ function renderWorkerCards(visible, now) {
         const lease = leaseInfo(row, now);
         const link = el("a", "pool-member", el("span", "sq" + (row.pool_state === "busy" ? " busy" : "")), el("span", "mono", row.name), el("span", "muted", lease.text));
         link.href = workerHash(row);
+        link.dataset.worker = row.name;
         strip.append(link);
         order.push(row.name);
       }
@@ -726,6 +730,8 @@ function renderJobs(visible) {
     const [tone, ic] = jobTone(row.state);
     const link = el("a", "job-row", icon(ic, "tone-" + (tone || "info")), el("span", "name", row.job), el("span", "worker", row.worker), el("span", "pill" + (tone ? " " + tone : ""), row.state));
     link.href = workerHash({ name: row.worker }, row.job);
+    link.dataset.worker = row.worker;
+    link.dataset.job = row.job;
     container.append(link);
   }
   showMore(container, visible.length);
@@ -1623,7 +1629,7 @@ function closeMenu() {
   menuState = undefined;
 }
 
-function openMenu(anchor, items) {
+function openMenu(anchor, items, point) {
   closeMenu();
   const scrim = el("div", "menu-scrim");
   const menu = el("div", "menu");
@@ -1646,8 +1652,8 @@ function openMenu(anchor, items) {
     if (event.key === "Tab") closeMenu();
   });
   document.body.append(scrim, menu);
-  const box = anchor.getBoundingClientRect();
-  const top = box.bottom + 6 + menu.offsetHeight > innerHeight - 8 ? box.top - menu.offsetHeight - 6 : box.bottom + 6;
+  const box = point ? { top: point.y, bottom: point.y, right: point.x + menu.offsetWidth } : anchor.getBoundingClientRect();
+  const top = box.bottom + (point ? 2 : 6) + menu.offsetHeight > innerHeight - 8 ? box.top - menu.offsetHeight - (point ? 2 : 6) : box.bottom + (point ? 2 : 6);
   menu.style.top = Math.max(8, top) + "px";
   menu.style.left = Math.min(Math.max(8, box.right - menu.offsetWidth), innerWidth - menu.offsetWidth - 8) + "px";
   menuState = { menu, scrim };
@@ -2157,6 +2163,34 @@ document.addEventListener("keydown", (event) => {
   if (!handler) return;
   event.preventDefault();
   handler();
+});
+
+// Right-click (or long-press) on a worker or job opens its actions.
+function contextItems(target) {
+  const row = workerFor(target.dataset.worker);
+  const job = target.dataset.job;
+  const items = [];
+  if (job) {
+    items.push({ label: "Open job log", icon: "terminal", run: () => { state.tab = "logs"; select(row, job); } },
+      { label: "Copy job name", icon: "copy", run: () => copy(job) }, "-");
+  }
+  items.push({ label: "Open worker", icon: "server", hint: "Enter", run: () => select(row) });
+  if (row.retired) {
+    items.push({ label: "Copy worker name", icon: "copy", run: () => copy(row.name) });
+    return items;
+  }
+  items.push({ label: "Open SSH", icon: "terminal", hint: "S", run: () => openTerminal(row) },
+    { label: "Start job", icon: "play", run: () => form("start", row) },
+    { label: "Copy worker name", icon: "copy", run: () => copy(row.name) }, "-");
+  return items.concat(workerMenu(row).map((item) => item !== "-" && item.label === "Edit topic" ? { ...item, run: () => form("topic", row) } : item));
+}
+
+document.addEventListener("contextmenu", (event) => {
+  if (!state.authenticated || event.shiftKey) return;
+  const target = event.target.closest?.("#results [data-worker]");
+  if (!target || !target.dataset.worker) return;
+  event.preventDefault();
+  openMenu(target, contextItems(target), { x: event.clientX, y: event.clientY });
 });
 
 function followInventory() {
