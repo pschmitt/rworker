@@ -4,6 +4,8 @@
 
 The Rust client and controller replace the original Bash client.
 
+- Include a sample flake for building a custom OpenStack worker image.
+
 - Verify new CI smoke-test files and Nix store registrations on the LUKS2 backing filesystem.
 
 - Add a no-lease CI benchmark for encrypted and unencrypted storage and Nix builds.

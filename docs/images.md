@@ -54,6 +54,14 @@ provisioning uses its configured overlay networking.
 
 ## Reuse the base in your NixOS flake
 
+The [sample worker image flake](../examples/worker-image/flake.nix) builds
+a standalone OpenStack image with an extra package. Copy it into your site
+flake or build the example directly from this checkout.
+
+```sh
+rworker image create --flake path:./examples/worker-image
+```
+
 Import `inputs.rworker.nixosModules.workerImage` for the UEFI image and
 boot-time encrypted writable Nix store. Supply your own accounts, key
 provisioning and network configuration. The image is available at
