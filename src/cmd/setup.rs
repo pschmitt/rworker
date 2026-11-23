@@ -9,6 +9,8 @@ use std::time::{Duration, Instant};
 /// The topics `setup` knows, for the help and the completion.
 pub const TOPICS: &[&str] = &[
     "nix",
+    "nix-cache",
+    "nix-builder",
     "niks3-token",
     "register-log-file",
     "netbird",
@@ -25,6 +27,8 @@ pub fn cmd_setup(ctx: &Ctx, args: &[String]) -> R {
     };
     match topic.as_str() {
         "nix" => super::nix_cache::cmd_setup_nix(ctx, &args[1..], "setup", Default::default()),
+        "nix-cache" => super::nix_cache::cmd_nix_cache(ctx, &args[1..]),
+        "nix-builder" => super::simple::cmd_builder(ctx, &args[1..]),
         "niks3-token" => super::simple::cmd_niks3_token(ctx, &args[1..]),
         "netbird" | "tailscale" => setup_mesh(ctx, topic, &args[1..]),
         "register-log-file" => {

@@ -1231,7 +1231,10 @@ impl App {
             }
             KeyCode::Char('b') => {
                 if let Some(w) = need(self) {
-                    self.open_text(format!("builder · {w}"), vec!["builder".into(), w]);
+                    self.open_text(
+                        format!("builder · {w}"),
+                        vec!["setup".into(), "nix-builder".into(), w],
+                    );
                 }
             }
             KeyCode::Char('s') => {
@@ -1281,7 +1284,7 @@ impl App {
             KeyCode::Char('N') => {
                 if let Some(w) = need(self) {
                     self.act(
-                        vec!["nix-cache".into(), w.clone()],
+                        vec!["setup".into(), "nix-cache".into(), w.clone()],
                         format!("nix-cache {w}"),
                     );
                 }

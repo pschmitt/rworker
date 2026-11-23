@@ -19,6 +19,9 @@ let
     RWORKER_ICONS = if cfg.icons then null else "0";
     RWORKER_AWS_CREDENTIALS_FILE =
       if cfg.nixCache.awsCredentialsFile == null then null else toString cfg.nixCache.awsCredentialsFile;
+    RWORKER_BUILDER_HOST = cfg.builderGateway.hostName;
+    RWORKER_BUILDER_IDENTITY = cfg.builderGateway.identityFile;
+    RWORKER_BUILDER_HOST_KEY = cfg.builderGateway.publicHostKey;
   };
 
   base = cfg.package.override {
@@ -119,6 +122,26 @@ in
       type = types.listOf types.package;
       default = [ ];
       description = "Tools put on the client's PATH ahead of openssh and rsync (a wrapped ssh, ...).";
+    };
+
+    builderGateway = {
+      hostName = mkOption {
+        type = types.nullOr types.str;
+        default = null;
+        example = "builder.example.com";
+        description = "Host of the on-demand Nix builder gateway for `rworker builder` without a worker name (`RWORKER_BUILDER_HOST`, default: the control host).";
+      };
+      identityFile = mkOption {
+        type = types.nullOr types.str;
+        default = null;
+        example = "/run/secrets/rworker-builder-key";
+        description = "Private key the local Nix daemon uses for the gateway (`RWORKER_BUILDER_IDENTITY`; default `-`, the daemon's own key).";
+      };
+      publicHostKey = mkOption {
+        type = types.nullOr types.str;
+        default = null;
+        description = "Base64-encoded public host-key line of the gateway (`RWORKER_BUILDER_HOST_KEY`; default: read from known_hosts).";
+      };
     };
 
     nixCache.awsCredentialsFile = mkOption {

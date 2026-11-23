@@ -366,20 +366,24 @@ def setup_nix(
 
 
 @mcp.tool()
-def nix_cache(name: str, dry_run: bool = False) -> dict:
-    """The cache part of setup_nix only (kept for older callers): let a
-    worker substitute from the private S3 Nix cache with this host's s3://
-    substituters, trusted keys and read-only AWS profile. dry_run shows what
-    would be pushed (never credentials)."""
-    argv = ["nix-cache", name, "--json"] + (["--dry-run"] if dry_run else [])
-    return json.loads(run(*argv, timeout=300))
-
-
-@mcp.tool()
-def builder(name: str) -> str:
-    """A Nix --builders line for the worker: nix build --max-jobs 0
-    --builders "<line>" .#pkg builds there and copies the result back."""
-    return json.loads(run("builder", name, "--json", timeout=60))["builder"]
+def setup_nix_builder(
+    name: str = "",
+    profile: str = "",
+    arch: str = "",
+    pool: str = "",
+    identity: str = "",
+) -> str:
+    """A Nix --builders line: nix build --max-jobs 0 --builders "<line>" .#pkg.
+    With name, for that worker. Without it, for the on-demand builder
+    gateway, which leases a worker on the first build and deletes it when
+    idle; pick it with one of profile (e.g. large-builder, gh-aarch64), arch
+    (x86_64, aarch64) or pool. identity is the private key the local Nix
+    daemon uses for the gateway (default: the daemon's own)."""
+    argv = ["setup", "nix-builder"] + ([name] if name else [])
+    for flag, value in (("--profile", profile), ("--arch", arch), ("--pool", pool), ("--identity", identity)):
+        if value:
+            argv += [flag, value]
+    return json.loads(run(*argv, "--json", timeout=60))["builder"]
 
 
 if __name__ == "__main__":

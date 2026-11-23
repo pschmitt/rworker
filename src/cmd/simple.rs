@@ -360,11 +360,236 @@ pub fn cmd_profiles(ctx: &Ctx, args: &[String]) -> R {
     Ok(())
 }
 
-pub fn cmd_builder(ctx: &Ctx, args: &[String]) -> R {
-    let Some(name) = args.first().filter(|a| !a.is_empty()) else {
-        crate::help::show(ctx, "builder");
-        return Err(Fail(2));
+/// `builder` options for the on-demand gateway.
+#[derive(Default)]
+struct GatewayArgs {
+    selector: Option<String>,
+    gateway: Option<String>,
+    identity: Option<String>,
+    host_key: Option<String>,
+    system: Option<String>,
+    jobs: Option<String>,
+    features: Option<String>,
+}
+
+fn parse_builder_args(args: &[String]) -> Result<(Option<String>, GatewayArgs), String> {
+    let mut name = None;
+    let mut options = GatewayArgs::default();
+    let mut args = args.iter();
+    while let Some(arg) = args.next() {
+        let (flag, inline) = match arg.split_once('=') {
+            Some((flag, value)) if flag.starts_with("--") => (flag, Some(value.to_owned())),
+            _ => (arg.as_str(), None),
+        };
+        let slot = match flag {
+            "--profile" | "--arch" | "--pool" => {
+                if options.selector.is_some() {
+                    return Err("Pass only one of --profile, --arch and --pool".into());
+                }
+                &mut options.selector
+            }
+            "--gateway" => &mut options.gateway,
+            "-i" | "--identity" => &mut options.identity,
+            "--host-key" => &mut options.host_key,
+            "--system" => &mut options.system,
+            "--jobs" => &mut options.jobs,
+            "--features" => &mut options.features,
+            _ if arg.starts_with('-') => return Err(format!("Unknown option: {arg}")),
+            _ if name.is_none() && !arg.is_empty() => {
+                name = Some(arg.clone());
+                continue;
+            }
+            _ => return Err(format!("Unexpected argument: {arg}")),
+        };
+        let value = inline
+            .or_else(|| args.next().cloned())
+            .filter(|value| !value.is_empty() && !value.contains(char::is_whitespace))
+            .ok_or_else(|| format!("{flag} needs a value"))?;
+        *slot = Some(match flag {
+            "--profile" | "--arch" | "--pool" => {
+                let selector = format!("{}:{value}", &flag[2..]);
+                if !valid_selector(&selector) {
+                    return Err(format!("Invalid {flag} value: {value}"));
+                }
+                selector
+            }
+            _ => value,
+        });
+    }
+    Ok((name, options))
+}
+
+fn valid_selector(selector: &str) -> bool {
+    selector.split_once(':').is_some_and(|(_, name)| {
+        (1..=64).contains(&name.len())
+            && name
+                .bytes()
+                .all(|byte| byte.is_ascii_alphanumeric() || b"._-".contains(&byte))
+    })
+}
+
+/// The system a selector builds, when the selector itself says so.
+fn selector_system(selector: Option<&str>) -> &'static str {
+    let arch = match selector.and_then(|selector| selector.split_once(':')) {
+        Some(("arch", arch)) => arch.to_ascii_lowercase(),
+        Some(("profile", profile)) => {
+            return crate::github_profiles::from_name(profile)
+                .map_or("x86_64-linux", |profile| profile.system);
+        }
+        _ => return "x86_64-linux",
     };
+    match arch.as_str() {
+        "aarch64" | "arm64" | "aarch64-linux" => "aarch64-linux",
+        _ => "x86_64-linux",
+    }
+}
+
+/// The gateway's host name and its pinned host key, from the SSH
+/// configuration and known_hosts of this user: the Nix daemon has neither.
+fn gateway_host(ctx: &Ctx, host: &str) -> R<(String, Option<String>)> {
+    let output = std::process::Command::new("ssh")
+        .args(["-G", "--", host])
+        .stdin(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .output()
+        .map_err(|_| {
+            ctx.err("Could not read the SSH configuration");
+            Fail(1)
+        })?;
+    let config = String::from_utf8_lossy(&output.stdout);
+    let value = |key: &str| {
+        config.lines().find_map(|line| {
+            line.split_once(' ')
+                .filter(|(name, _)| *name == key)
+                .map(|(_, value)| value.to_owned())
+        })
+    };
+    let hostname = value("hostname").unwrap_or_else(|| host.to_owned());
+    let alias = value("hostkeyalias").unwrap_or_else(|| hostname.clone());
+    let port = value("port").filter(|port| port != "22");
+    let lookup = port
+        .as_ref()
+        .map_or_else(|| alias.clone(), |port| format!("[{alias}]:{port}"));
+    let files: Vec<String> = ["userknownhostsfile", "globalknownhostsfile"]
+        .into_iter()
+        .filter_map(value)
+        .flat_map(|files| {
+            files
+                .split_whitespace()
+                .map(|file| match file.strip_prefix("~/") {
+                    Some(rest) => format!("{}/{rest}", ctx.home),
+                    None => file.to_owned(),
+                })
+                .collect::<Vec<_>>()
+        })
+        .collect();
+    let mut keys = Vec::new();
+    for file in files {
+        let Ok(found) = std::process::Command::new("ssh-keygen")
+            .args(["-F", &lookup, "-f", &file])
+            .stdin(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .output()
+        else {
+            continue;
+        };
+        keys.extend(
+            String::from_utf8_lossy(&found.stdout)
+                .lines()
+                .filter(|line| !line.starts_with('#'))
+                .filter_map(|line| {
+                    let mut fields = line.split_whitespace().skip(1);
+                    Some(format!("{} {}", fields.next()?, fields.next()?))
+                })
+                .collect::<Vec<_>>(),
+        );
+    }
+    keys.sort_by_key(|key| !key.starts_with("ssh-ed25519 "));
+    let hostname = port.map_or(hostname.clone(), |port| format!("{hostname}:{port}"));
+    Ok((hostname, keys.into_iter().next()))
+}
+
+fn gateway_builder(ctx: &Ctx, options: GatewayArgs) -> R {
+    let env = |key: &str| std::env::var(key).ok().filter(|value| !value.is_empty());
+    let host = options
+        .gateway
+        .or_else(|| env("RWORKER_BUILDER_HOST"))
+        .unwrap_or_else(|| ctx.control_host.clone());
+    let (hostname, known_key) = gateway_host(ctx, &host)?;
+    let key = match options.host_key.or_else(|| env("RWORKER_BUILDER_HOST_KEY")) {
+        Some(key) => key,
+        None => base64(
+            format!(
+                "{}\n",
+                known_key.ok_or_else(|| {
+                    ctx.err(&format!(
+                        "No known host key for {host}; pass --host-key or set RWORKER_BUILDER_HOST_KEY"
+                    ));
+                    Fail(1)
+                })?
+            )
+            .as_bytes(),
+        ),
+    };
+    let identity = options
+        .identity
+        .or_else(|| env("RWORKER_BUILDER_IDENTITY"))
+        .unwrap_or_else(|| "-".into());
+    let hosted = options
+        .selector
+        .as_deref()
+        .and_then(|selector| selector.strip_prefix("profile:"))
+        .and_then(crate::github_profiles::from_name)
+        .is_some()
+        || selector_system(options.selector.as_deref()) == "aarch64-linux";
+    let system = options
+        .system
+        .unwrap_or_else(|| selector_system(options.selector.as_deref()).into());
+    let jobs = options
+        .jobs
+        .unwrap_or_else(|| if hosted { "1" } else { "16" }.into());
+    let features = options.features.unwrap_or_else(|| {
+        if hosted {
+            "-"
+        } else {
+            "nixos-test,benchmark,big-parallel,kvm"
+        }
+        .into()
+    });
+    let query = options
+        .selector
+        .as_deref()
+        .map(|selector| format!("?remote-program={selector}"))
+        .unwrap_or_default();
+    let line = format!(
+        "ssh-ng://rworker-builder@{hostname}{query} {system} {identity} {jobs} 1 {features} - {key}"
+    );
+    if ctx.json.get() {
+        crate::ctx::json_out(
+            ctx,
+            &jq::compact(&json!({
+                "gateway": hostname, "selector": options.selector, "builder": line,
+            })),
+        );
+    } else {
+        outln(&line);
+    }
+    Ok(())
+}
+
+pub fn cmd_builder(ctx: &Ctx, args: &[String]) -> R {
+    let (name, options) = parse_builder_args(args).map_err(|error| {
+        ctx.err(&error);
+        Fail(2)
+    })?;
+    let Some(name) = name else {
+        return gateway_builder(ctx, options);
+    };
+    if options.selector.is_some() || options.gateway.is_some() || options.host_key.is_some() {
+        ctx.err("--profile, --arch, --pool, --gateway and --host-key need no worker name: the gateway leases the worker");
+        return Err(Fail(2));
+    }
+    let name = &name;
     let hosted = state::hosted_id(name);
     if hosted.is_some() && !ctx.json.get() {
         ctx.err("Hosted builder connections require builder --json and its SSH configuration");
@@ -436,6 +661,39 @@ pub fn cmd_builder(ctx: &Ctx, args: &[String]) -> R {
         outln(&line);
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod builder_tests {
+    use super::*;
+
+    fn args(words: &[&str]) -> Vec<String> {
+        words.iter().map(|word| (*word).to_owned()).collect()
+    }
+
+    #[test]
+    fn builder_takes_an_optional_name_and_one_selector() {
+        let (name, options) = parse_builder_args(&args(&["--arch", "aarch64"])).unwrap();
+        assert!(name.is_none());
+        assert_eq!(options.selector.as_deref(), Some("arch:aarch64"));
+        assert_eq!(
+            selector_system(options.selector.as_deref()),
+            "aarch64-linux"
+        );
+        let (name, options) =
+            parse_builder_args(&args(&["--profile=large-builder", "--jobs", "4"])).unwrap();
+        assert!(name.is_none());
+        assert_eq!(options.selector.as_deref(), Some("profile:large-builder"));
+        assert_eq!(options.jobs.as_deref(), Some("4"));
+        assert_eq!(selector_system(Some("profile:gh-aarch64")), "aarch64-linux");
+        assert_eq!(selector_system(Some("pool:circus")), "x86_64-linux");
+        let (name, _) = parse_builder_args(&args(&["adhoc-1234"])).unwrap();
+        assert_eq!(name.as_deref(), Some("adhoc-1234"));
+        assert!(parse_builder_args(&args(&["--arch", "x86_64", "--pool", "circus"])).is_err());
+        assert!(parse_builder_args(&args(&["--profile", "a b"])).is_err());
+        assert!(parse_builder_args(&args(&["--pool"])).is_err());
+        assert!(parse_builder_args(&args(&["--bogus"])).is_err());
+    }
 }
 
 pub fn base64(data: &[u8]) -> String {

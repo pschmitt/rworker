@@ -14,7 +14,7 @@ Press n to toggle plain view in all views. In Jobs, press c to start a job.
 Alt+Shift+Q quits from any view.
 The second pane follows the selected worker’s logs. Click a row to
 select it, or scroll over a table or log pane.
-: runs any other action (sync, cp, exec, nix-cache, ...). ? opens help for the current view.
+: runs any other action (sync, cp, exec, setup, ...). ? opens help for the current view.
 F1 opens help while editing a field.
 
   -n SECONDS, --interval SECONDS

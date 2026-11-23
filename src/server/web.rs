@@ -627,7 +627,7 @@ fn worker_command(
         ("inspect", None) => Ok((words(&["inspect", worker, "--json"]), true)),
         ("boot", None) => Ok((words(&["inspect", worker, "--boot", "--json"]), true)),
         ("processes", None) => Ok((words(&["ps", worker]), false)),
-        ("builder", None) => Ok((words(&["builder", worker]), false)),
+        ("builder", None) => Ok((words(&["setup", "nix-builder", worker]), false)),
         _ => Err(NOT_FOUND),
     }
 }

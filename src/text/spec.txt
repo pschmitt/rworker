@@ -21,8 +21,6 @@ action topic change what an ad-hoc worker is for
 action claim take over an ad-hoc worker: new agent, agent id and topic
 action ssh ssh to a worker (pinned host key)
 action sync rsync a directory to a worker
-action builder print a Nix builders line for a worker
-action nix-cache let a worker substitute from this host's S3 cache
 action setup configure Nix access, reissue a niks3 token or register a log file
 action cp copy files from or to a worker (NAME:PATH)
 action inspect show everything known about a worker
@@ -53,6 +51,16 @@ flag events --interval=interval reconnect delay in seconds
 flag events --topic=topic-re limit to workers whose topic matches this regex (prefix with ! to invert)
 flag events --agent=agent-re limit to workers whose creating agent matches this regex (prefix with ! to invert)
 flag setup --log=path absolute path to an existing log file on the worker
+flag setup --profile=profile nix-builder gateway: lease a worker of this profile
+flag setup --arch=arch nix-builder gateway: lease a worker for this architecture
+flag setup --pool=pool nix-builder gateway: lease an ad-hoc worker from this pool's profile
+flag setup --gateway=host gateway host (default: the control host)
+flag setup --identity=path private key of the local Nix daemon for the gateway
+flag setup -i=path short for --identity
+flag setup --host-key=key base64 public host key line of the gateway
+flag setup --system=system Nix system of the entry
+flag setup --jobs=count builds Nix runs at once on the entry
+flag setup --features=features comma-separated system features
 values job
 values count 50 200 1000
 values interval 1 2 5 10
@@ -75,8 +83,6 @@ flag up --no-niks3-token do not give the worker a niks3 push token
 flag exec --no-niks3-token do not give the worker a niks3 push token
 flag extend --no-niks3-token extend without renewing the niks3 token
 flag setup --force reissue the niks3 token of someone else's worker
-flag nix-cache --dry-run only show what would be pushed
-flag nix-cache -n short for --dry-run
 flag setup --no-cache leave out the S3 cache part
 flag setup --no-auth leave out the access-tokens
 flag setup --auth-host=host only the token of this host (repeatable)
@@ -148,10 +154,15 @@ flag tui -n=interval short for --interval
 values tui-view workers jobs profiles events logs
 values duration 30m 1h 2h 4h 8h 24h
 values flavor s1.large s1.xlarge s1.2xlarge
-values setup-topic nix niks3-token register-log-file netbird tailscale
+values setup-topic nix nix-cache nix-builder niks3-token register-log-file netbird tailscale
 values profile standard browser-daemon large-builder gh-aarch64 gh-x86_64 gl-x86_64 gl-x86_64-lease
 values size 100 150 250 500
 values path
+values pool
+values host
+values key
+values system x86_64-linux aarch64-linux
+values features nixos-test,benchmark,big-parallel,kvm -
 values format json wide
 values topic
 values topic-re
@@ -162,7 +173,7 @@ values agent-re claude codex agy opencode gemini copilot shell nixbot
 values user agent pschmitt nix-remote-builder
 values interval 2 5 10 30
 dynamic profile topic topic-re agent agent-re id id-re
-worker down extend topic claim ssh sync builder prune inspect nix-cache start jobs ps logs
+worker down extend topic claim ssh sync prune inspect start jobs ps logs
 global --json force JSON output
 global -j short for --json
 flag image --flake=installable build a Nix worker image

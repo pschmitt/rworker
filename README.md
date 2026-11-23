@@ -36,7 +36,9 @@ remote builds.
   both addresses and uses the one that answers.
 - **Background jobs**: `start`, `jobs`, `logs` (`-f` follows every worker,
   with lifecycle events) and `ps`, through a small job manager on the worker.
-- **Nix builders**: `builder` prints a `--builders` line; `setup nix` gets a
+- **Nix builders**: `setup nix-builder` prints a `--builders` line for a
+  worker, or for the on-demand gateway that leases one by profile,
+  architecture or pool (`--profile`, `--arch`, `--pool`); `setup nix` gets a
   worker ready over SSH only: it substitutes from this host's S3 cache and
   fetches private flake inputs with this host's access-tokens (`up` and
   `exec` do it by default; `--no-cache` / `--no-auth` leave one out).

@@ -1,10 +1,13 @@
-Usage: __ME__ setup TOPIC NAME [OPTIONS]
+Usage: __ME__ setup TOPIC [NAME] [OPTIONS]
 
 Get an ad-hoc worker ready for a kind of work, using this host's own
 settings. Everything is on by default; flags switch parts off.
 
 Topics:
   nix                configure the S3 cache and access tokens for private inputs
+  nix-cache          only the S3 cache part of nix (setup nix --no-auth)
+  nix-builder        print a Nix builders line for a worker, or without NAME
+                     for the on-demand builder gateway
   niks3-token        reissue the worker's short-lived cache push token
   register-log-file  make an existing log available as a job
   netbird            start or restart NetBird on an existing CI worker
@@ -58,8 +61,8 @@ are not reachable from OpenStack anyway.
                    tokens are never printed)
 
 up and exec do both by default, as far as this host has something to give
-(--no-nix-cache, --no-nix-auth to leave one out). `nix-cache NAME` is
-`setup nix --no-auth`.
+(--no-nix-cache, --no-nix-auth to leave one out). `setup nix-cache NAME`
+is `setup nix NAME --no-auth`.
 
 Use read-only credentials only: anyone with a shell on the worker (the agent
 user) can read what you push, tokens included. Run it again after rotating a
@@ -67,3 +70,31 @@ key or token. A worker whose image predates this (no /run/rworker-nix) gets
 nothing; the command says so and fails. For builds through --builders, also
 set builders-use-substitutes on this host, or this host fetches the inputs
 itself and copies them over instead of letting the worker substitute.
+
+  __ME__ setup nix-builder NAME [--json]
+  __ME__ setup nix-builder [--profile NAME | --arch ARCH | --pool NAME] [options]
+
+With NAME, print a Nix builders line for that worker, e.g.:
+  nix build --max-jobs 0 --builders "$(__ME__ setup nix-builder NAME)" .#pkg
+For hosted workers, use --json. The result includes ssh_config for the
+worker's pinned relay connection. Prepend it to the client's SSH config.
+
+Without NAME, print a line for the on-demand builder gateway: the first
+build leases a worker, later builds share it, and it goes away when idle.
+The selector picks the worker the gateway leases (sent as Nix's
+remote-program); without one the gateway uses its default profile:
+  --profile NAME   a worker of this profile (gh-aarch64 leases a GitHub runner)
+  --arch ARCH      a worker for this architecture (x86_64, aarch64); falls
+                   back to a GitHub runner when no profile matches
+  --pool NAME      a fresh ad-hoc worker from the profile this pool uses
+  --gateway HOST   gateway host (RWORKER_BUILDER_HOST, default: control host)
+  --identity, -i FILE
+                   private key of the local Nix daemon for the gateway
+                   (RWORKER_BUILDER_IDENTITY, default -: the daemon's own)
+  --host-key KEY   base64 public host key line (RWORKER_BUILDER_HOST_KEY,
+                   default: looked up in your known_hosts)
+  --system SYSTEM  system of the entry (default from the selector)
+  --jobs N         builds Nix runs at once on the entry
+  --features LIST  comma-separated system features, - for none
+
+  nix build --max-jobs 0 --builders "$(__ME__ setup nix-builder --arch aarch64)" .#pkg

@@ -227,6 +227,12 @@ _rworker() {
     then
       case "$setup_topic:$spec_flag" in
         niks3-token:--force|register-log-file:--log=path) ;;
+        nix-cache:--dry-run|nix-cache:-n) ;;
+        nix-builder:--profile=*|nix-builder:--arch=*|nix-builder:--pool=*) ;;
+        nix-builder:--gateway=*|nix-builder:--identity=*|nix-builder:-i=*) ;;
+        nix-builder:--host-key=*|nix-builder:--system=*|nix-builder:--jobs=*|nix-builder:--features=*) ;;
+        nix:--profile=*|nix:--arch=*|nix:--pool=*|nix:--gateway=*|nix:--identity=*|nix:-i=*) continue ;;
+        nix:--host-key=*|nix:--system=*|nix:--jobs=*|nix:--features=*) continue ;;
         nix:--force|nix:--log=path) continue ;;
         nix:*) ;;
         *) continue ;;

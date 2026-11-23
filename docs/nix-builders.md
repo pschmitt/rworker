@@ -93,9 +93,68 @@ provides. `mandatoryFeatures` can restrict this entry to derivations asking for
 particular features. The optional `nix.settings.builders-use-substitutes` setting
 allows the worker to fetch dependencies from its own substituters.
 
+## Choose the worker
+
+Nix sends the store's `remote-program` as the SSH command. The gateway reads a
+selector there, so one gateway serves several kinds of workers. Each selector
+gets its own lease and idle timer.
+
+| Selector | Leases |
+|---|---|
+| none (`nix-daemon`) | a worker of the gateway's default `profile` |
+| `profile:NAME` | a worker of that controller profile; `gh-aarch64` and `gh-x86_64` lease a GitHub runner |
+| `arch:ARCH` | the default profile if it matches, else the first profile with that `arch`, else a GitHub runner (`x86_64`, `aarch64`) |
+| `pool:NAME` | a fresh ad-hoc worker of the profile that pool uses (a profile named like the pool, else the profile of its current workers) |
+
+Put the selector in the machine URI:
+
+```text
+ssh-ng://rworker-builder@builder.example.com?remote-program=arch:aarch64 aarch64-linux /run/secrets/rworker-builder-key 1 1 - - <host-key>
+```
+
+`rworker setup nix-builder` without a worker name prints such a line. It reads the
+gateway's host name and pinned host key from your SSH configuration and
+`known_hosts`, unless `--gateway`, `--host-key` or the Home Manager options
+`programs.rworker.builderGateway.*` say otherwise:
+
+```sh
+nix build --max-jobs 0 --builders "$(rworker setup nix-builder --arch aarch64 -i /run/secrets/rworker-builder-key)" .#pkg
+```
+
+A GitHub runner lease ends after at most two hours. The gateway reaches it
+through the controller's local relay port and connects as `rworker-build` to
+the runner's isolated Nix store (`rworker-nix-daemon`). Build logs of hosted
+leases are not archived.
+
+With the NixOS client module, `selector` sets the main entry's selector and
+`extraMachines` adds more entries to the same gateway:
+
+```nix
+{
+  services.rworker.builderClient = {
+    enable = true;
+    hostName = "builder.example.com";
+    identityFile = "/run/secrets/rworker-builder-key";
+    publicHostKey = "<base64-encoded-gateway-public-host-key>";
+    extraMachines = [
+      {
+        selector = "arch:aarch64";
+        systems = [ "aarch64-linux" ];
+      }
+      {
+        selector = "profile:large-builder";
+        systems = [ "x86_64-linux" ];
+        supportedFeatures = [ "big-parallel" ];
+        mandatoryFeatures = [ "big-parallel" ];
+      }
+    ];
+  };
+}
+```
+
 ## Lease lifetime
 
-The gateway keeps one worker per controller. It serializes allocation and
+The gateway keeps one worker per selector. It serializes allocation and
 shares a ready worker across up to `maxConnections` live protocol sessions.
 The idle timer checks once a minute and deletes the worker after
 `idleSeconds` without a session. The normal controller lifetime and reaper

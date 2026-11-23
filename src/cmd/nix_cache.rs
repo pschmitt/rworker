@@ -381,7 +381,7 @@ pub fn push(ctx: &Ctx, name: &str, dry: bool, opts: &Opts) -> R<String> {
 
 /// `setup nix NAME [--no-cache] [--no-auth] [--auth-host HOST]... [--dry-run]`.
 /// `help_topic` is the help to show on a usage error; `defaults` the parts
-/// that are on before the flags are read (the `nix-cache` alias turns auth off).
+/// that are on before the flags are read (`setup nix-cache` turns auth off).
 pub fn cmd_setup_nix(ctx: &Ctx, args: &[String], help_topic: &str, defaults: Opts) -> R {
     let mut opts = defaults;
     let mut name = String::new();
@@ -467,12 +467,12 @@ pub fn cmd_setup_nix(ctx: &Ctx, args: &[String], help_topic: &str, defaults: Opt
     Ok(())
 }
 
-/// The old `nix-cache NAME [--dry-run]`: the cache part only.
+/// `setup nix-cache NAME [--dry-run]`: the cache part only.
 pub fn cmd_nix_cache(ctx: &Ctx, args: &[String]) -> R {
     cmd_setup_nix(
         ctx,
         args,
-        "nix-cache",
+        "setup",
         Opts {
             auth: false,
             ..Opts::default()

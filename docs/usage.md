@@ -202,7 +202,7 @@ working directory.
   asks first); `n` creates one, `X` prunes yours.
 - In a log, scrolling up pauses it and `G` follows again; `/` filters
   lines, `w` wraps them.
-- `:` runs any other action (`sync`, `cp`, `exec`, `setup`, `nix-cache`, ...) with
+- `:` runs any other action (`sync`, `cp`, `exec`, `setup`, ...) with
   its output in a view of its own; `?` lists all keys.
 
 The TUI runs this program again for every list, stream and action, so it
@@ -219,6 +219,6 @@ draws.
 | `RWORKER_AGENT_ID`, `CONCORD_AGENT_ID` | Agent id recorded on `up` and `claim` |
 | `RWORKER_ICONS=0`, `NO_NERD_FONTS` | No Nerd Font glyphs (creating agent, worker image); `ls --no-icons` for one call |
 | `RWORKER_PROBE_TIMEOUT` | Seconds to wait for each overlay address (default 4) |
-| `RWORKER_AWS_CREDENTIALS_FILE` | AWS credentials file `setup nix` (and `nix-cache`) reads its profiles from (else `AWS_SHARED_CREDENTIALS_FILE`, else `~/.aws/credentials`) |
+| `RWORKER_AWS_CREDENTIALS_FILE` | AWS credentials file `setup nix` (and `setup nix-cache`) reads its profiles from (else `AWS_SHARED_CREDENTIALS_FILE`, else `~/.aws/credentials`) |
 | `RWORKER_SSH_CONTROL_MASTER=0` | No shared SSH connection to the control host |
 | `NO_COLOR` | No colors, also not in help |
