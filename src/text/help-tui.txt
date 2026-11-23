@@ -18,4 +18,5 @@ select it, or scroll over a table or log pane.
 F1 opens help while editing a field.
 
   -n SECONDS, --interval SECONDS
-                 jobs refresh and inventory polling fallback interval (default 5)
+                 jobs refresh and inventory polling fallback interval (default 5);
+                 job lists also refresh at once on job events

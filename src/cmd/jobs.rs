@@ -60,14 +60,38 @@ fn capture_job_command(ctx: &Ctx, cmd: &mut Command) -> R<String> {
     Ok(out)
 }
 
+thread_local! {
+    // The SSH key for the jobs commands built now, instead of the log
+    // collector's (see `observed_jobs`).
+    static IDENTITY: std::cell::RefCell<Option<String>> = const { std::cell::RefCell::new(None) };
+}
+
+pub(super) fn identity_override() -> Option<String> {
+    IDENTITY.with(|identity| identity.borrow().clone())
+}
+
 /// Poll a bounded group of independent workers and retain request order.
 fn poll_jobs(ctx: &Ctx, requests: &[Vec<String>]) -> Vec<R<String>> {
+    let requests: Vec<_> = requests.iter().map(|args| (args.clone(), None)).collect();
+    poll_jobs_as(ctx, &requests)
+}
+
+/// Like `poll_jobs`, each request with its own SSH key when given.
+fn poll_jobs_as(ctx: &Ctx, requests: &[(Vec<String>, Option<String>)]) -> Vec<R<String>> {
     let quiet = ctx.quiet.get();
     requests
         .chunks(4)
         .flat_map(|batch| {
             // Prepare commands in order, including host-key and local state writes.
-            let commands: Vec<_> = batch.iter().map(|args| jobs_command(ctx, args)).collect();
+            let commands: Vec<_> = batch
+                .iter()
+                .map(|(args, identity)| {
+                    IDENTITY.with(|current| current.replace(identity.clone()));
+                    let command = jobs_command(ctx, args);
+                    IDENTITY.with(|current| current.replace(None));
+                    command
+                })
+                .collect();
             std::thread::scope(|scope| {
                 let tasks: Vec<_> = commands
                     .into_iter()
@@ -110,6 +134,8 @@ pub fn cmd_logs(ctx: &Ctx, args: &[String]) -> R {
     let mut redact = false;
     let mut redact_regex = None;
     let mut redact_args = Vec::new();
+    let mut filters = Vec::new();
+    let mut filter_args = Vec::new();
     let mut positional: Vec<String> = Vec::new();
     let mut opts: Vec<String> = Vec::new();
     let mut i = 0;
@@ -136,6 +162,15 @@ pub fn cmd_logs(ctx: &Ctx, args: &[String]) -> R {
                 redact_args.extend([i, i + 1]);
                 i += 2;
             }
+            "--filter" | "--grep" | "-g" => {
+                let Some(pattern) = args.get(i + 1).filter(|pattern| !pattern.is_empty()) else {
+                    ctx.err(&format!("{a} requires a nonempty regex"));
+                    return Err(Fail(2));
+                };
+                filters.push(pattern.clone());
+                filter_args.extend([i, i + 1]);
+                i += 2;
+            }
             "--cached" => i += 1,
             s if s.starts_with('-') => {
                 opts.push(a.clone());
@@ -146,6 +181,14 @@ pub fn cmd_logs(ctx: &Ctx, args: &[String]) -> R {
                 i += 1;
             }
         }
+    }
+    if !filters.is_empty() {
+        let rest: Vec<_> = args
+            .iter()
+            .enumerate()
+            .filter_map(|(index, value)| (!filter_args.contains(&index)).then_some(value))
+            .collect();
+        return super::log_cache::grep(ctx, &rest, &filters);
     }
     if redact {
         let unfiltered: Vec<_> = args
@@ -327,8 +370,15 @@ fn collector_reaches(user: &str, worker: &Value) -> bool {
 
 pub(super) fn observed_jobs(ctx: &Ctx, inventory: &Value) -> crate::event_history::Jobs {
     let mut names = ready(inventory);
-    // The collector polls every few seconds; logging in with a key a worker
-    // refuses makes sshd penalize the controller's address for everyone.
+    names.retain(|name| !name.is_empty());
+    names.sort_unstable();
+    names.dedup();
+    // The collector polls every few seconds. Its own key is only on its
+    // operator's ad-hoc workers, and logging in with a key a worker refuses
+    // makes sshd penalize the controller's address for everyone. Other
+    // workers (pools) are polled with RWORKER_POOL_IDENTITY, the console's
+    // key, when given, and skipped otherwise.
+    let mut identities: Vec<Option<String>> = vec![None; names.len()];
     if std::env::var_os("RWORKER_LOG_CACHE_IDENTITY").is_some() {
         let reachable: Vec<String> = jq::items(inventory)
             .unwrap_or_default()
@@ -336,15 +386,30 @@ pub(super) fn observed_jobs(ctx: &Ctx, inventory: &Value) -> crate::event_histor
             .filter(|worker| collector_reaches(&ctx.user, worker))
             .map(|worker| jq::raw(get(worker, "name")))
             .collect();
-        names.retain(|name| reachable.contains(name));
+        let pool = std::env::var("RWORKER_POOL_IDENTITY")
+            .ok()
+            .filter(|path| !path.is_empty());
+        let mut kept = Vec::new();
+        identities.clear();
+        for name in names {
+            if reachable.contains(&name) {
+                kept.push(name);
+                identities.push(None);
+            } else if let Some(pool) = &pool {
+                kept.push(name);
+                identities.push(Some(pool.clone()));
+            }
+        }
+        names = kept;
     }
-    names.retain(|name| !name.is_empty());
-    names.sort_unstable();
-    names.dedup();
-    let requests: Vec<_> = names.iter().map(|name| s(&["jobs", name])).collect();
+    let requests: Vec<_> = names
+        .iter()
+        .zip(identities)
+        .map(|(name, identity)| (s(&["jobs", name]), identity))
+        .collect();
     names
         .into_iter()
-        .zip(poll_jobs(ctx, &requests))
+        .zip(poll_jobs_as(ctx, &requests))
         .filter_map(|(worker, output)| {
             let states = output
                 .ok()?
@@ -520,6 +585,7 @@ pub fn cmd_jobs(ctx: &Ctx, args: &[String]) -> R {
 
 fn watch_jobs(ctx: &Ctx, worker: Option<&str>, seconds: u64, interactive: bool) -> R {
     crate::signals::trap();
+    let jobs_changed = super::events::job_signal();
     let mut screen = interactive.then(super::watch::Screen::enter);
     let mut last = JobSnapshot {
         rows: Vec::new(),
@@ -559,7 +625,7 @@ fn watch_jobs(ctx: &Ctx, worker: Option<&str>, seconds: u64, interactive: bool) 
                 last.tsv(worker.is_none());
             }
         }
-        if !super::watch::wait(seconds as f64) {
+        if !super::watch::wait_or(seconds as f64, &jobs_changed) {
             break;
         }
     }

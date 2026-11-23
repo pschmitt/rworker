@@ -1,4 +1,4 @@
-Usage: __ME__ logs [WORKER [JOB]] [--lines N] [--redact] [--redact-regex REGEX] [--follow] [--no-events] [--quiet] [--topic REGEX] [--agent REGEX] [--agent-id REGEX]
+Usage: __ME__ logs [WORKER [JOB]] [--lines N] [--redact] [--redact-regex REGEX] [-g|--filter|--grep REGEX]... [--follow] [--no-events] [--quiet] [--topic REGEX] [--agent REGEX] [--agent-id REGEX]
        __ME__ logs [-f] [--topic REGEX] [--agent REGEX] [--agent-id REGEX]  # follow jobs and events on all (or matching) workers
        __ME__ logs WORKER [JOB] --cached [--lines N] [--redact] [--redact-regex REGEX]
 
@@ -7,3 +7,8 @@ Use --cached to read only the archive.
 
 --redact masks common credential formats locally. --redact-regex also masks
 matches of an expression. Saved logs are kept verbatim.
+
+--filter REGEX (--grep, -g) shows only lines matching the case-insensitive
+expression and highlights the matches, keeping the lines' own colors such
+as the worker/job prefixes. Repeat it to show lines matching any of them;
+it works with --follow too, e.g. `__ME__ logs -f -g error -g warning`.

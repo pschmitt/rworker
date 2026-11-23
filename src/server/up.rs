@@ -195,28 +195,15 @@ pub(super) fn up(cfg: &Value, args: Args<'_>) -> Result<Value, String> {
             return Ok(None);
         };
         let mut compute = compute;
-        if let Some(id) = metadata.get("setup_key_id").and_then(Value::as_str) {
-            netbird.delete_key(id);
-        }
-        compute.set_metadata(
+        finish_boot(
+            cfg,
+            &mut compute,
+            &netbird,
             &id,
-            [("host_key".into(), json!(host_key))].into_iter().collect(),
+            &name,
+            &mut metadata,
+            &host_key,
         )?;
-        metadata.insert("host_key".into(), json!(host_key));
-        if let Err(error) = compute.delete_metadata(&id, &["setup_key_id"]) {
-            eprintln!("removing setup_key_id from {name}: {error}");
-        }
-        if let Some(key) = metadata.get("ts_key_id").and_then(Value::as_str) {
-            match super::tailscale::Tailscale::from_settings(&cfg["tailscale"]) {
-                Ok(mut ts) => {
-                    ts.delete_key(key);
-                    if let Err(error) = compute.delete_metadata(&id, &["ts_key_id"]) {
-                        eprintln!("releasing the Tailscale key of {name}: {error}");
-                    }
-                }
-                Err(error) => eprintln!("releasing the Tailscale key of {name}: {error}"),
-            }
-        }
         let mut response = json!({
             "name": name, "ip": ip, "ips": ips, "host_key": host_key, "user": "agent",
             "expires_at": expires, "flavor": flavor, "profile": profile,
@@ -251,6 +238,44 @@ pub(super) fn up(cfg: &Value, args: Args<'_>) -> Result<Value, String> {
 }
 
 pub(super) type Ready = (String, std::net::IpAddr, Map<String, Value>);
+
+/// Record a booted worker's host key and drop its one-time enrollment keys.
+/// `up` does this once the worker is ready; the reaper repeats it for a
+/// worker whose `up` was cut short (for example by a controller restart).
+pub(super) fn finish_boot(
+    cfg: &Value,
+    compute: &mut OpenStack,
+    netbird: &super::netbird::NetBird,
+    id: &str,
+    name: &str,
+    metadata: &mut Map<String, Value>,
+    host_key: &str,
+) -> Result<(), String> {
+    let id = id.to_owned();
+    if let Some(key) = metadata.get("setup_key_id").and_then(Value::as_str) {
+        netbird.delete_key(key);
+    }
+    compute.set_metadata(
+        &id,
+        [("host_key".into(), json!(host_key))].into_iter().collect(),
+    )?;
+    metadata.insert("host_key".into(), json!(host_key));
+    if let Err(error) = compute.delete_metadata(&id, &["setup_key_id"]) {
+        eprintln!("removing setup_key_id from {name}: {error}");
+    }
+    if let Some(key) = metadata.get("ts_key_id").and_then(Value::as_str) {
+        match super::tailscale::Tailscale::from_settings(&cfg["tailscale"]) {
+            Ok(mut ts) => {
+                ts.delete_key(key);
+                if let Err(error) = compute.delete_metadata(&id, &["ts_key_id"]) {
+                    eprintln!("releasing the Tailscale key of {name}: {error}");
+                }
+            }
+            Err(error) => eprintln!("releasing the Tailscale key of {name}: {error}"),
+        }
+    }
+    Ok(())
+}
 
 /// Lines a console may show that must not reach logs: tokens, keys and
 /// passwords from cloud-init or services. The worker's public host key

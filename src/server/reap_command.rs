@@ -63,6 +63,29 @@ pub(super) fn reap(cfg: &serde_json::Value, dry_run: bool) -> Result<(), String>
             last_active: number("last_active").unwrap_or_default(),
             token_expires_at: number("niks3_token_exp").unwrap_or_default(),
         };
+        // A worker whose `up` was cut short booted but never got its host
+        // key recorded: pin it from the boot console now instead of
+        // deleting the worker as unready later.
+        if !worker.host_key_present
+            && !dry_run
+            && now - worker.created_at.unwrap_or(now) > 120.0
+            && let Ok((_, super::up::Boot::Ready((host_key, _, _)))) =
+                super::up::boot_status(cfg, &compute, &id, name)
+        {
+            let mut recovered = metadata.clone();
+            super::up::finish_boot(
+                cfg,
+                &mut compute,
+                &netbird,
+                &id,
+                name,
+                &mut recovered,
+                &host_key,
+            )?;
+            super::inventory_cache::invalidate_current();
+            eprintln!("recovered the host key of {name}");
+            continue;
+        }
         let decision = policy.before_probe(&worker, now);
         if decision == BeforeProbe::Keep {
             continue;

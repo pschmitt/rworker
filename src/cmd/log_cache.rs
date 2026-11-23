@@ -657,6 +657,106 @@ pub(crate) fn redact_text(text: &str) -> String {
     String::from_utf8_lossy(&output).into_owned()
 }
 
+/// Matches of FILTER in LINE's visible text (ANSI codes ignored), or None.
+/// With COLOR, the matches are highlighted and the line keeps its own
+/// colors: after each match the line's earlier SGR codes are replayed.
+fn highlight(line: &[u8], filter: &regex::bytes::Regex, color: bool) -> Option<Vec<u8>> {
+    use regex::bytes::Regex;
+    use std::sync::LazyLock;
+    static ESCAPE: LazyLock<Regex> = LazyLock::new(|| {
+        Regex::new(r"(?-u:\x1b(?:\[[0-?]*[ -/]*[@-~]|\][^\x07\x1b]*(?:\x07|\x1b\\)|[^\[\]]))")
+            .unwrap()
+    });
+    let mut visible = Vec::with_capacity(line.len());
+    let mut raw_of = Vec::with_capacity(line.len());
+    let mut sgr = Vec::new();
+    let mut last = 0;
+    for escape in ESCAPE.find_iter(line) {
+        for (offset, byte) in line[last..escape.start()].iter().enumerate() {
+            visible.push(*byte);
+            raw_of.push(last + offset);
+        }
+        if escape.as_bytes().ends_with(b"m") {
+            sgr.push((escape.start(), escape.as_bytes()));
+        }
+        last = escape.end();
+    }
+    for (offset, byte) in line[last..].iter().enumerate() {
+        visible.push(*byte);
+        raw_of.push(last + offset);
+    }
+    let found: Vec<_> = filter
+        .find_iter(&visible)
+        .filter(|found| !found.is_empty())
+        .map(|found| (raw_of[found.start()], raw_of[found.end() - 1] + 1))
+        .collect();
+    if found.is_empty() {
+        return None;
+    }
+    if !color {
+        return Some(line.to_vec());
+    }
+    let mut output = Vec::with_capacity(line.len() + found.len() * 24);
+    let mut position = 0;
+    for (start, end) in found {
+        output.extend_from_slice(&line[position..start]);
+        output.extend_from_slice(b"\x1b[1;30;43m");
+        output.extend_from_slice(&line[start..end]);
+        output.extend_from_slice(b"\x1b[0m");
+        for (_, code) in sgr.iter().filter(|(at, _)| *at < end) {
+            output.extend_from_slice(code);
+        }
+        position = end;
+    }
+    output.extend_from_slice(&line[position..]);
+    Some(output)
+}
+
+/// `logs ... --filter REGEX...`: only lines matching any of the patterns,
+/// matches highlighted.
+pub(super) fn grep(ctx: &Ctx, args: &[&String], patterns: &[String]) -> R {
+    let filter = regex::bytes::RegexBuilder::new(
+        &patterns
+            .iter()
+            .map(|pattern| format!("(?:{pattern})"))
+            .collect::<Vec<_>>()
+            .join("|"),
+    )
+    .case_insensitive(true)
+    .build()
+    .map_err(|_| {
+        ctx.err("invalid --filter pattern");
+        Fail(2)
+    })?;
+    let exe = std::env::current_exe().map_err(|_| Fail(1))?;
+    let mut child = Command::new(exe)
+        .arg("logs")
+        .args(args)
+        .env("__RWORKER_COLOR", if ctx.color { "1" } else { "0" })
+        .stdout(Stdio::piped())
+        .spawn()
+        .map_err(|_| Fail(1))?;
+    let mut source = io::BufReader::new(child.stdout.take().ok_or(Fail(1))?);
+    let mut stdout = io::stdout().lock();
+    let result = (|| -> io::Result<()> {
+        let mut line = Vec::new();
+        while source.read_until(b'\n', &mut line)? != 0 {
+            if let Some(shown) = highlight(&line, &filter, ctx.color) {
+                stdout.write_all(&shown)?;
+                stdout.flush()?;
+            }
+            line.clear();
+        }
+        Ok(())
+    })();
+    if result.is_err() {
+        let _ = child.kill();
+    }
+    let status = child.wait().map_err(|_| Fail(1))?;
+    result.map_err(|_| Fail(1))?;
+    crate::ctx::status(status.code().unwrap_or(1))
+}
+
 pub(super) fn redact(ctx: &Ctx, args: &[&String], pattern: Option<&str>) -> R {
     let extra = pattern
         .map(regex::bytes::Regex::new)
@@ -849,6 +949,28 @@ mod tests {
             b"ok\nPASSWORD=[REDACTED]\nAuthorization: Bearer [REDACTED]\nhttps://user:[REDACTED]@host.invalid/path\n[REDACTED]\n[REDACTED]\n[REDACTED]\n[REDACTED]\n[REDACTED]"
         );
         Ok(())
+    }
+
+    #[test]
+    fn filter_matches_visible_text_and_keeps_line_colors() {
+        let filter = regex::bytes::RegexBuilder::new("(?:error)|(?:warn)")
+            .case_insensitive(true)
+            .build()
+            .unwrap();
+        let line = b"\x1b[1;31madhoc-1/job\x1b[0m ERROR: x warn y\n";
+        let shown = highlight(line, &filter, true).unwrap();
+        assert_eq!(
+            shown,
+            b"\x1b[1;31madhoc-1/job\x1b[0m \x1b[1;30;43mERROR\x1b[0m\x1b[1;31m\x1b[0m: x \x1b[1;30;43mwarn\x1b[0m\x1b[1;31m\x1b[0m y\n"
+        );
+        assert_eq!(highlight(line, &filter, false).unwrap(), line);
+        assert!(highlight(b"\x1b[1;32mbuild\x1b[0m ok\n", &filter, true).is_none());
+        // A match inside the colored prefix keeps the prefix color after it.
+        let prefix = regex::bytes::Regex::new("adhoc").unwrap();
+        assert_eq!(
+            highlight(b"\x1b[1;31madhoc-1/job\x1b[0m done", &prefix, true).unwrap(),
+            b"\x1b[1;31m\x1b[1;30;43madhoc\x1b[0m\x1b[1;31m-1/job\x1b[0m done"
+        );
     }
 
     #[test]

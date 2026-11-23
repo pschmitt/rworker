@@ -44,21 +44,28 @@ async fn events(
     if headers.contains_key(header::ORIGIN) {
         return StatusCode::FORBIDDEN.into_response();
     }
-    upgrade_inventory(dir, true, upgrade)
+    upgrade_inventory(dir, true, None, upgrade)
 }
 
+/// JOBS, when given, also sends "jobs" whenever registered jobs change.
 pub(super) fn upgrade_inventory(
     dir: PathBuf,
     send_snapshot: bool,
+    jobs: Option<tokio::sync::watch::Receiver<u64>>,
     upgrade: WebSocketUpgrade,
 ) -> Response {
     upgrade
         .max_message_size(125)
         .max_frame_size(125)
-        .on_upgrade(move |socket| stream_inventory(dir, send_snapshot, socket))
+        .on_upgrade(move |socket| stream_inventory(dir, send_snapshot, jobs, socket))
 }
 
-async fn stream_inventory(dir: PathBuf, send_snapshot: bool, mut socket: WebSocket) {
+async fn stream_inventory(
+    dir: PathBuf,
+    send_snapshot: bool,
+    mut jobs: Option<tokio::sync::watch::Receiver<u64>>,
+    mut socket: WebSocket,
+) {
     let mut source = inventory_cache::Events::new(dir);
     let mut ticks = tokio::time::interval(Duration::from_millis(250));
     let mut heartbeats = tokio::time::interval(Duration::from_secs(5));
@@ -79,6 +86,18 @@ async fn stream_inventory(dir: PathBuf, send_snapshot: bool, mut socket: WebSock
                 }
             }
             _ = heartbeats.tick() => "\n".into(),
+            changed = async {
+                match jobs.as_mut() {
+                    Some(jobs) => jobs.changed().await,
+                    None => std::future::pending().await,
+                }
+            } => {
+                if changed.is_err() {
+                    jobs = None;
+                    continue;
+                }
+                "jobs".into()
+            }
             message = socket.recv() => {
                 match message {
                     Some(Ok(Message::Ping(_) | Message::Pong(_))) => continue,

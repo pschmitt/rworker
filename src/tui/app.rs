@@ -271,6 +271,10 @@ pub struct App {
     pub(super) log_width: Option<u16>,
     pub(super) log_height: Option<u16>,
     pub preview: Option<(String, TextView)>,
+    /// The live preview's command and when to start it again after it ended
+    /// (for example while the worker has no IP yet).
+    preview_args: Vec<String>,
+    preview_retry: Option<Instant>,
     pub filter: String,
     pub mine_only: bool,
     pub refreshing: bool,
@@ -530,9 +534,11 @@ impl App {
             .map(|(worker, view)| (worker.as_str(), view.title.starts_with("cached logs")))
             == selected
         {
+            self.retry_preview();
             return;
         }
         let selected = selected.map(|(name, retired)| (name.to_owned(), retired));
+        self.preview_retry = None;
         self.preview = None;
         if let Some((worker, retired)) = selected {
             let args = if retired {
@@ -541,6 +547,7 @@ impl App {
                 s(&["logs", &worker, "--follow", "--quiet", "--lines", "100"])
             };
             let label = if retired { "cached logs" } else { "logs" };
+            self.preview_args = if retired { Vec::new() } else { args.clone() };
             let mut view = self.text_stream(format!("{label} · {worker}"), args);
             view.wrap = true;
             if !retired && std::env::var_os("RWORKER_LOG_CACHE_READ").is_some() {
@@ -556,6 +563,35 @@ impl App {
             if !retired {
                 self.refresh_preview_jobs();
             }
+        }
+    }
+
+    /// Start the live preview again when its stream ended, for example
+    /// because the worker had no IP yet: every few seconds, until it runs.
+    fn retry_preview(&mut self) {
+        let Some((worker, view)) = &mut self.preview else {
+            return;
+        };
+        if self.preview_args.is_empty() || view.stream.is_some() || view.exit.is_none() {
+            self.preview_retry = None;
+            return;
+        }
+        let due = *self
+            .preview_retry
+            .get_or_insert_with(|| Instant::now() + Duration::from_secs(5));
+        if Instant::now() < due {
+            return;
+        }
+        self.preview_retry = None;
+        if !view.has_live_output {
+            view.lines.clear();
+            view.lines
+                .push_back((format!("waiting for {worker}; retrying…"), false));
+        }
+        view.exit = None;
+        match Stream::spawn(view.id, &self.preview_args, &self.tx) {
+            Ok(stream) => view.stream = Some(stream),
+            Err(_) => view.exit = Some(None),
         }
     }
 
@@ -1713,6 +1749,8 @@ pub(super) fn run(ctx: &Ctx, interval: Duration, view: View) -> std::io::Result<
         log_width: None,
         log_height: None,
         preview: None,
+        preview_args: Vec::new(),
+        preview_retry: None,
         filter: String::new(),
         mine_only: false,
         refreshing: false,
@@ -1759,8 +1797,10 @@ pub(super) fn run(ctx: &Ctx, interval: Duration, view: View) -> std::io::Result<
     let result = (|| -> std::io::Result<()> {
         execute!(std::io::stdout(), EnableMouseCapture)?;
         let mut last_jobs_refresh = Instant::now();
+        let jobs_changed = crate::cmd::events::job_signal();
         loop {
-            if last_jobs_refresh.elapsed() >= interval {
+            if jobs_changed.swap(false, Ordering::SeqCst) || last_jobs_refresh.elapsed() >= interval
+            {
                 if matches!(app.stack.last(), Some(Sub::Jobs(_))) {
                     app.reload_jobs();
                 } else if app.stack.is_empty() {

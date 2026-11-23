@@ -159,7 +159,33 @@ async fn updates(
     if !same_origin(&headers) {
         return failure((StatusCode::FORBIDDEN, "Invalid WebSocket origin."));
     }
-    super::inventory_api::upgrade_inventory(dir, false, upgrade)
+    super::inventory_api::upgrade_inventory(dir, false, Some(jobs_signal()), upgrade)
+}
+
+/// A counter bumped on every job event the collector records (for all
+/// workers it can reach, pools included). Each console's update socket
+/// turns a bump into a "jobs" message.
+fn jobs_signal() -> tokio::sync::watch::Receiver<u64> {
+    static SIGNAL: std::sync::OnceLock<tokio::sync::watch::Sender<u64>> =
+        std::sync::OnceLock::new();
+    SIGNAL
+        .get_or_init(|| {
+            let (sender, _) = tokio::sync::watch::channel(0);
+            if let Some(dir) = crate::event_history::directory() {
+                let events = sender.clone();
+                std::thread::spawn(move || {
+                    let cursor = crate::event_history::latest_id(&dir).unwrap_or(0);
+                    let _ = crate::event_history::watch(&dir, cursor, |event| {
+                        if event.is_some_and(|event| event.kind.starts_with("job-")) {
+                            events.send_modify(|count| *count += 1);
+                        }
+                        Ok(())
+                    });
+                });
+            }
+            sender
+        })
+        .subscribe()
 }
 
 fn automation_auth(headers: &HeaderMap) -> Result<(), Failure> {
@@ -175,7 +201,7 @@ async fn automation_workers(
     upgrade: WebSocketUpgrade,
 ) -> Response {
     match automation_auth(&headers) {
-        Ok(()) => super::inventory_api::upgrade_inventory(dir, true, upgrade),
+        Ok(()) => super::inventory_api::upgrade_inventory(dir, true, None, upgrade),
         Err(error) => failure(error),
     }
 }

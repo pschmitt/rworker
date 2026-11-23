@@ -5,5 +5,6 @@ start time columns. Without a worker name, list jobs on reachable workers
 as worker, job, state and start time, separated by tabs. --json returns
 objects when listing all workers.
 
-Watch refreshes every 5 seconds by default. Press q to quit or another key
-to refresh immediately. --json --watch emits one JSON array per refresh.
+Watch refreshes as soon as the controller reports a job event, and at least
+every 5 seconds by default. Press q to quit or another key to refresh
+immediately. --json --watch emits one JSON array per refresh.

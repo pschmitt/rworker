@@ -35,6 +35,9 @@ flag ps --long show full process command lines
 flag logs --cached read a retained snapshot for WORKER [JOB]
 flag logs --redact mask common secrets in displayed logs
 flag logs --redact-regex=regex also mask matches of this expression
+flag logs --filter=regex only show lines matching this case-insensitive regex, highlighted (repeat for any of several)
+flag logs --grep=regex same as --filter
+flag logs -g=regex short for --filter
 flag logs --lines=count number of lines per job
 flag logs --follow follow all jobs on all workers
 flag logs -f short for --follow

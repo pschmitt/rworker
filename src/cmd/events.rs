@@ -104,6 +104,57 @@ pub fn collect_jobs(ctx: &Ctx) -> R {
     }
 }
 
+/// A flag set whenever a job starts, changes state or goes away, from a
+/// background thread that follows the controller's lifecycle events (and
+/// reconnects). Watched job lists refresh on it instead of only polling.
+pub fn job_signal() -> std::sync::Arc<std::sync::atomic::AtomicBool> {
+    use std::sync::atomic::{AtomicBool, Ordering};
+    let flag = std::sync::Arc::new(AtomicBool::new(false));
+    let set = std::sync::Arc::clone(&flag);
+    std::thread::spawn(move || {
+        let ctx = Ctx::from_env();
+        let mut cursor = None;
+        loop {
+            if cursor.is_none() {
+                cursor = crate::proc::capture_ok(
+                    &ctx,
+                    state::control_cmd(&ctx, &["lifecycle-events", "--latest-id"])
+                        .stdin(Stdio::null())
+                        .stderr(Stdio::null()),
+                )
+                .ok()
+                .and_then(|id| id.trim().parse::<u64>().ok());
+            }
+            if let Some(start) = cursor
+                && let Ok(mut child) =
+                    state::control_cmd(&ctx, &["lifecycle-events", "--watch", &start.to_string()])
+                        .stdin(Stdio::null())
+                        .stdout(Stdio::piped())
+                        .stderr(Stdio::null())
+                        .spawn()
+            {
+                if let Some(output) = child.stdout.take() {
+                    for line in BufReader::new(output).lines().map_while(Result::ok) {
+                        let Ok(event) = serde_json::from_str::<Event>(&line) else {
+                            continue;
+                        };
+                        if event.id > cursor.unwrap_or(0) {
+                            cursor = Some(event.id);
+                            if event.kind.starts_with("job-") {
+                                set.store(true, Ordering::SeqCst);
+                            }
+                        }
+                    }
+                }
+                let _ = child.kill();
+                let _ = child.wait();
+            }
+            std::thread::sleep(std::time::Duration::from_secs(5));
+        }
+    });
+    flag
+}
+
 pub fn run(ctx: &Ctx, args: &[String]) -> R {
     let mut interval = 2;
     let mut watch = false;

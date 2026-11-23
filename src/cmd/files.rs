@@ -93,7 +93,9 @@ fn ssh_command_with_options(ctx: &Ctx, args: &[String], extra: &[&str]) -> R<Com
         target_user(ctx, &t).map_err(|_| Fail(1))?
     };
     let mut opts = state::ssh_opts_with_relay(ctx, &t.name, local_relay);
-    if let Ok(identity) = std::env::var("RWORKER_LOG_CACHE_IDENTITY") {
+    if let Some(identity) = super::jobs::identity_override()
+        .or_else(|| std::env::var("RWORKER_LOG_CACHE_IDENTITY").ok())
+    {
         if opts.is_empty() {
             return Err(Fail(1));
         }

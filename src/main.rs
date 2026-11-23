@@ -719,17 +719,20 @@ mod tests {
             [
                 "--agent",
                 "--agent-id",
+                "--filter",
+                "--grep",
                 "--lines",
                 "--redact-regex",
-                "--topic"
+                "--topic",
+                "-g"
             ],
             "logs gained or lost a value flag: update the worker detection of both completion scripts"
         );
-        assert!(
-            ZSH_COMPLETION.contains("--lines|--topic|--agent|--agent-id|--redact-regex) skipval=1")
-        );
+        assert!(ZSH_COMPLETION.contains(
+            "--lines|--topic|--agent|--agent-id|--redact-regex|--filter|--grep|-g) skipval=1"
+        ));
         assert!(BASH_COMPLETION.contains(
-            r#"[[ "$w" == --lines || "$w" == --topic || "$w" == --agent || "$w" == --agent-id || "$w" == --redact-regex ]]"#
+            r#"[[ "$w" == --lines || "$w" == --topic || "$w" == --agent || "$w" == --agent-id || "$w" == --redact-regex || "$w" == --filter || "$w" == --grep || "$w" == -g ]]"#
         ));
     }
 

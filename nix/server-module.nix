@@ -877,6 +877,11 @@ in
             // logReaderEnvironment
             // {
               XDG_STATE_HOME = "/var/lib/rworker-job-events";
+            }
+            # The console's key reaches pool workers, whose jobs the
+            # collector's own key may not see.
+            // lib.optionalAttrs webWorkerAccess {
+              RWORKER_POOL_IDENTITY = cfg.web.identityFile;
             };
           serviceConfig = {
             User = cfg.logCache.operator;

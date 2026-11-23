@@ -158,8 +158,22 @@ fn clip(line: &str, width: usize) -> String {
     row
 }
 
-pub(super) fn wait(secs: f64) -> bool {
-    wait_refresh(secs).is_some()
+/// Like `wait`, but also returns (true) as soon as CHANGED is set, which
+/// it clears.
+pub(super) fn wait_or(secs: f64, changed: &std::sync::atomic::AtomicBool) -> bool {
+    use std::sync::atomic::Ordering;
+    let start = std::time::Instant::now();
+    loop {
+        let left = secs - start.elapsed().as_secs_f64();
+        if left <= 0.0 || changed.swap(false, Ordering::SeqCst) {
+            return true;
+        }
+        match wait_refresh(left.min(0.5)) {
+            None => return false,
+            Some(true) => return true,
+            Some(false) => {}
+        }
+    }
 }
 
 pub(super) fn wait_refresh(secs: f64) -> Option<bool> {

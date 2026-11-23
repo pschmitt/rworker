@@ -211,7 +211,7 @@ _rworker() {
         continue
       fi
       case "$w" in
-        --lines|--topic|--agent|--agent-id|--redact-regex) skipval=1 ;;
+        --lines|--topic|--agent|--agent-id|--redact-regex|--filter|--grep|-g) skipval=1 ;;
         -*) ;;
         *) _rworker_job_worker="$w"; break ;;
       esac
