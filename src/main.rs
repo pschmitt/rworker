@@ -30,7 +30,6 @@ pub const ACTIONS: &[&str] = &[
     "ps",
     "logs",
     "events",
-    "register",
     "up",
     "image",
     "profiles",
@@ -42,7 +41,6 @@ pub const ACTIONS: &[&str] = &[
     "extend",
     "topic",
     "claim",
-    "niks3-token",
     "ssh",
     "sync",
     "builder",
@@ -744,6 +742,15 @@ mod tests {
         let mut helped: Vec<String> = help::HELP.iter().map(|(a, _)| a.to_string()).collect();
         helped.sort();
         assert_eq!(spec, helped, "spec actions and action_help differ");
+        assert_eq!(
+            spec_lines("values")
+                .iter()
+                .find_map(|line| line.strip_prefix("setup-topic "))
+                .unwrap()
+                .split_whitespace()
+                .collect::<Vec<_>>(),
+            cmd::setup::TOPICS,
+        );
 
         let ctx = Ctx::from_env();
         for line in spec_lines("flag") {

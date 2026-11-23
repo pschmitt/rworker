@@ -9,7 +9,12 @@ pub fn flags(action: &str) -> impl Iterator<Item = (&str, bool)> {
     SPEC.lines().filter_map(move |line| {
         let (owner, rest) = line.strip_prefix("flag ")?.split_once(' ')?;
         let flag = rest.split_whitespace().next()?;
-        (owner == action).then(|| {
+        let legacy = owner == "setup"
+            && matches!(
+                (action, flag),
+                ("register", "--log=path") | ("niks3-token", "--force")
+            );
+        (owner == action || legacy).then(|| {
             flag.split_once('=')
                 .map_or((flag, false), |(name, _)| (name, true))
         })
@@ -24,7 +29,6 @@ pub const HELP: &[(&str, &str)] = &[
     ("ps", include_str!("text/help-ps.txt")),
     ("logs", include_str!("text/help-logs.txt")),
     ("events", include_str!("text/help-events.txt")),
-    ("register", include_str!("text/help-register.txt")),
     ("profiles", include_str!("text/help-profiles.txt")),
     ("server", include_str!("text/help-server.txt")),
     ("up", include_str!("text/help-up.txt")),
@@ -36,7 +40,6 @@ pub const HELP: &[(&str, &str)] = &[
     ("extend", include_str!("text/help-extend.txt")),
     ("topic", include_str!("text/help-topic.txt")),
     ("claim", include_str!("text/help-claim.txt")),
-    ("niks3-token", include_str!("text/help-niks3-token.txt")),
     ("ssh", include_str!("text/help-ssh.txt")),
     ("inspect", include_str!("text/help-inspect.txt")),
     ("sync", include_str!("text/help-sync.txt")),
@@ -55,6 +58,11 @@ pub fn usage(ctx: &Ctx) -> String {
 /// The help of one action; the usage for anything else.
 pub fn action_help(ctx: &Ctx, action: &str) -> String {
     let action = crate::resolve_action(action).unwrap_or(action);
+    let action = if matches!(action, "niks3-token" | "register") {
+        "setup"
+    } else {
+        action
+    };
     match HELP.iter().find(|(a, _)| *a == action) {
         Some((_, text)) => text.replace("__ME__", &ctx.me),
         None => usage(ctx),

@@ -4,7 +4,24 @@ Get an ad-hoc worker ready for a kind of work, using this host's own
 settings. Everything is on by default; flags switch parts off.
 
 Topics:
-  nix    the Nix side: the S3 cache and the access-tokens (see below)
+  nix                configure the S3 cache and access tokens for private inputs
+  niks3-token        reissue the worker's short-lived cache push token
+  register-log-file  make an existing log available as a job
+
+  __ME__ setup register-log-file WORKER JOB --log PATH
+
+Use an absolute path to an existing file on the worker. View it with
+`logs WORKER JOB`. Registration leaves the process that writes the log alone.
+
+  __ME__ setup niks3-token NAME [--force]
+
+The controller installs a fresh token in /run/rworker-niks3 on the worker
+for the rest of its lifetime. The worker can use `niks3 push /nix/store/...`
+and write `rworker-*` pins. Use this after opting out or to retry a failed
+install. `up` issues the token by default, and `extend` renews it.
+Workers whose images lack /run/rworker-niks3 are skipped.
+
+  --force          reissue the niks3 token of someone else's worker
 
   __ME__ setup nix NAME [--no-cache] [--no-auth] [--auth-host HOST]... [--dry-run]
 

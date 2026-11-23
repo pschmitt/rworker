@@ -1,1 +1,0 @@
-Usage: __ME__ register WORKER JOB --log PATH

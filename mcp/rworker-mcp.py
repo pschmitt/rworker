@@ -175,12 +175,16 @@ def topic(name: str, text: str) -> dict:
 
 
 @mcp.tool()
-def niks3_token(name: str) -> dict:
+def setup_niks3_token(name: str, force: bool = False) -> dict:
     """(Re)issue a worker's short-lived niks3 push token for the rest of its
     lifetime: for a worker created with niks3_token=False, or to retry a
     failed install. The `niks3` command on the worker then pushes to the
-    cache (`niks3 push PATH`, pins limited to rworker-*)."""
-    return json.loads(run("niks3-token", name, "--json", timeout=180))
+    cache (`niks3 push PATH`, pins limited to rworker-*). Set force to
+    reissue a token for someone else's worker."""
+    argv = ["setup", "niks3-token", name, "--json"]
+    if force:
+        argv.append("--force")
+    return json.loads(run(*argv, timeout=180))
 
 
 @mcp.tool()
@@ -303,9 +307,9 @@ def events(topic: str | None = None, agent: str | None = None,
 
 
 @mcp.tool()
-def register(name: str, job: str, log_path: str) -> str:
+def setup_register_log_file(name: str, job: str, log_path: str) -> str:
     """Register an existing absolute log-file path on a worker."""
-    run("register", name, job, "--log", log_path, timeout=60)
+    run("setup", "register-log-file", name, job, "--log", log_path, timeout=60)
     return job
 
 

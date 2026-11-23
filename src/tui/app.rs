@@ -1237,7 +1237,7 @@ impl App {
             KeyCode::Char('K') => {
                 if let Some(w) = need(self) {
                     self.act(
-                        vec!["niks3-token".into(), w.clone()],
+                        vec!["setup".into(), "niks3-token".into(), w.clone()],
                         format!("niks3 token for {w}"),
                     );
                 }

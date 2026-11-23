@@ -49,7 +49,21 @@ _rworker() {
   then
     mapfile -t COMPREPLY < <(compgen -d -- "$cur")
     return
+  elif [[ "$action" == setup && $COMP_CWORD -eq 2 ]]
+  then
+    words=$(sed -n 's/^values setup-topic //p' <<< "$spec")
+  elif [[ "$action" == setup && $COMP_CWORD -eq 3 && "$cur" != -* ]]
+  then
+    words=$(_rworker_workers)
   else
+    if [[ "$action" == setup ]]
+    then
+      case "${COMP_WORDS[2]}" in
+        niks3-token) spec=$(sed '/^flag setup /{ /^flag setup --force /!d; }' <<< "$spec") ;;
+        register-log-file) spec=$(sed '/^flag setup /{ /^flag setup --log=/!d; }' <<< "$spec") ;;
+        *) spec=$(sed '/^flag setup --force /d; /^flag setup --log=/d' <<< "$spec") ;;
+      esac
+    fi
     # ssh --create takes up's flags.
     if [[ "$action" == ssh && "${COMP_WORDS[2]:-}" == --create ]]
     then

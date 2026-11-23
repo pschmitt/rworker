@@ -19,8 +19,6 @@ Actions:
                        count status line (every 5 min, once when none) by default
   events [-w|--watch] [--topic REGEX] [--agent REGEX]
                        list and follow worker and job lifecycle events
-  register NAME JOB --log PATH
-                       register an existing log file
   profiles [NAME] [-o wide]
                        list worker profiles and optionally their image details
   up [--ttl 2h] [--flavor s1.xlarge] [--disk 150] [--topic TEXT]
@@ -39,7 +37,6 @@ Actions:
                        delete several ad-hoc workers (default: your own)
   extend NAME --ttl D  move the expiry to now + D (max 24h)
   topic NAME TEXT...   change what the worker is for (shown by ls)
-  niks3-token NAME     (re)issue the worker's niks3 push token
   ssh [-l USER | USER@]NAME [SSH_ARGS...]
                        ssh to the worker (pinned host key); options such as
                        -L/-A and a command go straight to ssh
@@ -53,6 +50,10 @@ Actions:
   setup nix NAME [--no-cache] [--no-auth] [--auth-host HOST] [--dry-run]
                        get the worker ready to use this host's Nix: the S3
                        cache and the access-tokens for private inputs
+  setup niks3-token NAME [--force]
+                       reissue a worker's short-lived niks3 push token
+  setup register-log-file NAME JOB --log PATH
+                       make an existing worker log available as a job
   nix-cache NAME [--dry-run]
                        the cache part of setup nix
   completions zsh|bash print the shell completion script

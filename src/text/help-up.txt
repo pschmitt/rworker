@@ -23,7 +23,7 @@ print it as JSON (name, ip, host_key, user, expires_at, builder).
   --no-niks3-token do not give the worker a niks3 push token. By default it
                    gets its own, valid as long as the worker is (renewed by
                    extend); the `niks3` command on the worker uses it
-                   (see: __ME__ help niks3-token). The browser-daemon profile
+                   (see: __ME__ help setup). The browser-daemon profile
                    has none.
   --ssh            log in (as agent) as soon as it is ready
   -l USER          with --ssh: log in as USER (pschmitt, nix-remote-builder)

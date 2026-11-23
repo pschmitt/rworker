@@ -4,6 +4,8 @@
 
 The Rust client and controller replace the original Bash client.
 
+- Move manual niks3 token reissue and existing log registration under `setup`, with matching MCP tools.
+
 - Use rworker's icon colors in Zsh completion menus.
 
 - Show profile, worker, and agent icons in Zsh completion menus while preserving the inserted values.

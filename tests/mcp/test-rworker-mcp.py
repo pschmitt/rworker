@@ -49,8 +49,10 @@ class WorkerMcpTest(unittest.TestCase):
             self.assertNotIn("--no-niks3-token", run.call_args.args)
             module.extend("w", "2h", niks3_token=False)
             self.assertIn("--no-niks3-token", run.call_args.args)
-            module.niks3_token("w")
-            self.assertEqual(run.call_args.args[:2], ("niks3-token", "w"))
+            module.setup_niks3_token("w")
+            run.assert_called_with("setup", "niks3-token", "w", "--json", timeout=180)
+            module.setup_niks3_token("w", force=True)
+            run.assert_called_with("setup", "niks3-token", "w", "--json", "--force", timeout=180)
             module.topic("w", "rbw release build")
             self.assertEqual(
                 run.call_args.args[:4], ("topic", "w", "rbw release build", "--json"))
@@ -87,6 +89,13 @@ class WorkerMcpTest(unittest.TestCase):
             )
             with self.assertRaises(ValueError):
                 self.module.logs(cached=True)
+
+    def test_setup_register_log_file(self):
+        with patch.object(self.module, "run", return_value="") as run:
+            self.assertEqual(self.module.setup_register_log_file("worker", "job", "/tmp/build.log"), "job")
+            run.assert_called_once_with(
+                "setup", "register-log-file", "worker", "job", "--log", "/tmp/build.log", timeout=60,
+            )
 
     def test_retained_events_filter_and_limit(self):
         with patch.object(self.module, "run", return_value='[{"id":1},{"id":2}]') as run:

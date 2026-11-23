@@ -128,6 +128,23 @@ _rworker() {
     (( CURRENT == 3 )) && _describe -t actions 'action' actions
     return
   fi
+  local setup_topic
+  if [[ "$action" == setup ]]
+  then
+    local -a topics
+    topics=(${=${${(M)_rworker_spec_cache:#values setup-topic *}#values setup-topic }})
+    if (( CURRENT == 3 )) && [[ "$PREFIX" != -* ]]
+    then
+      _describe -t values 'setup topic' topics
+      return
+    fi
+    setup_topic="${words[3]}"
+    if (( CURRENT == 4 )) && [[ "$PREFIX" != -* ]]
+    then
+      _rworker_workers
+      return
+    fi
+  fi
 
   # ssh -l USER NAME: the user, then the worker.
   if [[ "$action" == ssh && "${words[3]}" == -l ]]
@@ -206,6 +223,15 @@ _rworker() {
     [[ "$line" == "flag $action "* ]] || continue
     line="${line#flag $action }"
     spec_flag="${line%% *}"
+    if [[ "$action" == setup ]]
+    then
+      case "$setup_topic:$spec_flag" in
+        niks3-token:--force|register-log-file:--log=path) ;;
+        nix:--force|nix:--log=path) continue ;;
+        nix:*) ;;
+        *) continue ;;
+      esac
+    fi
     desc="${line#* }"
     desc="${desc//\\/\\\\}"
     desc="${desc//\[/\\[}"
@@ -240,6 +266,15 @@ _rworker() {
   # left in, they are positional arguments it has no spec for, and it
   # completes nothing (`rworker extend NAME --tt<TAB>`).
   local skip=2
+  if [[ "$action" == setup ]] && (( CURRENT > 3 ))
+  then
+    skip=3
+    [[ "${words[4]:-}" != -* ]] && (( CURRENT > 4 )) && skip=4
+    if [[ "$setup_topic" == register-log-file ]] && (( skip == 4 ))
+    then
+      flags+=('1:job:')
+    fi
+  fi
   if (( ${takes_worker[(Ie)$action]} )) && [[ "$action" != prune ]]
   then
     if [[ "$action" == logs ]]

@@ -3,7 +3,6 @@ action jobs list registered jobs
 action ps show processes of running jobs
 action logs show job logs on one or all workers
 action events list retained worker and job lifecycle events
-action register register an existing log file
 action up create a worker and wait until it is ready
 action image build or upload worker disk images
 action profiles list available worker profiles
@@ -20,12 +19,11 @@ action prune delete several ad-hoc workers (default: your own)
 action extend move the expiry of an ad-hoc worker
 action topic change what an ad-hoc worker is for
 action claim take over an ad-hoc worker: new agent, agent id and topic
-action niks3-token (re)issue a worker's short-lived niks3 push token
 action ssh ssh to a worker (pinned host key)
 action sync rsync a directory to a worker
 action builder print a Nix builders line for a worker
 action nix-cache let a worker substitute from this host's S3 cache
-action setup get a worker ready (topic nix: S3 cache and access-tokens)
+action setup configure Nix access, reissue a niks3 token or register a log file
 action cp copy files from or to a worker (NAME:PATH)
 action inspect show everything known about a worker
 action completions print the zsh or bash completion script
@@ -51,7 +49,7 @@ flag events --since-now skip retained history while watching
 flag events --interval=interval reconnect delay in seconds
 flag events --topic=topic-re limit to workers whose topic matches this regex (prefix with ! to invert)
 flag events --agent=agent-re limit to workers whose creating agent matches this regex (prefix with ! to invert)
-flag register --log=path absolute path to an existing log file
+flag setup --log=path absolute path to an existing log file on the worker
 values job
 values count 50 200 1000
 values interval 1 2 5 10
@@ -72,7 +70,7 @@ flag exec --no-nix-cache keep the S3 cache credentials off the worker
 flag up --no-niks3-token do not give the worker a niks3 push token
 flag exec --no-niks3-token do not give the worker a niks3 push token
 flag extend --no-niks3-token extend without renewing the niks3 token
-flag niks3-token --force reissue the token of someone else's worker
+flag setup --force reissue the niks3 token of someone else's worker
 flag nix-cache --dry-run only show what would be pushed
 flag nix-cache -n short for --dry-run
 flag setup --no-cache leave out the S3 cache part
@@ -138,6 +136,7 @@ flag tui -n=interval short for --interval
 values tui-view workers jobs profiles events logs
 values duration 30m 1h 2h 4h 8h 24h
 values flavor s1.large s1.xlarge s1.2xlarge
+values setup-topic nix niks3-token register-log-file
 values profile standard browser-daemon large-builder gh-aarch64 gh-x86_64 gl-x86_64 gl-x86_64-lease
 values size 100 150 250 500
 values path
@@ -151,7 +150,7 @@ values agent-re claude codex agy opencode gemini copilot shell nixbot
 values user agent pschmitt nix-remote-builder
 values interval 2 5 10 30
 dynamic profile topic topic-re agent agent-re id id-re
-worker down extend topic claim niks3-token ssh sync builder prune inspect nix-cache start jobs ps logs register
+worker down extend topic claim ssh sync builder prune inspect nix-cache start jobs ps logs
 global --json force JSON output
 global -j short for --json
 flag image --flake=installable build a Nix worker image

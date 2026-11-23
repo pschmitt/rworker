@@ -1,11 +1,10 @@
 //! `setup TOPIC NAME [OPTIONS]`: get a worker ready for a kind of work with
-//! this host's settings. Topics so far: `nix`. More (gradle, ssh, ...) plug
-//! in here.
+//! this host's settings or issue a worker-specific credential.
 
 use crate::ctx::{Ctx, Fail, R};
 
 /// The topics `setup` knows, for the help and the completion.
-pub const TOPICS: &[&str] = &["nix"];
+pub const TOPICS: &[&str] = &["nix", "niks3-token", "register-log-file"];
 
 pub fn cmd_setup(ctx: &Ctx, args: &[String]) -> R {
     let Some(topic) = args
@@ -17,6 +16,12 @@ pub fn cmd_setup(ctx: &Ctx, args: &[String]) -> R {
     };
     match topic.as_str() {
         "nix" => super::nix_cache::cmd_setup_nix(ctx, &args[1..], "setup", Default::default()),
+        "niks3-token" => super::simple::cmd_niks3_token(ctx, &args[1..]),
+        "register-log-file" => {
+            let mut remote = vec!["register".to_string()];
+            remote.extend_from_slice(&args[1..]);
+            super::jobs::jobs_remote(ctx, &remote)
+        }
         other => {
             ctx.err(&format!(
                 "Unknown setup topic: {other} (known: {})",

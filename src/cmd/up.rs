@@ -169,7 +169,7 @@ pub fn warn_niks3_token(ctx: &Ctx, name: &str, info: &Value) {
         ));
     } else {
         ctx.err(&format!(
-            "{} could not give {} a niks3 token (the worker is fine): {err}; retry: {} niks3-token {name}",
+            "{} could not give {} a niks3 token (the worker is fine): {err}; retry: {} setup niks3-token {name}",
             paint::warn_mark(ctx),
             paint::vm(ctx, name),
             ctx.me

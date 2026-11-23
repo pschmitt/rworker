@@ -140,6 +140,10 @@ cached results for ordinary finite log reads and seed the TUI log preview.
 Finite reads fall back to the worker on a cache miss. Following logs uses
 the live worker connection.
 
+To expose an existing worker log as a job, use
+`rworker setup register-log-file WORKER JOB --log /absolute/path` and read it
+with `rworker logs WORKER JOB`.
+
 Each `rworker exec` run registers an implicit job called `exec`. Its
 combined output is available to `rworker logs -f` while the worker is live.
 The caller still receives stdout, stderr and the command's exit status.
