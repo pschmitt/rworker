@@ -8,11 +8,29 @@ _rworker_spec() {
   (( ${+_rworker_spec_cache} )) || _rworker_spec_cache=("${(@f)$(rworker __spec 2>/dev/null)}")
 }
 
+_rworker_icon_colors() {
+  [[ -z "${NO_COLOR:-}" && "$TERM" != dumb ]] || return 0
+  zmodload -i zsh/complist || return 0
+  # complist counts the printed UTF-8 bytes when applying a captured color.
+  # Extend each three-byte glyph capture by two characters, and each
+  # four-byte glyph capture by three, to color just the glyph.
+  _comp_colors=(
+    '=(#b)( ?)*=0=38;2;0;0;0'
+    '=(#b)( ?)*=0=38;2;226;67;41'
+    '=(#b)( ?)*=0=38;2;218;26;50'
+    '=(#b)( ?)*=0=38;2;217;119;87'
+    '=(#b)( ?)*=0=38;2;200;200;200'
+    '=(#b)( ?)*=0=38;2;126;186;228'
+    '=(#b)([󱁤󰒋󰒉󰚩󰔈] ??)*=0=36'
+    "${_comp_colors[@]}"
+  )
+}
+
 _rworker_rows() {
   local tag="$1" heading="$2" line value rest description icon label expl
   shift 2
   local -a _rw_matches _rw_labels
-  local verbose=0
+  local verbose=0 has_icons=0
   zstyle -T ":completion:${curcontext}:$tag" verbose && verbose=1
   for line in "$@"
   do
@@ -23,7 +41,11 @@ _rworker_rows() {
     icon=""
     [[ "$rest" == *$'\t'* ]] && icon="${rest#*$'\t'}"
     label="$value"
-    [[ -n "$icon" ]] && label="$icon $label"
+    if [[ -n "$icon" ]]
+    then
+      label="$icon $label"
+      has_icons=1
+    fi
     if (( verbose )) && [[ -n "$description" ]]
     then
       label+=" -- $description"
@@ -31,6 +53,7 @@ _rworker_rows() {
     _rw_matches+=("$value")
     _rw_labels+=("$label")
   done
+  (( has_icons )) && _rworker_icon_colors
   if [[ "$tag" == workers && "$_rworker_action" == cp ]]
   then
     _all_labels workers expl worker compadd -S : -o match -d _rw_labels -a _rw_matches
