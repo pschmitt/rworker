@@ -140,7 +140,7 @@ async fn automation_workers(
 }
 
 async fn automation_action(headers: HeaderMap, body: Bytes) -> Response {
-    let result = async {
+    let result: Result<Value, RunFailure> = async {
         automation_auth(&headers)?;
         let requested: Action = serde_json::from_slice(&body).map_err(|_| BAD_REQUEST)?;
         let (args, seconds) = requested.command()?;
@@ -150,7 +150,7 @@ async fn automation_action(headers: HeaderMap, body: Bytes) -> Response {
     .await;
     match result {
         Ok(output) => reply(StatusCode::OK, output),
-        Err(error) => failure(error),
+        Err(error) => run_failure(error),
     }
 }
 
@@ -273,7 +273,42 @@ fn words(args: &[&str]) -> Vec<String> {
     args.iter().map(|arg| (*arg).to_owned()).collect()
 }
 
-async fn run(args: Vec<String>, seconds: u16) -> Result<String, Failure> {
+/// A failed controller command, with what it reported on stderr.
+#[derive(Debug)]
+pub(super) struct RunFailure(StatusCode, String);
+
+impl From<Failure> for RunFailure {
+    fn from((status, message): Failure) -> Self {
+        Self(status, message.to_owned())
+    }
+}
+
+fn run_failure(RunFailure(status, message): RunFailure) -> Response {
+    reply(status, json!({"error": message}))
+}
+
+/// The last lines a failed command wrote to stderr, secrets masked and
+/// short enough for a console message.
+fn command_detail(stderr: &[u8]) -> String {
+    let text = crate::cmd::log_cache::redact_text(&String::from_utf8_lossy(stderr));
+    let lines: Vec<&str> = text
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+        .collect();
+    let mut detail = lines[lines.len().saturating_sub(3)..].join(" · ");
+    if detail.len() > 400 {
+        let mut end = 400;
+        while !detail.is_char_boundary(end) {
+            end -= 1;
+        }
+        detail.truncate(end);
+        detail.push('…');
+    }
+    detail
+}
+
+async fn run(args: Vec<String>, seconds: u16) -> Result<String, RunFailure> {
     let permit = REQUESTS.try_acquire().map_err(|_| {
         (
             StatusCode::SERVICE_UNAVAILABLE,
@@ -296,9 +331,18 @@ async fn run(args: Vec<String>, seconds: u16) -> Result<String, Failure> {
             .env_remove("SSH_CONNECTION")
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
-            .stderr(Stdio::null())
+            .stderr(Stdio::piped())
             .spawn()
             .map_err(|_| command_error)?;
+        let stderr = child.stderr.take().ok_or(command_error)?;
+        let errors = std::thread::spawn(move || {
+            let mut collected = Vec::new();
+            let mut limited = stderr.take(64 * 1024);
+            let _ = limited.read_to_end(&mut collected);
+            // Keep draining so a chatty command never blocks on a full pipe.
+            let _ = std::io::copy(&mut limited.into_inner(), &mut std::io::sink());
+            collected
+        });
         let mut output = Vec::new();
         let result = child
             .stdout
@@ -307,39 +351,52 @@ async fn run(args: Vec<String>, seconds: u16) -> Result<String, Failure> {
             .take(MAX_OUTPUT + 1)
             .read_to_end(&mut output);
         let status = child.wait().map_err(|_| command_error)?;
+        let stderr = errors.join().unwrap_or_default();
         if output.len() as u64 > MAX_OUTPUT {
-            return Err((
+            return Err(RunFailure::from((
                 StatusCode::PAYLOAD_TOO_LARGE,
                 "Output exceeds the console limit.",
-            ));
+            )));
         }
         if result.is_err() || !status.success() {
-            return Err(command_error);
+            let detail = command_detail(&stderr);
+            let message = match status.code() {
+                Some(124 | 137) => format!("The controller did not answer within {seconds} s."),
+                _ if !detail.is_empty() => detail,
+                Some(255) => "Could not reach the worker over SSH.".to_owned(),
+                Some(code) => format!("The controller did not complete the request (exit {code})."),
+                None => command_error.1.to_owned(),
+            };
+            return Err(RunFailure(StatusCode::BAD_GATEWAY, message));
         }
         Ok(String::from_utf8_lossy(&output).into_owned())
     })
     .await
-    .map_err(|_| command_error)?
+    .map_err(|_| RunFailure::from(command_error))?
 }
 
 async fn read(headers: HeaderMap, command: Result<(Vec<String>, bool), Failure>) -> Response {
-    let result = async {
+    let result: Result<Value, RunFailure> = async {
         authorized(&headers)?;
         let (args, structured) = command?;
         let processes = args.first().is_some_and(|arg| arg == "ps");
         let output = run(args, 20).await.map_err(|error| {
             if processes && error.0 == StatusCode::BAD_GATEWAY {
-                (
+                RunFailure(
                     error.0,
-                    "Could not read job processes over SSH from the controller.",
+                    format!(
+                        "Could not read job processes over SSH from the controller: {}",
+                        error.1
+                    ),
                 )
             } else {
                 error
             }
         })?;
         if structured {
-            serde_json::from_str(&output)
-                .map_err(|_| (StatusCode::BAD_GATEWAY, "Invalid controller response."))
+            serde_json::from_str(&output).map_err(|_| {
+                RunFailure::from((StatusCode::BAD_GATEWAY, "Invalid controller response."))
+            })
         } else {
             Ok(Value::String(output))
         }
@@ -347,7 +404,7 @@ async fn read(headers: HeaderMap, command: Result<(Vec<String>, bool), Failure>)
     .await;
     match result {
         Ok(data) => reply(StatusCode::OK, json!({"data": data})),
-        Err(error) => failure(error),
+        Err(error) => run_failure(error),
     }
 }
 
@@ -671,13 +728,13 @@ impl Action {
 }
 
 async fn action(headers: HeaderMap, body: Bytes) -> Response {
-    let result = async {
+    let result: Result<Value, RunFailure> = async {
         authorized(&headers)?;
         if !same_origin(&headers) {
-            return Err((
+            return Err(RunFailure::from((
                 StatusCode::FORBIDDEN,
                 "Open the console on its configured hostname.",
-            ));
+            )));
         }
         if headers
             .get(header::CONTENT_TYPE)
@@ -686,11 +743,11 @@ async fn action(headers: HeaderMap, body: Bytes) -> Response {
             .map(str::trim)
             != Some("application/json")
         {
-            return Err(BAD_REQUEST);
+            return Err(BAD_REQUEST.into());
         }
         let requested: Action = serde_json::from_slice(&body).map_err(|_| BAD_REQUEST)?;
         if matches!(requested, Action::Exec { .. }) {
-            return Err(BAD_REQUEST);
+            return Err(BAD_REQUEST.into());
         }
         let (args, seconds) = requested.command()?;
         let output = run(args, seconds).await?;
@@ -709,13 +766,24 @@ async fn action(headers: HeaderMap, body: Bytes) -> Response {
     .await;
     match result {
         Ok(data) => reply(StatusCode::OK, json!({"ok": true, "data": data})),
-        Err(error) => failure(error),
+        Err(error) => run_failure(error),
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn command_detail_keeps_the_last_lines_and_masks_secrets() {
+        let detail = command_detail(b"starting\n\nfirst\nPASSWORD=hunter2\nssh: connect to host 100.64.0.1 port 22: Connection timed out\n");
+        assert_eq!(
+            detail,
+            "first \u{b7} PASSWORD=[REDACTED] \u{b7} ssh: connect to host 100.64.0.1 port 22: Connection timed out"
+        );
+        assert!(command_detail(&b"x".repeat(1000)).ends_with('\u{2026}'));
+        assert_eq!(command_detail(b"\n \n"), "");
+    }
 
     #[test]
     fn create_accepts_openstack_overrides_and_keeps_controller_credentials_local() {

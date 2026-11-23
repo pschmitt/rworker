@@ -4,6 +4,7 @@
 
 The Rust client and controller replace the original Bash client.
 
+- Show why a web console action failed: the controller's error message, with secrets masked, instead of a generic error.
 - Add a console layout to the web console: a dense worker table with the selected worker's logs below and a shortcut bar.
 - Show the new expiry when choosing a lifetime for a new or extended worker.
 - Show ANSI colors in the web log viewer, such as the colored worker/job prefixes of combined logs.

@@ -642,6 +642,21 @@ impl Redactor {
     }
 }
 
+/// A short text (for example a command's error output) with secrets masked
+/// as in redacted logs.
+pub(crate) fn redact_text(text: &str) -> String {
+    let mut redactor = Redactor {
+        in_private_key: false,
+        keep_color: false,
+        extra: None,
+    };
+    let mut output = Vec::new();
+    for line in text.split_inclusive('\n') {
+        let _ = redactor.line(line.as_bytes(), &mut output);
+    }
+    String::from_utf8_lossy(&output).into_owned()
+}
+
 pub(super) fn redact(ctx: &Ctx, args: &[&String], pattern: Option<&str>) -> R {
     let extra = pattern
         .map(regex::bytes::Regex::new)
