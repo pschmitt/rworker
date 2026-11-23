@@ -5,6 +5,7 @@
 The Rust client and controller replace the original Bash client.
 
 - Replace the logo with a hard-hat ant and show it beside the name in the README, with a rimmed variant for dark mode.
+- Use the hard-hat ant as the web console favicon and header mark, and show it on the sign-in card.
 - Show profile architecture in JSON, CLI, TUI and web profile listings.
 - Try profiles matching an architecture with `--arch`.
 - Include the native system and SSH relay configuration in hosted builder JSON.

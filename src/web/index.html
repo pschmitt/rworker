@@ -15,7 +15,7 @@
 <body>
   <div class="shell">
     <header class="site-header">
-      <a class="brand" href="#workers"><span class="mark" aria-hidden="true"><i></i><i></i><i></i></span>rworker</a>
+      <a class="brand" href="#workers"><img class="mark" src="/assets/favicon.svg" alt="">rworker</a>
       <nav aria-label="Console">
         <a href="#workers" data-view="workers"><span aria-hidden="true">▦</span>Workers</a>
         <a href="#jobs" data-view="jobs"><span aria-hidden="true">▤</span>Jobs</a>
@@ -44,7 +44,10 @@
       </header>
       <div id="notice" class="notice" aria-live="polite" hidden></div>
       <section id="login" class="login" aria-labelledby="login-title">
-        <h2 id="login-title">Unlock console</h2>
+        <div class="login-head">
+          <img src="/assets/logo.svg" alt="">
+          <h2 id="login-title">Unlock console</h2>
+        </div>
         <form id="unlock">
           <label for="token">Operator access token</label>
           <div class="login-controls"><input id="token" type="password" autocomplete="off" required><button class="primary">Unlock</button></div>

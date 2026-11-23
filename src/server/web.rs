@@ -66,6 +66,10 @@ pub(super) fn routes(router: Router<PathBuf>) -> Router<PathBuf> {
             "/assets/favicon.svg",
             get(|| async { asset("image/svg+xml", include_str!("../web/favicon.svg")) }),
         )
+        .route(
+            "/assets/logo.svg",
+            get(|| async { asset("image/svg+xml", include_str!("../web/logo.svg")) }),
+        )
         .merge(log_stream::routes())
         .merge(terminal::routes())
         .route(
