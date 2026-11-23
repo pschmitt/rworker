@@ -58,13 +58,13 @@ fn setup_mesh(ctx: &Ctx, provider: &str, args: &[String]) -> R {
     };
     let owner = ctx.owner();
     let setup = format!("{}-mesh-setup", forge.key());
-    let out = crate::state::remote(ctx, &[&setup, suffix, &owner, provider])?;
+    let out = crate::state::remote(ctx, &[setup.as_str(), suffix, owner.as_str(), provider])?;
     let response: Value = serde_json::from_str(&out).map_err(|_| Fail(1))?;
     let request = response["id"].as_str().ok_or(Fail(1))?;
     let status = format!("{}-mesh-status", forge.key());
     let deadline = Instant::now() + Duration::from_secs(300);
     while Instant::now() < deadline {
-        let out = crate::state::remote(ctx, &[&status, suffix, &owner, request])?;
+        let out = crate::state::remote(ctx, &[status.as_str(), suffix, owner.as_str(), request])?;
         let response: Value = serde_json::from_str(&out).map_err(|_| Fail(1))?;
         if !response["result"].is_null() {
             let Some(port) = response["result"]["port"]
