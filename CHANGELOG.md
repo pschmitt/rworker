@@ -4,6 +4,7 @@
 
 The Rust client and controller replace the original Bash client.
 
+- Add `ssh -i FILE` (`--identity`) to log in to a worker with a specific private key.
 - Log in to pool workers as `agent`, like the web console, so jobs started from the CLI and the console are the same jobs.
 - List jobs of pool workers in the web console: it polls reachable workers alongside the log collector, and autoscalers authorize the console's restricted SSH key on new pool workers (`autoscalers.<name>.webConsoleAccess`).
 - Mark the current web console view with a filled background and accent icon instead of a side bar.

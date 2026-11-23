@@ -37,7 +37,7 @@ Actions:
                        delete several ad-hoc workers (default: your own)
   extend NAME --ttl D  move the expiry to now + D (max 24h)
   topic NAME TEXT...   change what the worker is for (shown by ls)
-  ssh [-l USER | USER@]NAME [SSH_ARGS...]
+  ssh [-l USER | USER@] [-i FILE]NAME [SSH_ARGS...]
                        ssh to the worker (pinned host key); options such as
                        -L/-A and a command go straight to ssh
   ssh --create [-l USER] [UP_OPTIONS]

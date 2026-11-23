@@ -52,12 +52,25 @@ pub fn ssh_command(ctx: &Ctx, args: &[String]) -> R<Command> {
 fn ssh_command_with_options(ctx: &Ctx, args: &[String], extra: &[&str]) -> R<Command> {
     let mut args = args;
     let mut login_user = String::new();
-    // -l USER (like ssh's), before the name.
-    if args.first().map(String::as_str) == Some("-l") {
-        login_user = args.get(1).cloned().unwrap_or_default();
-        if login_user.is_empty() {
-            ctx.err("-l needs a user");
+    let mut identity = String::new();
+    // -l USER and -i FILE (like ssh's), before the name.
+    while let Some(option @ ("-l" | "-i" | "--identity")) = args.first().map(String::as_str) {
+        let value = args.get(1).cloned().unwrap_or_default();
+        if value.is_empty() {
+            ctx.err(if option == "-l" {
+                "-l needs a user"
+            } else {
+                "-i needs a private key file"
+            });
             crate::help::show(ctx, "ssh");
+            return Err(Fail(2));
+        }
+        if option == "-l" {
+            login_user = value;
+        } else if std::path::Path::new(&value).is_file() {
+            identity = value;
+        } else {
+            ctx.err(&format!("{value}: no such key file"));
             return Err(Fail(2));
         }
         args = &args[2..];
@@ -127,6 +140,17 @@ fn ssh_command_with_options(ctx: &Ctx, args: &[String], extra: &[&str]) -> R<Com
         }
         opts.retain(|option| option != "-q");
         opts.splice(0..0, extra.iter().map(|option| (*option).to_owned()));
+    }
+    if !identity.is_empty() {
+        opts.splice(
+            0..0,
+            [
+                "-i".into(),
+                identity,
+                "-o".into(),
+                "IdentitiesOnly=yes".into(),
+            ],
+        );
     }
     let mut cmd = state::worker_ssh(&opts, &format!("{user}@{ip}"));
     cmd.args(&args[1..]);

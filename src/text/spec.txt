@@ -110,6 +110,8 @@ flag ssh --profile=profile worker image profile when creating
 flag ssh --arch=arch try profiles matching an architecture when creating
 flag ssh --queue-timeout=seconds cancel a hosted lease still queued after this many seconds
 flag ssh -l=user log in as this user (like ssh -l)
+flag ssh -i=file log in with this private key file (like ssh -i)
+flag ssh --identity=file long form of -i
 flag machines --fresh wait for a fresh inventory snapshot
 flag jobs --watch redraw the jobs list in place
 flag jobs -w short for --watch

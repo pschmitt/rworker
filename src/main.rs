@@ -488,6 +488,10 @@ fn run(ctx: &Ctx, argv: &[String]) -> R {
         return Ok(());
     }
     if action == "ssh" && args.first().is_some_and(|arg| arg == "--create") {
+        if args.iter().any(|arg| arg == "-i" || arg == "--identity") {
+            ctx.err("-i applies to existing workers, not to ssh --create");
+            return Err(Fail(2));
+        }
         return cmd::up::ssh_create(ctx, &args[1..], remove_after_ssh);
     }
     if remove_after_ssh {
@@ -621,6 +625,14 @@ mod tests {
         assert_eq!(
             options("ssh", &["-lagent", "worker", "-jqh"]).args,
             ["-l", "agent", "worker", "-jqh"],
+        );
+        assert_eq!(
+            options(
+                "ssh",
+                &["-i", "key", "--identity=other", "worker", "-i", "x"]
+            )
+            .args,
+            ["-i", "key", "--identity", "other", "worker", "-i", "x"],
         );
         assert_eq!(
             options("ssh", &["--create", "--profile=standard", "-lagent"]).args,
