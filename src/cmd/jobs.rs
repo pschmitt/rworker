@@ -318,8 +318,26 @@ fn ready(list: &Value) -> Vec<String> {
         .collect()
 }
 
+/// Whether the log collector's key is on WORKER: the controller adds it only
+/// to ad-hoc workers of the collector's operator, which runs the collector.
+fn collector_reaches(user: &str, worker: &Value) -> bool {
+    get(worker, "kind").as_str() == Some("adhoc")
+        && jq::raw(get(worker, "owner")).split('@').next() == Some(user)
+}
+
 pub(super) fn observed_jobs(ctx: &Ctx, inventory: &Value) -> crate::event_history::Jobs {
     let mut names = ready(inventory);
+    // The collector polls every few seconds; logging in with a key a worker
+    // refuses makes sshd penalize the controller's address for everyone.
+    if std::env::var_os("RWORKER_LOG_CACHE_IDENTITY").is_some() {
+        let reachable: Vec<String> = jq::items(inventory)
+            .unwrap_or_default()
+            .into_iter()
+            .filter(|worker| collector_reaches(&ctx.user, worker))
+            .map(|worker| jq::raw(get(worker, "name")))
+            .collect();
+        names.retain(|name| reachable.contains(name));
+    }
     names.retain(|name| !name.is_empty());
     names.sort_unstable();
     names.dedup();
@@ -854,4 +872,21 @@ pub fn cmd_ps(ctx: &Ctx, args: &[String]) -> R {
         outln(&jq::column(&rows));
     }
     status
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn collector_polls_only_its_operators_ad_hoc_workers() {
+        let own = json!({"name": "adhoc-1", "kind": "adhoc", "owner": "pschmitt@fnuc"});
+        let other = json!({"name": "adhoc-2", "kind": "adhoc", "owner": "alice@laptop"});
+        let pool = json!({"name": "circus-1", "kind": "circus", "owner": "circus@rofl-10"});
+        assert!(collector_reaches("pschmitt", &own));
+        assert!(!collector_reaches("pschmitt", &other));
+        assert!(!collector_reaches("pschmitt", &pool));
+        assert!(!collector_reaches("circus", &pool));
+    }
 }
