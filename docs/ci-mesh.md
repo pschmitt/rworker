@@ -4,6 +4,7 @@ GitHub Actions and GitLab CI leases can join Tailscale, NetBird, or both.
 Mesh access is off unless enabled for the profile in the controller’s
 runtime JSON. Both clients run in userspace and provide loopback SOCKS
 proxies. The controller’s existing SSH relay handles operator connections.
+Both mesh clients block inbound mesh connections.
 
 ## Controller configuration
 

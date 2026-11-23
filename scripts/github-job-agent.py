@@ -570,7 +570,7 @@ def mesh_environment(assignment):
                     NB_SOCKS5_LISTENER_PORT=str(port),
                 )
                 daemon = [
-                    tools["netbird"], "up", "--foreground-mode", "--no-browser",
+                    tools["netbird"], "up", "--foreground-mode", "--no-browser", "--block-inbound",
                     "--log-file", "console",
                     "--management-url", peer["management_url"], "--setup-key-file", key,
                     "--hostname", mesh["hostname"],
@@ -585,7 +585,7 @@ def mesh_environment(assignment):
                 subprocess.run([
                     tools["tailscale"], f"--socket={control}", "up",
                     f"--auth-key=file:{key}", f'--hostname={mesh["hostname"]}',
-                    "--accept-dns=false", "--accept-routes=false",
+                    "--accept-dns=false", "--accept-routes=false", "--shields-up",
                 ], check=True, timeout=45, env=env, stdin=subprocess.DEVNULL,
                     stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
             key.unlink()
