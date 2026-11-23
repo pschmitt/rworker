@@ -211,7 +211,7 @@ function navigate() {
     state.logsWorker = worker ? decodeURIComponent(worker) : "";
     state.logsJob = worker && job ? decodeURIComponent(job) : "";
   }
-  if (state.authenticated && view === "workers" && worker) {
+  if (state.authenticated && detailViews.has(view) && worker) {
     openWorker(workerFor(decodeURIComponent(worker)), job ? decodeURIComponent(job) : null);
   } else {
     state.selected = null;
@@ -569,7 +569,11 @@ function render() {
       else if (prefs.layout === "console" && !narrow.matches) renderWorkerTable(visible, now);
       else renderWorkerList(visible, now);
       break;
-    case "jobs": renderJobs(visible); break;
+    case "jobs":
+      if (prefs.layout === "cards") renderJobCards(visible);
+      else if (prefs.layout === "console" && !narrow.matches) renderJobTable(visible);
+      else renderJobs(visible);
+      break;
     case "events": renderEvents(visible, now); break;
     default: renderProfiles(visible);
   }
@@ -888,30 +892,126 @@ function renderWorkerCards(visible, now) {
   $("results").replaceChildren(container);
 }
 
-function renderJobs(visible) {
-  const container = el("div", "jobs-list");
-  const sorted = visible.slice().sort((a, b) => Number(filterTests.jobs.active(b)) - Number(filterTests.jobs.active(a)));
-  // Jobs have no topic or agent of their own: show their worker's.
+// Jobs have no topic or agent of their own: they show their worker's.
+function jobContext(visible) {
   const workers = new Map((state.rows.workers || []).map((worker) => [worker.name, worker]));
-  if (sorted.length) {
+  const sorted = visible.slice().sort((a, b) => Number(filterTests.jobs.active(b)) - Number(filterTests.jobs.active(a)));
+  return { workers, sorted };
+}
+
+function jobLink(cls, row) {
+  const link = el("a", cls + " job-item");
+  link.href = jobHash(row);
+  link.dataset.worker = row.worker;
+  link.dataset.job = row.job;
+  if (state.selected?.name === row.worker && state.job === row.job) link.setAttribute("aria-current", "true");
+  return link;
+}
+
+function topicCell(cls, worker) {
+  const topic = el("span", cls, worker.topic || "");
+  if (worker.topic) topic.title = worker.topic;
+  return topic;
+}
+
+function finishJobs(container, rows, total) {
+  showMore(container, total);
+  state.order = rows.map(jobKey);
+  $("results").replaceChildren(container);
+}
+
+function renderJobs(visible) {
+  // Beside the worker panel the list is narrow: two-line rows, no header.
+  const compact = splitActive();
+  const container = el("div", "jobs-list" + (compact ? " compact" : ""));
+  const { workers, sorted } = jobContext(visible);
+  if (sorted.length && !compact) {
     const head = el("div", "job-row head", el("span"), el("span", "name", "Job"), el("span", "topic", "Topic"), el("span", "agent", "Agent"), el("span", "worker", "Worker"), el("span", "state", "State"));
     head.setAttribute("aria-hidden", "true");
     container.append(head);
   }
-  for (const row of sorted.slice(0, state.limit)) {
+  const shown = sorted.slice(0, state.limit);
+  for (const row of shown) {
     const [tone, ic] = jobTone(row.state);
     const worker = workers.get(row.worker) || {};
-    const topic = el("span", "topic", worker.topic || "");
-    if (worker.topic) topic.title = worker.topic;
-    const link = el("a", "job-row" + (tone === "archived" ? " archived" : ""), icon(ic, "tone-" + (tone || "info")), el("span", "name", row.job),
-      topic, el("span", "agent", agentLabel(worker.agent)), el("span", "worker", row.worker), jobPill(row.state));
-    link.href = workerHash({ name: row.worker }, row.job);
-    link.dataset.worker = row.worker;
-    link.dataset.job = row.job;
+    const link = jobLink("job-row" + (tone === "archived" ? " archived" : ""), row);
+    if (compact) {
+      link.append(icon(ic, "tone-" + (tone || "info")),
+        el("span", "ident", el("span", "name", row.job), el("span", "sub", [row.worker, worker.topic].filter(Boolean).join(" · "))), jobPill(row.state));
+      link.title = [row.worker, worker.topic, worker.agent].filter(Boolean).join(" · ");
+    } else {
+      link.append(icon(ic, "tone-" + (tone || "info")), el("span", "name", row.job), topicCell("topic", worker),
+        el("span", "agent", agentLabel(worker.agent)), el("span", "worker", row.worker), jobPill(row.state));
+    }
     container.append(link);
   }
-  showMore(container, visible.length);
-  $("results").replaceChildren(container);
+  finishJobs(container, shown, visible.length);
+}
+
+function renderJobCards(visible) {
+  const container = el("div", "cards job-cards");
+  const { workers, sorted } = jobContext(visible);
+  const shown = sorted.slice(0, state.limit);
+  for (const row of shown) {
+    const [tone, ic] = jobTone(row.state);
+    const worker = workers.get(row.worker) || {};
+    const card = jobLink("card job-card" + (tone === "archived" ? " archived" : ""), row);
+    card.append(
+      el("div", "card-head", el("span", "tile", icon(ic, "tone-" + (tone || "info"))), el("div", "ident", el("span", "name", row.job), el("span", "sub", row.worker)), jobPill(row.state)),
+      el("div", "card-facts", el("span", "card-topic", worker.topic || "—"), el("span", null, agentLabel(worker.agent))));
+    container.append(card);
+  }
+  finishJobs(container, shown, visible.length);
+}
+
+// Column sort for the console jobs table: [label, key, value].
+const jobColumns = [
+  ["JOB", "job", (row) => row.job],
+  ["TOPIC", "topic", (row, worker) => worker.topic || ""],
+  ["AGENT", "agent", (row, worker) => worker.agent || ""],
+  ["WORKER", "worker", (row) => row.worker],
+  ["STATE", "state", (row) => String(row.state || "")],
+];
+
+function renderJobTable(visible) {
+  const table = el("div", "ctable jobs-table");
+  table.setAttribute("role", "list");
+  const { workers, sorted } = jobContext(visible);
+  const sort = state.jobSort;
+  const column = sort && jobColumns.find(([, key]) => key === sort.key);
+  if (column) {
+    const value = (row) => column[2](row, workers.get(row.worker) || {});
+    sorted.sort((a, b) => {
+      const left = value(a);
+      const right = value(b);
+      if (!left || !right) return Number(!left) - Number(!right);
+      const order = String(left).localeCompare(String(right), undefined, { numeric: true, sensitivity: "base" });
+      return sort.desc ? -order : order;
+    });
+  }
+  const head = el("div", "ctr head", el("span"));
+  for (const [label, key] of jobColumns) {
+    const active = sort?.key === key;
+    const heading = button(null, () => {
+      state.jobSort = active && !sort.desc ? { key, desc: true } : { key, desc: false };
+      render();
+    }, { cls: "sort", title: "Sort by " + label.toLowerCase() });
+    heading.append(label, el("span", "arrow", active ? (sort.desc ? "↓" : "↑") : ""));
+    if (active) heading.setAttribute("aria-sort", sort.desc ? "descending" : "ascending");
+    head.append(heading);
+  }
+  table.append(head);
+  const shown = sorted.slice(0, state.limit);
+  for (const row of shown) {
+    const [tone] = jobTone(row.state);
+    const worker = workers.get(row.worker) || {};
+    const state_ = String(row.state || "?").toLowerCase();
+    const node = jobLink("ctr" + (tone === "archived" ? " archived" : ""), row);
+    node.append(el("span", "mark"), el("span", "nm", row.job), topicCell("tp", worker), agentLabel(worker.agent),
+      el("span", "muted", row.worker), el("span", "st-" + (tone === "busy" ? "busy" : tone === "good" ? "good" : tone === "bad" ? "bad" : "idle"), state_));
+    table.append(node);
+  }
+  finishJobs(table, shown, visible.length);
 }
 
 function eventValue(value) {
@@ -1110,7 +1210,7 @@ async function refresh(manual = false) {
     }
     const stale = state.inventoryStale && view === "workers";
     connection(stale ? "Cached inventory" : "Live", stale ? "stale" : "online");
-    if (state.selected && view === "workers") {
+    if (state.selected && detailViews.has(view)) {
       const current = sourceWorker(state.selected.name);
       if (current) {
         const retired = Boolean(current.retired) !== Boolean(state.selected.retired);
@@ -1191,6 +1291,17 @@ function select(row, job) {
   location.hash = workerHash(row, job);
 }
 
+// Views whose items open the worker panel beside (or below) the list.
+const detailViews = new Set(["workers", "jobs"]);
+
+function jobHash(row) {
+  return "#jobs/" + encodeURIComponent(row.worker) + "/" + encodeURIComponent(row.job);
+}
+
+function jobKey(row) {
+  return row.worker + "/" + row.job;
+}
+
 function sourceWorker(name) {
   return (state.rows.workers || []).find((worker) => worker.name === name);
 }
@@ -1200,7 +1311,7 @@ function workerFor(name) {
 }
 
 function splitActive() {
-  return prefs.layout !== "cards" && state.view === "workers" && !narrow.matches;
+  return prefs.layout !== "cards" && detailViews.has(state.view) && !narrow.matches;
 }
 
 function openWorker(row, job) {
@@ -1262,6 +1373,7 @@ function layoutWorkspace() {
   $("keybar").hidden = !(split && prefs.layout === "console" && state.authenticated);
   $("detail").hidden = !row;
   $("detail-empty").hidden = !split || Boolean(row);
+  $("detail-empty-text").textContent = state.view === "jobs" ? "Select a job to follow its log." : "Select a worker to see its logs, jobs and details.";
   $("inventory").hidden = fullPage;
   $("app").classList.toggle("detail-open", fullPage);
   $("back").hidden = !fullPage;
@@ -2607,14 +2719,24 @@ function showKeys() {
 }
 
 function moveSelection(delta) {
-  if (state.view !== "workers") return;
-  if (state.selected) {
+  if (state.view === "jobs") {
+    if (state.selected && state.job) {
+      const index = state.order.indexOf(state.selected.name + "/" + state.job);
+      const next = state.order[index < 0 ? 0 : index + delta];
+      if (next) {
+        const [worker, ...job] = next.split("/");
+        location.hash = jobHash({ worker, job: job.join("/") });
+      }
+      return;
+    }
+  } else if (state.view !== "workers") return;
+  if (state.view === "workers" && state.selected) {
     const index = state.order.indexOf(state.selected.name);
     const next = state.order[index < 0 ? 0 : index + delta];
     if (next) select(workerFor(next));
     return;
   }
-  const items = [...document.querySelectorAll("#results .worker-item, #results .card .name, #results .pool-member")];
+  const items = [...document.querySelectorAll("#results .worker-item, #results .job-item, #results .card .name, #results .pool-member")];
   if (!items.length) return;
   const index = items.indexOf(document.activeElement);
   (items[index < 0 ? (delta > 0 ? 0 : items.length - 1) : Math.min(items.length - 1, Math.max(0, index + delta))]).focus();
@@ -2649,7 +2771,7 @@ document.addEventListener("keydown", (event) => {
     "3": () => { location.hash = "logs"; }, "4": () => { location.hash = "events"; }, "5": () => { location.hash = "profiles"; },
     n: () => form("create"), j: () => moveSelection(1), k: () => moveSelection(-1),
     r: () => refresh(true),
-    Escape: () => { if (row) location.hash = "workers"; },
+    Escape: () => { if (row) location.hash = state.view; },
     s: () => live && openTerminal(row),
     e: () => live && !isPool(row) && form("extend", row),
     t: () => live && editTopic(),
