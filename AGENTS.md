@@ -18,7 +18,9 @@ cache credentials as sensitive; use role names and placeholders
   controller deploy alone does not update the integration.
 - Validate with `cargo fmt --check`, `cargo clippy --all-targets -- -D warnings`,
   `cargo test`, `cargo deny check` and `nix flake check` (on a build host,
-  not locally). Never create real workers as a test. Use fake providers.
+  not locally). Automated tests use fake providers and never create
+  real workers; testing a change end to end on real workers is fine, as long
+  as they are deleted afterwards.
 - Before changing GitHub Actions, check whether
   [pschmitt/ci-workflows](https://github.com/pschmitt/ci-workflows) provides a
   reusable workflow or action, and use `@main` for its references.
