@@ -3,7 +3,7 @@
 const $ = (id) => document.getElementById(id);
 const root = document.documentElement;
 const SVG_NS = "http://www.w3.org/2000/svg";
-const views = { workers: "Workers", jobs: "Jobs", logs: "Logs", events: "Events", profiles: "Profiles" };
+const views = { workers: "Workers", jobs: "Jobs", logs: "Logs", profiles: "Profiles", events: "Events" };
 const narrow = matchMedia("(max-width: 1180px)");
 const leaseWarningSeconds = 15 * 60;
 
@@ -2786,7 +2786,7 @@ document.querySelectorAll("#settings input[type=radio]").forEach((input) => inpu
 
 const shortcuts = [
   [["Ctrl", "K"], "Jump to a worker or run an action"], [["/"], "Filter the current view"],
-  [["1"], "Workers"], [["2"], "Jobs"], [["3"], "Logs"], [["4"], "Events"], [["5"], "Profiles"],
+  [["1"], "Workers"], [["2"], "Jobs"], [["3"], "Logs"], [["4"], "Profiles"], [["5"], "Events"],
   [["N"], "New worker"], [["J"], "Next worker"], [["K"], "Previous worker"], [["Enter"], "Open the focused worker"],
   [["Esc"], "Close the worker or dialog"], [["S"], "SSH into the open worker"], [["E"], "Extend its lease"],
   [["T"], "Edit its topic"], [["D"], "Delete it"], [["L"], "Show its logs"], [["F"], "Follow or pause the log"],
@@ -2847,7 +2847,7 @@ document.addEventListener("keydown", (event) => {
     "?": showKeys,
     "[": toggleRail,
     "1": () => { location.hash = "workers"; }, "2": () => { location.hash = "jobs"; },
-    "3": () => { location.hash = "logs"; }, "4": () => { location.hash = "events"; }, "5": () => { location.hash = "profiles"; },
+    "3": () => { location.hash = "logs"; }, "4": () => { location.hash = "profiles"; }, "5": () => { location.hash = "events"; },
     n: () => form("create"), j: () => moveSelection(1), k: () => moveSelection(-1),
     r: () => refresh(true),
     Escape: () => { if (row) location.hash = state.view; },
