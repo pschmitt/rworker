@@ -136,7 +136,7 @@ flag tui -n=interval short for --interval
 values tui-view workers jobs profiles events logs
 values duration 30m 1h 2h 4h 8h 24h
 values flavor s1.large s1.xlarge s1.2xlarge
-values setup-topic nix niks3-token register-log-file
+values setup-topic nix niks3-token register-log-file netbird tailscale
 values profile standard browser-daemon large-builder gh-aarch64 gh-x86_64 gl-x86_64 gl-x86_64-lease
 values size 100 150 250 500
 values path

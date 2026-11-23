@@ -97,6 +97,13 @@ class WorkerMcpTest(unittest.TestCase):
                 "setup", "register-log-file", "worker", "job", "--log", "/tmp/build.log", timeout=60,
             )
 
+    def test_setup_mesh_routes_by_provider(self):
+        for provider in ("netbird", "tailscale"):
+            with patch.object(self.module, "run", return_value='{"proxy":"socks5h://127.0.0.1:1080"}') as run:
+                setup = getattr(self.module, f"setup_{provider}")
+                self.assertIn("proxy", setup("worker"))
+                run.assert_called_once_with("setup", provider, "worker", "--json", timeout=330)
+
     def test_retained_events_filter_and_limit(self):
         with patch.object(self.module, "run", return_value='[{"id":1},{"id":2}]') as run:
             self.assertEqual(self.module.events(agent_id="codex:abc", limit=1), [{"id": 2}])

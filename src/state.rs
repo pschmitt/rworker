@@ -46,9 +46,13 @@ pub fn control_ssh_cmd<S: AsRef<str>>(ctx: &Ctx, args: &[S]) -> Command {
                 "github-up"
                     | "github-status"
                     | "github-down"
+                    | "github-mesh-setup"
+                    | "github-mesh-status"
                     | "gitlab-up"
                     | "gitlab-status"
                     | "gitlab-down"
+                    | "gitlab-mesh-setup"
+                    | "gitlab-mesh-status"
             )
     }) {
         cmd.args([

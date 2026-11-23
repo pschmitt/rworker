@@ -188,6 +188,18 @@ def setup_niks3_token(name: str, force: bool = False) -> dict:
 
 
 @mcp.tool()
+def setup_netbird(name: str) -> dict:
+    """Start or restart an opted-in CI worker's ephemeral NetBird proxy."""
+    return json.loads(run("setup", "netbird", name, "--json", timeout=330))
+
+
+@mcp.tool()
+def setup_tailscale(name: str) -> dict:
+    """Start or restart an opted-in CI worker's ephemeral Tailscale proxy."""
+    return json.loads(run("setup", "tailscale", name, "--json", timeout=330))
+
+
+@mcp.tool()
 def down(name: str) -> dict:
     """Delete a worker (server, volume, NetBird and Tailscale peers). Nothing survives."""
     return json.loads(run("down", name, "--json", timeout=300))

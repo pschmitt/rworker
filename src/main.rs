@@ -529,9 +529,13 @@ fn main() {
                     | "github-up"
                     | "github-status"
                     | "github-down"
+                    | "github-mesh-setup"
+                    | "github-mesh-status"
                     | "gitlab-up"
                     | "gitlab-status"
                     | "gitlab-down"
+                    | "gitlab-mesh-setup"
+                    | "gitlab-mesh-status"
             ),
             [] => false,
         };

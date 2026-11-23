@@ -51,6 +51,43 @@ the offline ephemeral peers.
 
 ## Use the proxies
 
+### Enable a provider after startup
+
+Configure `meshOnDemand` under `githubActions` or `gitlabCi` with the same
+profile and provider structure as `meshProfiles`. Entries under
+`meshOnDemand` allow manual activation without starting the provider at
+lease creation. Providers listed under `meshProfiles` can also be
+re-enrolled during an active lease. For example, this allows Tailscale
+activation on GitHub x86-64.
+
+```json
+{
+  "githubActions": {
+    "meshOnDemand": {
+      "linux-x64": { "tailscale": true }
+    }
+  }
+}
+```
+
+```sh
+proxy=$(rworker setup tailscale WORKER)
+rworker ssh WORKER "curl --proxy '$proxy' https://service.example.com/"
+rworker setup netbird WORKER --json
+```
+
+The lease owner can run either command. A repeat replaces that provider's
+peer on the same SOCKS address, without restarting the worker or SSH.
+The returned address is loopback on the worker. For providers first
+started after SSH setup, use the returned URL explicitly.
+
+On-demand setup needs a current GitHub runner agent or the GitLab
+`gl-x86_64-lease` profile. The GitLab Ubuntu profile's Nix store is
+writable by the build user, so it runs its mesh startup only before
+the build user gets access.
+
+### Use a provider started at lease creation
+
 Each configured provider exposes an SSH session variable with its SOCKS
 endpoint. Pass the desired proxy to an application explicitly.
 

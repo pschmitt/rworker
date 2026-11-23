@@ -20,6 +20,7 @@ use crate::github_profiles::{Forge, WORKER_SUFFIX_BYTES, valid_worker_suffix};
 
 const MAX_LEASE_SECONDS: u64 = 7200;
 const MESH_KEY_TTL: u64 = 600;
+const MESH_SETUP_TIMEOUT: u64 = 300;
 
 #[derive(Serialize, Deserialize)]
 struct Lease {
@@ -53,6 +54,25 @@ struct Lease {
     workflow: Option<RunStatus>,
     #[serde(default)]
     disk: Option<Disk>,
+    #[serde(default)]
+    mesh_setup_supported: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    mesh_setup: Option<MeshSetup>,
+}
+
+#[derive(Deserialize, Serialize)]
+struct MeshSetup {
+    id: String,
+    provider: String,
+    requested_at: u64,
+    dispatched: bool,
+    result: Option<MeshResult>,
+}
+
+#[derive(Deserialize, Serialize)]
+pub(super) struct MeshResult {
+    id: String,
+    port: Option<u16>,
 }
 
 #[derive(Deserialize, Serialize, Clone, Copy)]
@@ -130,7 +150,11 @@ pub(super) fn action(action: &str) -> Option<(Forge, &str)> {
     let forge = Forge::ALL
         .into_iter()
         .find(|forge| forge.key() == provider)?;
-    matches!(command, "up" | "status" | "down" | "reap").then_some((forge, command))
+    matches!(
+        command,
+        "up" | "status" | "down" | "reap" | "mesh-setup" | "mesh-status"
+    )
+    .then_some((forge, command))
 }
 
 pub(super) fn run(
@@ -202,9 +226,59 @@ pub(super) fn run(
                     archive_logs: settings["logCollectorOperator"].is_string(),
                     workflow: None,
                     disk: None,
+                    mesh_setup_supported: false,
+                    mesh_setup: None,
                 },
             )?;
             Ok(with_provider_links(response, forge, config))
+        }
+        ("mesh-setup" | "mesh-status", [id, owner, argument]) => {
+            let dir = worker_lease_dir(root, id)?;
+            let guard = File::open(dir.join("lock")).map_err(|error| error.to_string())?;
+            lock(&guard)?;
+            let mut lease = read_lease(&dir).map_err(|error| error.to_string())?;
+            if lease.repository != repository || lease.owner != *owner {
+                return Err("Worker lease belongs to a different operator or repository".into());
+            }
+            if command == "mesh-status" {
+                let job = lease
+                    .mesh_setup
+                    .as_ref()
+                    .filter(|job| job.id == *argument)
+                    .ok_or("Unknown mesh setup request")?;
+                if job.result.is_none()
+                    && (lease.state != LeaseState::Ready || now() >= lease.expires_at)
+                {
+                    return Err("Worker lease ended during mesh setup".into());
+                }
+                return Ok(json!({"result": job.result}));
+            }
+            if lease.state != LeaseState::Ready
+                || now() >= lease.expires_at
+                || !lease.mesh_setup_supported
+            {
+                return Err(
+                    "Mesh setup requires a ready lease with a current CI runner agent".into(),
+                );
+            }
+            if !mesh_allowed(config, &lease.profile, argument) {
+                return Err("This mesh provider is disabled for the worker profile".into());
+            }
+            if lease.mesh_setup.as_ref().is_some_and(|job| {
+                job.result.is_none() && now().saturating_sub(job.requested_at) < MESH_SETUP_TIMEOUT
+            }) {
+                return Err("Another mesh setup request is in progress".into());
+            }
+            let id = random_hex::<16>()?;
+            lease.mesh_setup = Some(MeshSetup {
+                id: id.clone(),
+                provider: argument.clone(),
+                requested_at: now(),
+                dispatched: false,
+                result: None,
+            });
+            write_lease(&dir, &lease).map_err(|error| error.to_string())?;
+            Ok(json!({"id": id}))
         }
         ("status", [id]) | ("down", [id, _]) => {
             let dir = worker_lease_dir(root, id)?;
@@ -325,14 +399,34 @@ pub(super) fn claim(
     lease.job_id = job_id;
     lease.kvm = capabilities.iter().any(|capability| capability == "kvm");
     lease.disk = disk.filter(|disk| disk.total_bytes != 0);
+    lease.mesh_setup_supported = capabilities
+        .iter()
+        .any(|capability| capability == "mesh-setup-v1");
     write_lease(&dir, &lease).map_err(|error| error.to_string())?;
     let mut assignment = json!({
         "token": token, "expires_at": lease.expires_at, "public_key": lease.public_key,
     });
-    if let Some(mesh) = mesh_assignment(settings, config, forge, &lease)? {
+    if let Some(mesh) = mesh_assignment(settings, config, forge, &lease, None)? {
         assignment["mesh"] = mesh;
     }
     Ok(assignment)
+}
+
+fn mesh_profile<'a>(config: &'a Value, profile: &str, provider: &str) -> &'a Value {
+    let on_demand = &config["meshOnDemand"][profile][provider];
+    if on_demand.is_null() {
+        &config["meshProfiles"][profile][provider]
+    } else {
+        on_demand
+    }
+}
+
+fn mesh_allowed(config: &Value, profile: &str, provider: &str) -> bool {
+    match provider {
+        "tailscale" => mesh_profile(config, profile, provider).as_bool() == Some(true),
+        "netbird" => mesh_profile(config, profile, provider).is_object(),
+        _ => false,
+    }
 }
 
 fn mesh_assignment(
@@ -340,9 +434,10 @@ fn mesh_assignment(
     config: &Value,
     forge: Forge,
     lease: &Lease,
+    only: Option<&str>,
 ) -> Result<Option<Value>, String> {
     let mesh = &config["meshProfiles"][&lease.profile];
-    if mesh.is_null() {
+    if mesh.is_null() && only.is_none() {
         return Ok(None);
     }
     let ttl = MESH_KEY_TTL.min(lease.expires_at.saturating_sub(now()));
@@ -355,10 +450,15 @@ fn mesh_assignment(
         lease.worker_suffix.as_deref().unwrap_or(&lease.id)
     );
     let mut assignment = json!({"hostname": name});
-    let netbird = if mesh["netbird"].is_null() {
+    let netbird_config = if only == Some("netbird") {
+        mesh_profile(config, &lease.profile, "netbird")
+    } else {
+        &mesh["netbird"]
+    };
+    let netbird = if netbird_config.is_null() || only == Some("tailscale") {
         None
     } else {
-        let config = &mesh["netbird"];
+        let config = netbird_config;
         let management_url = setting(config, "managementUrl")?;
         if !management_url.starts_with("https://") {
             return Err("NetBird management URL must use HTTPS".into());
@@ -372,7 +472,7 @@ fn mesh_assignment(
         });
         Some((client, setting(&key, "id")?.to_owned()))
     };
-    if mesh["tailscale"].as_bool() == Some(true) {
+    if only == Some("tailscale") || (only.is_none() && mesh["tailscale"].as_bool() == Some(true)) {
         let tailscale = (|| {
             let mut client = Tailscale::from_settings(&settings["tailscale"])?;
             let key = client.create_ephemeral_key(&name, ttl)?;
@@ -507,7 +607,8 @@ pub(super) fn agent_update(
     id: &str,
     token: &str,
     endpoint: Option<Endpoint>,
-) -> Result<(), String> {
+    mesh_result: Option<MeshResult>,
+) -> Result<Option<Value>, String> {
     if token.len() != 64 {
         return Err("Invalid lease credential".into());
     }
@@ -547,8 +648,36 @@ pub(super) fn agent_update(
         lease.endpoint = Some(endpoint);
         lease.state = LeaseState::Ready;
         write_lease(&dir, &lease).map_err(|error| error.to_string())?;
+        return Ok(None);
     }
-    Ok(())
+    let Some(job) = &mut lease.mesh_setup else {
+        return Ok(None);
+    };
+    if let Some(result) = mesh_result
+        && job.id == result.id
+        && job.dispatched
+        && job.result.is_none()
+    {
+        job.result = Some(result);
+        write_lease(&dir, &lease).map_err(|error| error.to_string())?;
+        return Ok(None);
+    }
+    if job.dispatched || now().saturating_sub(job.requested_at) >= MESH_SETUP_TIMEOUT {
+        return Ok(None);
+    }
+    job.dispatched = true;
+    let (id, provider) = (job.id.clone(), job.provider.clone());
+    write_lease(&dir, &lease).map_err(|error| error.to_string())?;
+    if mesh_allowed(config, &lease.profile, &provider)
+        && let Ok(Some(mesh)) = mesh_assignment(settings, config, forge, &lease, Some(&provider))
+    {
+        return Ok(Some(json!({"id": id, "provider": provider, "mesh": mesh})));
+    }
+    if let Some(job) = &mut lease.mesh_setup {
+        job.result = Some(MeshResult { id, port: None });
+    }
+    write_lease(&dir, &lease).map_err(|error| error.to_string())?;
+    Ok(None)
 }
 
 fn agent_lease(id: &str) -> (Forge, &str) {
@@ -567,6 +696,7 @@ fn state_directory(config: &Value) -> Option<&Path> {
 
 fn public_lease(mut lease: Lease) -> Value {
     lease.token_hash = None;
+    lease.mesh_setup = None;
     json!(lease)
 }
 
@@ -761,4 +891,22 @@ fn write_lease(dir: &Path, lease: &Lease) -> io::Result<()> {
     file.sync_all()?;
     fs::rename(pending, dir.join("lease.json"))?;
     File::open(dir)?.sync_all()
+}
+
+#[cfg(test)]
+mod mesh_setup_tests {
+    use super::*;
+
+    #[test]
+    fn mesh_setup_is_profile_and_provider_specific() {
+        let config = json!({
+            "meshOnDemand": {"linux-x64": {"tailscale": true}},
+            "meshProfiles": {"linux-x64": {"netbird": {"group": "workers"}}},
+        });
+        assert!(mesh_allowed(&config, "linux-x64", "tailscale"));
+        assert!(mesh_allowed(&config, "linux-x64", "netbird"));
+        assert!(!mesh_allowed(&config, "linux-arm64", "tailscale"));
+        assert!(!mesh_allowed(&config, "linux-x64", "other"));
+        assert!(config["meshProfiles"]["linux-x64"]["tailscale"].is_null());
+    }
 }

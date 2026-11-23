@@ -61,6 +61,7 @@ _rworker() {
       case "${COMP_WORDS[2]}" in
         niks3-token) spec=$(sed '/^flag setup /{ /^flag setup --force /!d; }' <<< "$spec") ;;
         register-log-file) spec=$(sed '/^flag setup /{ /^flag setup --log=/!d; }' <<< "$spec") ;;
+        netbird|tailscale) spec=$(sed '/^flag setup /d' <<< "$spec") ;;
         *) spec=$(sed '/^flag setup --force /d; /^flag setup --log=/d' <<< "$spec") ;;
       esac
     fi

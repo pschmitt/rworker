@@ -12,7 +12,7 @@ use axum::routing::post;
 use serde::Deserialize;
 use serde_json::Value;
 
-use super::github_leases::{self, Disk, Endpoint};
+use super::github_leases::{self, Disk, Endpoint, MeshResult};
 
 #[derive(Deserialize)]
 struct Claim {
@@ -100,15 +100,29 @@ async fn ready(
     let Ok(endpoint) = serde_json::from_slice(&body) else {
         return StatusCode::BAD_REQUEST.into_response();
     };
-    update(settings, id, headers, Some(endpoint)).await
+    update(settings, id, headers, Some(endpoint), None).await
+}
+
+#[derive(Deserialize)]
+struct Heartbeat {
+    mesh_result: Option<MeshResult>,
 }
 
 async fn heartbeat(
     State(settings): State<Arc<Value>>,
     Path(id): Path<String>,
     headers: HeaderMap,
+    body: Bytes,
 ) -> Response {
-    update(settings, id, headers, None).await
+    let result = if body.is_empty() {
+        None
+    } else {
+        let Ok(heartbeat) = serde_json::from_slice::<Heartbeat>(&body) else {
+            return StatusCode::BAD_REQUEST.into_response();
+        };
+        heartbeat.mesh_result
+    };
+    update(settings, id, headers, None, result).await
 }
 
 async fn update(
@@ -116,6 +130,7 @@ async fn update(
     id: String,
     headers: HeaderMap,
     endpoint: Option<Endpoint>,
+    mesh_result: Option<MeshResult>,
 ) -> Response {
     let Some(token) = bearer(&headers) else {
         return StatusCode::UNAUTHORIZED.into_response();
@@ -127,11 +142,19 @@ async fn update(
     let token = token.to_owned();
     match tokio::task::spawn_blocking(move || {
         let _permit = permit;
-        github_leases::agent_update(&settings, &id, &token, endpoint)
+        github_leases::agent_update(&settings, &id, &token, endpoint, mesh_result)
     })
     .await
     {
-        Ok(Ok(())) => StatusCode::NO_CONTENT.into_response(),
+        Ok(Ok(None)) => StatusCode::NO_CONTENT.into_response(),
+        Ok(Ok(Some(assignment))) => (
+            [
+                (header::CONTENT_TYPE, "application/json"),
+                (header::CACHE_CONTROL, "no-store"),
+            ],
+            assignment.to_string(),
+        )
+            .into_response(),
         Ok(Err(_)) => (StatusCode::FORBIDDEN, [("x-rworker-lease", "closed")]).into_response(),
         Err(_) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
     }

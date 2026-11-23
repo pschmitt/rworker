@@ -55,18 +55,18 @@ def update_lease(url, token, payload, expires_at):
     deadline = min(expires_at, time.time() + 60)
     while (remaining := deadline - time.time()) > 0:
         try:
-            with request(url, token, payload, timeout=min(15, remaining)):
-                return True
+            with request(url, token, payload, timeout=remaining) as response:
+                return json.load(response) if response.status == 200 else {}
         except urllib.error.HTTPError as error:
             if error.code == 403 and error.headers.get("X-Rworker-Lease") == "closed":
-                return False
+                return None
             if error.code not in (403, 429, 500, 502, 503, 504):
                 raise
         except (urllib.error.URLError, TimeoutError):
             pass
         time.sleep(max(0, min(5, deadline - time.time())))
     if time.time() >= expires_at:
-        return False
+        return None
     raise RuntimeError("Lost contact with the rworker controller")
 
 
@@ -233,7 +233,7 @@ Subsystem sftp internal-sftp
     return sshd_config, host_key
 
 
-def start_ssh_worker(url, token, assignment, proxy_environment):
+def start_ssh_worker(url, token, assignment, mesh):
     gateway = os.environ["RWORKER_GATEWAY"]
     if not re.fullmatch(r"[a-z_][a-z0-9_-]*@[a-zA-Z0-9][a-zA-Z0-9.-]*", gateway):
         raise ValueError("Invalid SSH gateway address")
@@ -244,7 +244,7 @@ def start_ssh_worker(url, token, assignment, proxy_environment):
         identity.chmod(0o600)
         known_hosts = paths / "known_hosts"
         known_hosts.write_text(os.environ["RWORKER_GATEWAY_KNOWN_HOSTS"].strip() + "\n")
-        sshd_config, host_key = prepare_sshd(paths, assignment["public_key"], proxy_environment)
+        sshd_config, host_key = prepare_sshd(paths, assignment["public_key"], mesh.proxies())
         with subprocess.Popen(
             privileged("/usr/sbin/sshd", "-D", "-e", "-f", sshd_config),
             stdin=subprocess.DEVNULL,
@@ -265,10 +265,15 @@ def start_ssh_worker(url, token, assignment, proxy_environment):
                     raise RuntimeError("Runner SSH server stopped")
                 expires_at = assignment["expires_at"]
                 endpoint = {"port": int(port), "host_key": host_key.with_suffix(".pub").read_text().strip()}
-                if not update_lease(f"{url}/ready", token, endpoint, expires_at):
+                if update_lease(f"{url}/ready", token, endpoint, expires_at) is None:
                     return
-                while update_lease(f"{url}/heartbeat", token, {}, expires_at):
-                    time.sleep(5)
+                result = {}
+                while (update := update_lease(f"{url}/heartbeat", token, result, expires_at)) is not None:
+                    result = {}
+                    if update:
+                        result = {"mesh_result": mesh.configure(update)}
+                    else:
+                        time.sleep(5)
                     if sshd.poll() is not None:
                         raise RuntimeError("Runner SSH server stopped")
                     subprocess.run([*master, "-O", "check", gateway], check=True, timeout=10,
@@ -534,64 +539,107 @@ def wait_for_mesh(process, provider, address):
 
 
 @contextmanager
-def mesh_environment(assignment):
-    mesh = assignment.pop("mesh", {})
-    providers = [name for name in ("tailscale", "netbird") if name in mesh]
-    if not providers:
-        yield []
-        return
-    tools = mesh_tools(providers)
+def mesh_peer(provider, peer, hostname, address, tools):
     with ExitStack() as stack:
         directory = Path(stack.enter_context(tempfile.TemporaryDirectory(prefix="rworker-mesh-", dir="/dev/shm")))
-        proxies = []
-        for provider in providers:
-            peer = mesh[provider]
-            key = directory / f"{provider}.key"
-            with os.fdopen(os.open(key, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600), "w") as handle:
-                handle.write(peer.pop("key"))
+        key = directory / f"{provider}.key"
+        with os.fdopen(os.open(key, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600), "w") as handle:
+            handle.write(peer.pop("key"))
+        host, port = address
+        proxy = f"{host}:{port}"
+        env = {name: os.environ[name] for name in ("PATH", "SSL_CERT_FILE") if name in os.environ}
+        env["HOME"] = str(directory)
+        if provider == "tailscale":
+            control = directory / "tailscale.sock"
+            daemon = [
+                tools["tailscaled"], "--tun=userspace-networking", "--state=mem:",
+                f"--statedir={directory}", f"--socket={control}", f"--socks5-server={proxy}",
+            ]
+        else:
+            env.update(
+                NB_USE_NETSTACK_MODE="true",
+                NB_STATE_DIR=str(directory),
+                NB_SOCKS5_LISTENER_ADDRESS=host,
+                NB_SOCKS5_LISTENER_PORT=str(port),
+            )
+            daemon = [
+                tools["netbird"], "up", "--foreground-mode", "--no-browser", "--block-inbound",
+                "--log-file", "console",
+                "--management-url", peer["management_url"], "--setup-key-file", key,
+                "--hostname", hostname,
+            ]
+        process = subprocess.Popen(
+            daemon, env=env, stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+        )
+        stack.callback(stop_mesh_process, process)
+        wait_for_mesh(process, provider, address)
+        if provider == "tailscale":
+            subprocess.run([
+                tools["tailscale"], f"--socket={control}", "up",
+                f"--auth-key=file:{key}", f'--hostname={hostname}',
+                "--accept-dns=false", "--accept-routes=false", "--shields-up",
+            ], check=True, timeout=45, env=env, stdin=subprocess.DEVNULL,
+                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        key.unlink()
+        print(f"rworker mesh proxy ready: {provider}", flush=True)
+        yield
+
+
+class Mesh:
+    def __init__(self):
+        self.ports = {}
+        self.clients = {}
+        self.tools = {}
+
+    def start(self, provider, peer, hostname):
+        if provider not in self.tools:
+            self.tools[provider] = mesh_tools([provider])
+        if provider not in self.ports:
             with socket.socket() as listener:
                 listener.bind(("127.0.0.1", 0))
-                address = listener.getsockname()
-            host, port = address
-            proxy = f"{host}:{port}"
-            env = {name: os.environ[name] for name in ("PATH", "SSL_CERT_FILE") if name in os.environ}
-            env["HOME"] = str(directory)
-            if provider == "tailscale":
-                control = directory / "tailscale.sock"
-                daemon = [
-                    tools["tailscaled"], "--tun=userspace-networking", "--state=mem:",
-                    f"--statedir={directory}", f"--socket={control}", f"--socks5-server={proxy}",
-                ]
-            else:
-                env.update(
-                    NB_USE_NETSTACK_MODE="true",
-                    NB_STATE_DIR=str(directory),
-                    NB_SOCKS5_LISTENER_ADDRESS=host,
-                    NB_SOCKS5_LISTENER_PORT=str(port),
-                )
-                daemon = [
-                    tools["netbird"], "up", "--foreground-mode", "--no-browser", "--block-inbound",
-                    "--log-file", "console",
-                    "--management-url", peer["management_url"], "--setup-key-file", key,
-                    "--hostname", mesh["hostname"],
-                ]
-            process = subprocess.Popen(
-                daemon, env=env, stdin=subprocess.DEVNULL,
-                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-            )
-            stack.callback(stop_mesh_process, process)
-            wait_for_mesh(process, provider, address)
-            if provider == "tailscale":
-                subprocess.run([
-                    tools["tailscale"], f"--socket={control}", "up",
-                    f"--auth-key=file:{key}", f'--hostname={mesh["hostname"]}',
-                    "--accept-dns=false", "--accept-routes=false", "--shields-up",
-                ], check=True, timeout=45, env=env, stdin=subprocess.DEVNULL,
-                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-            key.unlink()
-            print(f"rworker mesh proxy ready: {provider}", flush=True)
-            proxies.append((f"RWORKER_{provider.upper()}_PROXY", f"socks5h://{proxy}"))
-        yield proxies
+                self.ports[provider] = listener.getsockname()[1]
+        if previous := self.clients.pop(provider, None):
+            previous.close()
+        with ExitStack() as client:
+            client.enter_context(mesh_peer(
+                provider, peer, hostname,
+                ("127.0.0.1", self.ports[provider]), self.tools[provider],
+            ))
+            self.clients[provider] = client.pop_all()
+        return self.ports[provider]
+
+    def close(self):
+        for client in self.clients.values():
+            client.close()
+
+    def proxies(self):
+        return [
+            (f"RWORKER_{provider.upper()}_PROXY", f"socks5h://127.0.0.1:{port}")
+            for provider, port in self.ports.items()
+        ]
+
+    def configure(self, request):
+        provider = request["provider"]
+        mesh = request["mesh"]
+        port = None
+        try:
+            port = self.start(provider, mesh[provider], mesh["hostname"])
+        except (OSError, RuntimeError, KeyError, ValueError, subprocess.SubprocessError):
+            print(f"rworker mesh setup failed: {provider}", file=sys.stderr, flush=True)
+        return {"id": request["id"], "port": port}
+
+
+@contextmanager
+def mesh_environment(assignment):
+    initial = assignment.pop("mesh", {})
+    with ExitStack() as stack:
+        mesh = Mesh()
+        stack.callback(mesh.close)
+        for provider in ("tailscale", "netbird"):
+            if provider in initial:
+                mesh.start(provider, initial[provider], initial["hostname"])
+        yield mesh
 
 
 def main():
@@ -613,20 +661,25 @@ def main():
     url = f"{base_url}/v1/agent/jobs/{job_id}"
 
     with build_environment(profile) as (capabilities, _):
+        capabilities.append("mesh-v1")
+        # The Ubuntu GitLab profile gives the build user control of /nix.
+        # A running build could replace an executable there before enrollment.
+        if profile not in GITLAB_PROFILES or LEASE_IMAGE:
+            capabilities.append("mesh-setup-v1")
         with request(
             f"{url}/claim",
             oidc_token(profile),
             {
                 "profile": profile,
                 "architecture": architecture,
-                "capabilities": [*capabilities, "mesh-v1"],
+                "capabilities": capabilities,
                 "disk": build_disk(),
             },
             timeout=60,
         ) as response:
             assignment = json.load(response)
-        with mesh_environment(assignment) as proxies:
-            start_ssh_worker(url, assignment["token"], assignment, proxies)
+        with mesh_environment(assignment) as mesh:
+            start_ssh_worker(url, assignment["token"], assignment, mesh)
     return 0
 
 

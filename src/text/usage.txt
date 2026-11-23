@@ -54,6 +54,8 @@ Actions:
                        reissue a worker's short-lived niks3 push token
   setup register-log-file NAME JOB --log PATH
                        make an existing worker log available as a job
+  setup netbird NAME | setup tailscale NAME
+                       start or restart mesh access on a CI worker
   nix-cache NAME [--dry-run]
                        the cache part of setup nix
   completions zsh|bash print the shell completion script
