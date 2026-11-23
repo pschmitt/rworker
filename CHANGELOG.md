@@ -4,7 +4,7 @@
 
 The Rust client and controller replace the original Bash client.
 
-- Show live registered jobs with an activity icon instead of a clock, and archived jobs muted (grey icon and name, outlined pill) in the web console.
+- Show live registered jobs with an amber activity icon and pill (like running jobs and the sidebar's count) instead of a grey clock, and archived jobs muted (grey icon and name, outlined pill) in the web console.
 - Collapse the web console's sidebar to an icon rail (button at its foot, or `[`), kept in the browser; the collapsed Jobs icon shows an amber dot while jobs run.
 - Resize the columns of the web console's worker table by dragging the header dividers (arrow keys when focused, double-click resets); widths are kept in the browser.
 - Show only the number of running jobs on a worker's Jobs tab, amber like the sidebar's count, and nothing when no job is running.

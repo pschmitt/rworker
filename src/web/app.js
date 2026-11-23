@@ -386,7 +386,7 @@ function jobTone(value) {
   const key = String(value || "").toLowerCase();
   if (key === "running") return ["busy", "play"];
   // A registered log file: the job is live, its process is not ours to track.
-  if (key === "registered") return ["", "activity"];
+  if (key === "registered") return ["busy", "activity"];
   if (key === "exit 0") return ["good", "check"];
   if (/^exit /.test(key) || /error|failed/.test(key)) return ["bad", "x"];
   if (key === "archived") return ["archived", "archive"];
