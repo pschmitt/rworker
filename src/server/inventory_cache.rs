@@ -141,9 +141,15 @@ fn replace(
     name: &str,
     write: impl FnOnce(&mut File) -> io::Result<()>,
 ) -> io::Result<()> {
+    use std::os::unix::fs::PermissionsExt;
     let temporary = dir.join(format!(".{name}-{}", std::process::id()));
     let result = (|| {
-        write(&mut File::create(&temporary)?)?;
+        let mut file = File::create(&temporary)?;
+        write(&mut file)?;
+        // Readers in other units (the web and automation API) rely on the
+        // group bit; a writer's umask (the builder gateway's is 0077) must
+        // not hide the snapshot or a generation from them.
+        file.set_permissions(fs::Permissions::from_mode(0o640))?;
         fs::rename(&temporary, dir.join(name))
     })();
     if result.is_err() {
@@ -335,6 +341,19 @@ mod tests {
         assert!(!super::profile_has_resources(&serde_json::json!({
             "provider": "github", "vcpus": null, "ram_gb": null
         })));
+    }
+
+    #[test]
+    fn generations_get_a_fixed_group_readable_mode() -> io::Result<()> {
+        // The mode does not depend on the writer's umask (whatever it is).
+        use std::os::unix::fs::PermissionsExt;
+        let dir = std::env::temp_dir().join(format!("rworker-generation-{}", std::process::id()));
+        fs::create_dir(&dir)?;
+        invalidate(&dir)?;
+        let mode = fs::metadata(dir.join("mutation"))?.permissions().mode() & 0o777;
+        fs::remove_dir_all(&dir)?;
+        assert_eq!(mode, 0o640);
+        Ok(())
     }
 
     #[test]
