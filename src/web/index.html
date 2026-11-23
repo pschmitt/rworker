@@ -63,6 +63,7 @@
     <symbol id="i-sun" viewBox="0 0 24 24"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></symbol>
     <symbol id="i-moon" viewBox="0 0 24 24"><path d="M21 12.8A9 9 0 1 1 11.2 3 7 7 0 0 0 21 12.8z"/></symbol>
     <symbol id="i-monitor" viewBox="0 0 24 24"><rect x="2" y="4" width="20" height="13" rx="2"/><path d="M8 21h8M12 17v4"/></symbol>
+    <symbol id="i-expand" viewBox="0 0 24 24"><path d="M15 3h6v6M9 21H3v-6M21 3l-7 7M3 21l7-7"/></symbol>
     <symbol id="i-sort" viewBox="0 0 24 24"><path d="M3 6h13M3 12h9M3 18h5M17 9l3-3 3 3M20 6v13"/></symbol>
   </svg>
 
@@ -137,6 +138,9 @@
             <p class="keys"><kbd>J</kbd> <kbd>K</kbd> move · <kbd>Enter</kbd> open · <kbd>Ctrl K</kbd> jump to anything</p>
           </section>
         </div>
+        <footer class="keybar" id="keybar" hidden>
+          <span><kbd>J</kbd> <kbd>K</kbd> move</span><span><kbd>S</kbd> ssh</span><span><kbd>E</kbd> extend</span><span><kbd>T</kbd> topic</span><span><kbd>F</kbd> follow</span><span><kbd>W</kbd> wrap</span><span><kbd>N</kbd> new</span><span><kbd>D</kbd> delete</span><span><kbd>/</kbd> filter</span><span><kbd>Ctrl</kbd> <kbd>K</kbd> command</span><span><kbd>?</kbd> all keys</span>
+        </footer>
       </div>
     </main>
 
@@ -173,8 +177,10 @@
     <header>
       <svg class="i"><use href="#i-terminal"/></svg>
       <div><h2 id="terminal-title"></h2><p id="terminal-status" role="status"></p></div>
+      <button type="button" class="btn sm" id="terminal-fullscreen" aria-pressed="false" title="Full screen, and send every key to the terminal, including browser shortcuts such as Ctrl+W, where the browser allows it. Hold Esc to leave."><svg class="i"><use href="#i-keyboard"/></svg><span>Capture all keys</span></button>
       <button type="button" class="btn quiet icon" id="terminal-close" aria-label="Close SSH"><svg class="i"><use href="#i-x"/></svg></button>
     </header>
+    <div class="term-keys" id="term-keys" role="toolbar" aria-label="Special keys"></div>
     <div id="terminal-screen"></div>
   </dialog>
 
@@ -195,6 +201,7 @@
         <legend>Layout</legend>
         <label><input type="radio" name="layout" value="split"><span><svg class="i"><use href="#i-columns"/></svg><strong>Split view</strong><small>Worker list and the open worker side by side</small></span></label>
         <label><input type="radio" name="layout" value="cards"><span><svg class="i"><use href="#i-grid"/></svg><strong>Cards</strong><small>Overview cards, workers open as full pages</small></span></label>
+        <label><input type="radio" name="layout" value="console"><span><svg class="i"><use href="#i-terminal"/></svg><strong>Console</strong><small>Dense table, logs of the selected worker below</small></span></label>
       </fieldset>
       <fieldset class="choice" data-pref="theme">
         <legend>Theme</legend>

@@ -8,7 +8,7 @@ const narrow = matchMedia("(max-width: 1180px)");
 const leaseWarningSeconds = 15 * 60;
 
 // Preferences: layout (split view or cards), theme and density, kept per browser.
-const prefChoices = { layout: ["split", "cards"], theme: ["system", "dark", "light"], density: ["comfortable", "compact"] };
+const prefChoices = { layout: ["split", "cards", "console"], theme: ["system", "dark", "light"], density: ["comfortable", "compact"] };
 const prefs = { layout: "split", theme: "system", density: "comfortable" };
 try { Object.assign(prefs, JSON.parse(localStorage.getItem("rworker.prefs") || "{}")); } catch { /* Storage disabled. */ }
 for (const [key, choices] of Object.entries(prefChoices)) if (!choices.includes(prefs[key])) prefs[key] = choices[0];
@@ -34,7 +34,7 @@ applyPrefs();
 const state = {
   token: "", authenticated: false, view: "workers", rows: {}, selected: null, job: null, tab: "logs",
   filters: { workers: "live", jobs: "active", events: "all" }, sort: "newest",
-  redact: true, follow: true, wrap: true, logQuery: "", logText: "", limit: 200,
+  redact: true, follow: true, wrap: true, logQuery: "", logText: "", logRendered: "", logSgr: {}, limit: 200,
   detailJobs: null, raw: false, dismissed: new Set(), order: [],
 };
 let stream;
@@ -518,7 +518,11 @@ function render() {
   }
   const scroll = $("inventory").scrollTop;
   switch (view) {
-    case "workers": prefs.layout === "cards" ? renderWorkerCards(visible, now) : renderWorkerList(visible, now); break;
+    case "workers":
+      if (prefs.layout === "cards") renderWorkerCards(visible, now);
+      else if (prefs.layout === "console" && !narrow.matches) renderWorkerTable(visible, now);
+      else renderWorkerList(visible, now);
+      break;
     case "jobs": renderJobs(visible); break;
     case "events": renderEvents(visible, now); break;
     default: renderProfiles(visible);
@@ -601,6 +605,46 @@ function renderWorkerList(visible, now) {
   showMore(container, visible.length);
   state.order = order;
   $("results").replaceChildren(container);
+}
+
+const tableCache = new Map();
+function tableRow(row, now) {
+  const lease = leaseInfo(row, now);
+  const data = JSON.stringify([row.topic, row.agent, row.status, row.retired, lease.text, lease.tone, Math.round(lease.pct / 5)]);
+  const current = state.selected?.name === row.name;
+  const cached = tableCache.get(row.name);
+  if (cached && cached.data === data) {
+    if (current) cached.node.setAttribute("aria-current", "true");
+    else cached.node.removeAttribute("aria-current");
+    return cached.node;
+  }
+  const status = row.retired ? ["retired", "idle"] : lease.kind === "pool" ? [row.pool_state, lease.tone === "busy" ? "busy" : "idle"] :
+    [String(row.status || "?").toLowerCase(), /^(active|ready)$/i.test(row.status) ? "good" : /^(build|boot|deleting|pending)/i.test(row.status) ? "busy" : "bad"];
+  const kind = row.name.startsWith("gha-") ? "github" : row.provider === "gitlab" || row.name.startsWith("glci-") ? "gitlab" : isPool(row) ? (row.pool || row.kind) : row.kind || "";
+  const node = el("a", "ctr worker-item", el("span", "mark"), el("span", "nm", row.name), el("span", "muted", kind), el("span", "st-" + status[1], status[0]),
+    el("span", null, row.agent || "—"), el("span", "tp", row.topic || ""),
+    el("span", "ls", leaseBar(lease), el("span", "lease-text" + (lease.tone && lease.kind !== "pool" ? " " + lease.tone : ""), lease.kind === "pool" ? lease.text : lease.text.replace(" left", ""))),
+    el("span", "muted", relative(row.created_at, now).replace(" ago", "")));
+  node.href = workerHash(row);
+  node.dataset.worker = row.name;
+  if (current) node.setAttribute("aria-current", "true");
+  if (cached) node.classList.add("flash");
+  tableCache.set(row.name, { node, data });
+  return node;
+}
+
+function renderWorkerTable(visible, now) {
+  const table = el("div", "ctable");
+  table.setAttribute("role", "list");
+  table.append(el("div", "ctr head", el("span"), el("span", null, "NAME"), el("span", null, "KIND"), el("span", null, "STATUS"), el("span", null, "AGENT"), el("span", null, "TOPIC"), el("span", null, "LEASE"), el("span", null, "AGE")));
+  const order = [];
+  for (const row of sortWorkers(visible, now).slice(0, state.limit)) {
+    table.append(tableRow(row, now));
+    order.push(row.name);
+  }
+  showMore(table, visible.length);
+  state.order = order;
+  $("results").replaceChildren(table);
 }
 
 function workerMenuButton(row, cls = "btn sm icon quiet") {
@@ -863,7 +907,7 @@ function workerFor(name) {
 }
 
 function splitActive() {
-  return prefs.layout === "split" && state.view === "workers" && !narrow.matches;
+  return prefs.layout !== "cards" && state.view === "workers" && !narrow.matches;
 }
 
 function openWorker(row, job) {
@@ -920,6 +964,7 @@ function layoutWorkspace() {
   const split = splitActive();
   const fullPage = Boolean(row) && !split;
   $("workspace").classList.toggle("split", split);
+  $("keybar").hidden = !(split && prefs.layout === "console" && state.authenticated);
   $("detail").hidden = !row;
   $("detail-empty").hidden = !split || Boolean(row);
   $("inventory").hidden = fullPage;
@@ -1129,14 +1174,64 @@ function openTerminal(row) {
     }
     for (let i = 0; i < bytes.length; i += 16384) socket.send(bytes.subarray(i, i + 16384));
   }
-  terminal.onData(data => input(encode.encode(data)));
+  let sticky = false;
+  const keys = $("term-keys");
+  const sendKeys = (sequence) => { input(encode.encode(sequence)); terminal.focus(); };
+  const setSticky = (on) => { sticky = on; keys.querySelector("[data-ctrl]")?.setAttribute("aria-pressed", String(on)); };
+  keys.replaceChildren();
+  for (const [label, sequence, title] of [
+    ["Esc", "\x1b", "Escape"], ["Tab", "\t", "Tab"], ["Ctrl", null, "Hold Ctrl for the next key"], "-",
+    ["^C", "\x03", "Interrupt (Ctrl+C)"], ["^D", "\x04", "End of input (Ctrl+D)"], ["^Z", "\x1a", "Suspend (Ctrl+Z)"],
+    ["^L", "\x0c", "Clear screen (Ctrl+L)"], ["^U", "\x15", "Delete to line start (Ctrl+U)"], ["^W", "\x17", "Delete word (Ctrl+W)"],
+    ["^R", "\x12", "Search history (Ctrl+R)"], ["^A", "\x01", "Line start (Ctrl+A)"], ["^E", "\x05", "Line end (Ctrl+E)"], "-",
+    ["←", "\x1b[D", "Left"], ["↑", "\x1b[A", "Up"], ["↓", "\x1b[B", "Down"], ["→", "\x1b[C", "Right"],
+  ]) {
+    if (label === "-") { keys.append(el("span", "sep")); continue; }
+    const key = button(label, () => sequence ? sendKeys(sequence) : (setSticky(!sticky), terminal.focus()), { cls: "", title, aria: title });
+    key.tabIndex = -1;
+    key.addEventListener("mousedown", (event) => event.preventDefault());
+    if (!sequence) { key.dataset.ctrl = ""; key.setAttribute("aria-pressed", "false"); }
+    keys.append(key);
+  }
+  terminal.onData((data) => {
+    if (sticky && data.length === 1) {
+      const code = data.toUpperCase().charCodeAt(0);
+      setSticky(false);
+      if (code >= 64 && code <= 95) { input(Uint8Array.of(code - 64)); return; }
+    }
+    input(encode.encode(data));
+  });
   terminal.onBinary(data => input(Uint8Array.from(data, char => char.charCodeAt(0))));
   terminal.onResize(() => {
     if (ready && socket.readyState === WebSocket.OPEN) socket.send(JSON.stringify(dimensions()));
   });
+  const capture = $("terminal-fullscreen");
+  const showCapture = () => {
+    const on = document.fullscreenElement === dialog;
+    capture.setAttribute("aria-pressed", String(on));
+    capture.classList.toggle("on", on);
+    capture.querySelector("span").textContent = on ? "Capturing keys" : "Capture all keys";
+    if (on) status.textContent = navigator.keyboard?.lock ? "All keys go to the terminal. Hold Esc to leave." : "Full screen. This browser keeps some shortcuts; use the key bar for those. Press Esc to leave.";
+    else if (ready) status.textContent = "SSH session opened.";
+  };
+  capture.onclick = async () => {
+    try {
+      if (document.fullscreenElement) await document.exitFullscreen();
+      else {
+        await dialog.requestFullscreen();
+        await navigator.keyboard?.lock?.();
+      }
+    } catch { /* Full screen or keyboard lock refused. */ }
+    terminal.focus();
+  };
+  document.addEventListener("fullscreenchange", showCapture);
+  showCapture();
   const resize = new ResizeObserver(() => fit.fit());
   resize.observe(screen);
   dialog.addEventListener("close", () => {
+    document.removeEventListener("fullscreenchange", showCapture);
+    navigator.keyboard?.unlock?.();
+    if (document.fullscreenElement) document.exitFullscreen().catch(() => {});
     resize.disconnect();
     socket.onopen = socket.onmessage = socket.onerror = socket.onclose = null;
     socket.close();
@@ -1165,14 +1260,98 @@ function logElements() {
   return { pre: output.querySelector(".log-frame pre"), jump: output.querySelector(".jump") };
 }
 
+// ANSI colors in logs (job prefixes from jobs.sh, compiler output): SGR
+// codes become spans, every other escape sequence is dropped.
+const ansiPalette = 16;
+function ansi256(n) {
+  if (n < 16) return null;
+  if (n >= 232) { const v = 8 + (n - 232) * 10; return `rgb(${v},${v},${v})`; }
+  const i = n - 16;
+  const level = (x) => (x ? 55 + x * 40 : 0);
+  return `rgb(${level(Math.floor(i / 36))},${level(Math.floor(i / 6) % 6)},${level(i % 6)})`;
+}
+
+function applySgr(st, params) {
+  const codes = params === "" ? [0] : params.split(";").map((value) => Number(value) || 0);
+  for (let i = 0; i < codes.length; i++) {
+    const code = codes[i];
+    if (code === 0) { st.bold = st.dim = st.italic = st.underline = false; st.fg = null; st.color = null; }
+    else if (code === 1) st.bold = true;
+    else if (code === 2) st.dim = true;
+    else if (code === 3) st.italic = true;
+    else if (code === 4) st.underline = true;
+    else if (code === 22) st.bold = st.dim = false;
+    else if (code === 23) st.italic = false;
+    else if (code === 24) st.underline = false;
+    else if (code >= 30 && code <= 37) { st.fg = code - 30; st.color = null; }
+    else if (code >= 90 && code <= 97) { st.fg = code - 90 + 8; st.color = null; }
+    else if (code === 39) { st.fg = null; st.color = null; }
+    else if (code === 38 || code === 48) {
+      const mode = codes[i + 1];
+      if (mode === 5) {
+        if (code === 38) {
+          const n = codes[i + 2];
+          if (n < ansiPalette) { st.fg = n; st.color = null; } else { st.fg = null; st.color = ansi256(n); }
+        }
+        i += 2;
+      } else if (mode === 2) {
+        if (code === 38) { st.fg = null; st.color = `rgb(${codes[i + 2] || 0},${codes[i + 3] || 0},${codes[i + 4] || 0})`; }
+        i += 4;
+      }
+    }
+  }
+}
+
+function ansiInto(target, text, st) {
+  const pattern = /\x1b\[([0-9;?]*)[ -/]*([@-~])|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)|\x1b[^[\]]/g;
+  let last = 0;
+  const fragment = document.createDocumentFragment();
+  const flush = (chunk) => {
+    if (!chunk) return;
+    const cls = [st.bold ? "b" : "", st.dim ? "d" : "", st.italic ? "it" : "", st.underline ? "u" : "", st.fg != null ? "f" + st.fg : ""].filter(Boolean).join(" ");
+    if (!cls && !st.color) { fragment.append(chunk); return; }
+    const span = document.createElement("span");
+    if (cls) span.className = cls;
+    if (st.color) span.style.color = st.color;
+    span.append(chunk);
+    fragment.append(span);
+  };
+  for (const match of text.matchAll(pattern)) {
+    flush(text.slice(last, match.index));
+    last = match.index + match[0].length;
+    if (match[2] === "m") applySgr(st, match[1]);
+  }
+  flush(text.slice(last));
+  target.append(fragment);
+}
+
 function setLog(text, { keepEnd = true } = {}) {
   state.logText = text;
   const { pre, jump } = logElements();
   if (!pre) return;
   const atEnd = pre.scrollHeight - pre.clientHeight - pre.scrollTop < 12;
   const query = state.logQuery.toLowerCase();
-  const display = query ? text.split("\n").filter((line) => line.toLowerCase().includes(query)).join("\n") : text;
-  pre.textContent = display || (query ? "No lines match “" + state.logQuery + "”." : "No output yet.");
+  // Hold back an escape sequence cut off at the end of a chunk.
+  const safe = text.replace(/\x1b(\[[0-9;?]*[ -/]*)?$/, "");
+  if (!safe) {
+    pre.textContent = query ? "No lines match “" + state.logQuery + "”." : "No output yet.";
+    pre.dataset.mode = "";
+  } else if (query) {
+    const lines = safe.split("\n").filter((line) => stripAnsi(line).toLowerCase().includes(query));
+    pre.replaceChildren();
+    if (lines.length) ansiInto(pre, lines.join("\n"), {});
+    else pre.textContent = "No lines match “" + state.logQuery + "”.";
+    pre.dataset.mode = "filter";
+  } else if (pre.dataset.mode === "full" && safe.startsWith(state.logRendered)) {
+    ansiInto(pre, safe.slice(state.logRendered.length), state.logSgr);
+    state.logRendered = safe;
+  } else {
+    pre.replaceChildren();
+    state.logSgr = {};
+    ansiInto(pre, safe, state.logSgr);
+    state.logRendered = safe;
+    pre.dataset.mode = "full";
+  }
   if (keepEnd && (atEnd || !pre.dataset.seen) && state.follow) pre.scrollTop = pre.scrollHeight;
   pre.dataset.seen = "1";
   if (jump) jump.hidden = pre.scrollHeight - pre.clientHeight - pre.scrollTop < 12;
@@ -1229,8 +1408,8 @@ function buildLogPane(row) {
   tools.append(
     toggle("Wrap", "wrap", state.wrap, () => { state.wrap = !state.wrap; output.querySelector(".log-frame")?.classList.toggle("wrap", state.wrap); }, "Wrap long lines (W)"),
     toggle("Redact", "shield", state.redact, () => { state.redact = !state.redact; updateDetail(true); }, "Redact secrets"),
-    iconButton("copy", "Copy log", () => copy(state.logText), "btn sm icon"),
-    iconButton("download", "Download log", () => download(state.logText, `${row.name}${state.job ? "-" + state.job : ""}.log`), "btn sm icon"));
+    iconButton("copy", "Copy log", () => copy(stripAnsi(state.logText)), "btn sm icon"),
+    iconButton("download", "Download log", () => download(stripAnsi(state.logText), `${row.name}${state.job ? "-" + state.job : ""}.log`), "btn sm icon"));
   const frame = el("div", "log-frame" + (state.wrap ? " wrap" : ""));
   const pre = el("pre", null, "Loading…");
   pre.tabIndex = 0;
@@ -1277,7 +1456,7 @@ function followLogs(path) {
       buffer = (buffer + decoder.decode(data, {stream: true})).slice(-262144);
       liveIndicator("Live", "on");
     }
-    setLog(stripAnsi(buffer));
+    setLog(buffer);
   };
   socket.onclose = () => {
     if (logSocket !== socket) return;
@@ -1368,7 +1547,7 @@ async function updateDetail(reset = false) {
           return state.logText;
         });
         if (id !== detailRequest) return;
-        setLog(stripAnsi(String(data ?? "")));
+        setLog(String(data ?? ""));
         if (!live) liveIndicator(row.retired ? "Archived" : state.follow ? "Reconnecting…" : "Paused", state.follow && !row.retired ? "wait" : "");
       }
       if (live) followLogs((state.redact ? "logs" : "raw-logs") + "/" + path);
@@ -1500,7 +1679,49 @@ function field(label, name, { value = "", kind = "input", required = true, help,
   return wrap;
 }
 
-function lifetimeField(initial = "2h", help) {
+function ttlSeconds(value) {
+  const match = /^(?:(\d+)h)?(?:(\d+)m)?$/.exec(value || "");
+  if (!match || (!match[1] && !match[2])) return null;
+  return (Number(match[1] || 0) * 60 + Number(match[2] || 0)) * 60;
+}
+
+function whenLabel(seconds) {
+  const date = new Date(seconds * 1000);
+  const day = dayLabel(seconds);
+  const time = date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+  return (day === "Today" ? "today" : day === "Yesterday" ? "yesterday" : Math.round((seconds - Date.now() / 1000) / 3600) < 36 ? "tomorrow" : date.toLocaleDateString([], { weekday: "short", day: "numeric", month: "short" })) + " at " + time;
+}
+
+function expiryPreview(wrap, worker) {
+  const preview = el("p", "expiry-preview");
+  const update = () => {
+    const checked = wrap.querySelector('input[name="ttl"]:checked')?.value;
+    const value = checked === "custom" ? wrap.querySelector('[name="ttl_custom"]').value.trim() : checked;
+    const seconds = ttlSeconds(value);
+    const now = Date.now() / 1000;
+    preview.classList.remove("capped");
+    if (seconds == null) {
+      preview.replaceChildren(icon("clock"), el("span", "muted", "Enter a lifetime such as 90m, 2h or 1h30m."));
+      return;
+    }
+    let expiry = now + seconds;
+    let note = "in " + duration(seconds);
+    if (worker?.max_lifetime_end > 0 && expiry > worker.max_lifetime_end) {
+      expiry = worker.max_lifetime_end;
+      note = "capped at its maximum lifetime";
+      preview.classList.add("capped");
+    }
+    const parts = [icon(preview.classList.contains("capped") ? "alert" : "clock"), el("span", null, "New expiry: ", el("strong", null, whenLabel(expiry)), " · " + note)];
+    if (worker?.expires_at > 0) parts.push(el("span", "muted", " (now " + (worker.expires_at > now ? whenLabel(worker.expires_at) : "overdue") + ")"));
+    preview.replaceChildren(...parts);
+  };
+  wrap.addEventListener("change", update);
+  wrap.addEventListener("input", update);
+  update();
+  return preview;
+}
+
+function lifetimeField(initial = "2h", help, worker) {
   const wrap = el("fieldset", "field");
   wrap.append(el("legend", null, "Lifetime"));
   const segs = el("div", "segs");
@@ -1521,7 +1742,7 @@ function lifetimeField(initial = "2h", help) {
   }
   custom.hidden = preset;
   if (!preset) custom.value = initial;
-  wrap.append(segs, custom);
+  wrap.append(segs, custom, expiryPreview(wrap, worker));
   if (help) wrap.append(el("small", null, help));
   return wrap;
 }
@@ -1605,7 +1826,7 @@ async function form(action, worker, options = {}) {
     $("dialog-hint").textContent = "Ready in 1 to 4 minutes";
   }
   if (action === "extend") {
-    fields.append(lifetimeField(options.ttl || "2h", "Sets the expiry to now plus this duration, up to the worker's maximum lifetime."));
+    fields.append(lifetimeField(options.ttl || "2h", "The expiry is set to now plus this duration.", sourceWorker(worker.name) || worker));
   }
   if (["topic", "claim"].includes(action)) {
     fields.append(field("Topic", "topic", { value: worker?.topic || "", required: action === "claim", placeholder: "What is this worker for?", attrs: { maxlength: "255" } }));
@@ -1777,7 +1998,9 @@ function paletteEntries(ttl) {
     }
   }
   for (const [view, label] of Object.entries(views)) add("Go to", { workers: "server", jobs: "jobs", events: "activity", profiles: "layers" }[view], el("span", null, label), "go view " + view, () => { location.hash = view; });
-  add("Settings", prefs.layout === "split" ? "grid" : "columns", el("span", null, prefs.layout === "split" ? "Switch to cards layout" : "Switch to split view"), "layout cards split view switch", () => setPref("layout", prefs.layout === "split" ? "cards" : "split"));
+  for (const [layout, label, ic] of [["split", "split view", "columns"], ["cards", "cards", "grid"], ["console", "console", "terminal"]]) {
+    if (layout !== prefs.layout) add("Settings", ic, el("span", null, "Switch to the " + label + " layout"), "layout switch view design " + layout + " " + label, () => setPref("layout", layout));
+  }
   add("Settings", "sun", el("span", null, "Theme: system, dark or light"), "theme dark light mode appearance", () => openSettings());
   add("Settings", "keyboard", el("span", null, "Keyboard shortcuts"), "keyboard shortcuts help keys", () => showKeys(), "?");
   if (state.token) add("Settings", "lock", el("span", null, "Lock console"), "lock sign out logout", () => lock());
