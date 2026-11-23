@@ -739,6 +739,11 @@ in
             && builtins.match "[^[:space:]]+" cfg.builderGateway.authorizedKeysFile != null;
           message = "The rworker builder gateway authorizedKeysFile must be an absolute runtime path without whitespace.";
         }
+        {
+          # sshd's StrictModes refuses key files below the group-writable store.
+          assertion = !lib.hasPrefix builtins.storeDir cfg.builderGateway.authorizedKeysFile;
+          message = "The rworker builder gateway authorizedKeysFile must not be in the Nix store: sshd's StrictModes refuses it. Use a copied /etc file (environment.etc with mode) or a secret.";
+        }
       ];
       users.groups.${builderAccount} = { };
       users.users.${builderAccount} = {

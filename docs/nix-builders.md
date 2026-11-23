@@ -32,7 +32,18 @@ gateway beside an existing `services.rworker` configuration.
 ```
 
 Put the client daemon's SSH public key in the gateway's `authorizedKeysFile`.
-It must be readable by the `rworker-builder` login account. If your SSH server
+It must be readable by the `rworker-builder` login account, and it must not
+be a Nix store path: sshd's StrictModes refuses files below the group-writable
+store. A secret file works, or a copy in `/etc`:
+
+```nix
+environment.etc."rworker-builder-authorized-keys" = {
+  text = "ssh-ed25519 AAAA... client\n";
+  mode = "0444"; # a copy, not a link into the store
+};
+services.rworker.builderGateway.authorizedKeysFile = "/etc/rworker-builder-authorized-keys";
+```
+ If your SSH server
 has an account allowlist, add `rworker-builder` to it. The account accepts the
 Nix daemon command and does not provide a shell, PTY, or forwarding.
 

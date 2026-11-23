@@ -4,6 +4,7 @@
 
 The Rust client and controller replace the original Bash client.
 
+- Refuse a builder gateway `authorizedKeysFile` in the Nix store: sshd's StrictModes rejects it, so every gateway login failed. The docs show a copied `/etc` file.
 - Order the web console's views Workers, Jobs, Logs, Profiles, Events (keys 1 to 5 follow).
 - Lay out the web console's Profiles view by the layout setting too: a list (split), a sortable table (console) or cards; a click opens the profile details.
 - Lay out the web console's Jobs view like the Workers view: split (compact list beside the job's log), console (sortable table above it) or cards. Opening a job keeps you on Jobs (`#jobs/WORKER/JOB`), J/K move between jobs and Esc closes the job.
