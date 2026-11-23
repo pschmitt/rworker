@@ -449,10 +449,40 @@ async fn cached_workers(headers: &HeaderMap, dir: PathBuf) -> Response {
     }
 }
 
+/// Jobs of reachable workers from `rworker jobs --json`, reused for a few
+/// seconds so the console's refreshes do not open a session per worker
+/// every time. It covers the workers the log collector may not reach,
+/// such as pool workers.
+static LIVE_JOBS: std::sync::Mutex<Option<(std::time::Instant, Vec<Value>)>> =
+    std::sync::Mutex::new(None);
+
+async fn live_jobs() -> Vec<Value> {
+    let cached = LIVE_JOBS.lock().ok().and_then(|guard| guard.clone());
+    if let Some((at, rows)) = &cached
+        && at.elapsed() < std::time::Duration::from_secs(15)
+    {
+        return rows.clone();
+    }
+    match run(words(&["jobs", "--json"]), 30)
+        .await
+        .ok()
+        .and_then(|output| serde_json::from_str::<Vec<Value>>(&output).ok())
+    {
+        Some(rows) => {
+            if let Ok(mut guard) = LIVE_JOBS.lock() {
+                *guard = Some((std::time::Instant::now(), rows.clone()));
+            }
+            rows
+        }
+        None => cached.map(|(_, rows)| rows).unwrap_or_default(),
+    }
+}
+
 async fn cached_jobs(headers: &HeaderMap, worker: Option<String>) -> Response {
     if let Err(error) = authorized(headers) {
         return failure(error);
     }
+    let filter = worker.clone();
     let snapshot = tokio::task::spawn_blocking(move || {
         let mut rows = std::collections::BTreeMap::new();
         let ctx = crate::ctx::Ctx::from_env();
@@ -471,13 +501,25 @@ async fn cached_jobs(headers: &HeaderMap, worker: Option<String>) -> Response {
                 }
             }
         }
-        Ok::<_, std::io::Error>(rows.into_values().collect::<Vec<_>>())
+        Ok::<_, std::io::Error>(rows)
     })
     .await;
-    match snapshot {
-        Ok(Ok(rows)) => reply(StatusCode::OK, json!({"data": rows})),
-        _ => failure((StatusCode::BAD_GATEWAY, "Could not read the job cache.")),
+    let Ok(Ok(mut rows)) = snapshot else {
+        return failure((StatusCode::BAD_GATEWAY, "Could not read the job cache."));
+    };
+    for live in live_jobs().await {
+        let (Some(name), Some(job)) = (live["worker"].as_str(), live["job"].as_str()) else {
+            continue;
+        };
+        if filter.as_deref().is_some_and(|filter| filter != name) {
+            continue;
+        }
+        rows.insert((name.to_owned(), job.to_owned()), live.clone());
     }
+    reply(
+        StatusCode::OK,
+        json!({"data": rows.into_values().collect::<Vec<_>>()}),
+    )
 }
 
 fn worker_command(

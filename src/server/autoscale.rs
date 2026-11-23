@@ -549,6 +549,12 @@ impl Pool<'_> {
         ]
         .into_iter()
         .collect();
+        let mut user_data = user_data(cfg)?;
+        if !user_data.contains_key("agent_authorized_keys")
+            && let Some(key) = super::worker_ssh::web_pool_key()?
+        {
+            user_data.insert("agent_authorized_keys".into(), json!([key]));
+        }
         let (id, metadata) = provision::create(
             cfg,
             &self.compute,
@@ -559,7 +565,7 @@ impl Pool<'_> {
                 disk: count(cfg, "volumeSize")? as i64,
                 profile: cfg["profile"].as_str().unwrap_or("standard"),
                 metadata,
-                user_data: user_data(cfg)?,
+                user_data,
             },
         )?;
         self.workers.insert(name, json!({

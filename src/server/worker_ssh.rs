@@ -60,6 +60,19 @@ pub(super) fn web_worker_key(owner: &str, existing: &[&str]) -> Result<Option<St
     restrict_web_key(&key, existing)
 }
 
+/// The console identity for a pool's workers, when its autoscaler was given
+/// the key as a systemd credential.
+pub(super) fn web_pool_key() -> Result<Option<String>, String> {
+    let Some(directory) = std::env::var_os("CREDENTIALS_DIRECTORY") else {
+        return Ok(None);
+    };
+    match fs::read_to_string(Path::new(&directory).join(WEB_WORKER_KEY)) {
+        Ok(key) => restrict_web_key(&key, &[]),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(error) => Err(format!("Read web console SSH public key: {error}")),
+    }
+}
+
 struct KnownHosts(PathBuf);
 
 impl Drop for KnownHosts {

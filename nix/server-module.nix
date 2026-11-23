@@ -355,6 +355,17 @@ in
                 default = "Autoscale the ${name} worker pool";
                 description = "Systemd unit description.";
               };
+              webConsoleAccess = lib.mkOption {
+                type = lib.types.bool;
+                default = true;
+                description = ''
+                  Authorize the web console's SSH key, restricted to sessions
+                  without forwarding, on this pool's new workers, so the
+                  console lists their jobs and opens terminals on them. Takes
+                  effect when `web.operator`, `web.identityFile` and
+                  `web.publicKeyFile` are set.
+                '';
+              };
             };
           }
         )
@@ -941,6 +952,9 @@ in
           serviceConfig = {
             User = autoscaler.user;
             Group = autoscaler.group;
+            LoadCredential = lib.optional (
+              webWorkerAccess && autoscaler.webConsoleAccess
+            ) "rworker-web-worker-public-key:${cfg.web.publicKeyFile}";
             ExecStart = command [
               "server"
               autoscaler.settingsFile

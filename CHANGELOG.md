@@ -4,6 +4,7 @@
 
 The Rust client and controller replace the original Bash client.
 
+- List jobs of pool workers in the web console: it polls reachable workers alongside the log collector, and autoscalers authorize the console's restricted SSH key on new pool workers (`autoscalers.<name>.webConsoleAccess`).
 - Mark the current web console view with a filled background and accent icon instead of a side bar.
 - Sort the console layout's worker table by clicking a column header.
 - Show why a web console action failed: the controller's error message, with secrets masked, instead of a generic error.
