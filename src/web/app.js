@@ -25,6 +25,7 @@ function setPref(key, value) {
   try { localStorage.setItem("rworker.prefs", JSON.stringify(prefs)); } catch { /* Storage disabled. */ }
   applyPrefs();
   for (const input of document.querySelectorAll(`#settings input[name="${key}"]`)) input.checked = input.value === value;
+  $("splitter").setAttribute("aria-orientation", prefs.layout === "console" ? "horizontal" : "vertical");
   lastRenderKey = "";
   detailPanel();
   render();
@@ -450,15 +451,13 @@ function renderFilters(now) {
     host.append(chip);
   }
   if (state.view === "workers") {
-    const sort = el("select");
-    sort.setAttribute("aria-label", "Sort workers");
-    for (const [value, label] of [["newest", "Newest first"], ["lease", "Expiring first"], ["name", "Name"]]) {
-      const option = el("option", null, label);
-      option.value = value;
-      sort.append(option);
-    }
-    sort.value = state.sort;
-    sort.addEventListener("change", () => { state.sort = sort.value; state.tableSort = null; render(); });
+    const sort = dropdown({ label: "Sort workers", onChange: (value) => { state.sort = value; state.tableSort = null; render(); } });
+    sort.setOptions([
+      { value: "newest", label: "Newest first", sub: "Most recently created on top", icon: "sort" },
+      { value: "lease", label: "Expiring first", sub: "Shortest lease on top", icon: "clock" },
+      { value: "name", label: "Name", sub: "Alphabetical", icon: "sort" },
+    ]);
+    sort.setValue(state.sort);
     host.append(sort);
   }
 }
@@ -592,13 +591,23 @@ function groupWorkers(rows, now) {
   return groups;
 }
 
+// Workers created in the last five minutes get a "new" badge.
+function isNew(row, now) {
+  const created = timestamp(row.created_at);
+  return !row.retired && Number.isFinite(created) && now - created < 300;
+}
+
+function newBadge(row, now) {
+  return isNew(row, now) ? el("span", "tag new", "new") : null;
+}
+
 function workerSub(row) {
   return row.topic || row.label || (isPool(row) ? row.kind + " pool" : row.owner) || "";
 }
 
 function workerRow(row, now) {
   const lease = leaseInfo(row, now);
-  const data = JSON.stringify([row.topic, row.label, row.status, row.retired, lease.text, lease.tone, Math.round(lease.pct / 5), row.icon]);
+  const data = JSON.stringify([row.topic, row.label, row.status, row.retired, lease.text, lease.tone, Math.round(lease.pct / 5), row.icon, isNew(row, now)]);
   const current = state.selected?.name === row.name;
   const cached = rowCache.get(row.name);
   if (cached && cached.data === data) {
@@ -613,9 +622,11 @@ function workerRow(row, now) {
   const right = lease.kind === "pool" ? el("span", "pill" + (lease.tone === "busy" ? " busy" : ""), lease.text) :
     lease.kind === "retired" ? el("span", "lease-text", relative(row.created_at, now)) :
       el("span", "lease", el("span", "lease-text" + (lease.tone ? " " + lease.tone : ""), lease.text), leaseBar(lease));
-  node.append(workerTile(row), el("span", "ident", el("span", "name", row.name), el("span", "sub", workerSub(row))), right);
-  if (cached) node.classList.add("flash");
-  rowCache.set(row.name, { node, data });
+  node.append(workerTile(row), el("span", "ident", el("span", "name-line", el("span", "name", row.name), newBadge(row, now)), el("span", "sub", workerSub(row))), right);
+  // Flash only on changes worth noticing, not on the lease countdown.
+  const notable = JSON.stringify([row.topic, row.label, row.status, row.retired, row.pool_state, row.agent, lease.tone]);
+  if (cached && cached.notable !== notable) node.classList.add("flash");
+  rowCache.set(row.name, { node, data, notable });
   return node;
 }
 
@@ -639,7 +650,7 @@ function renderWorkerList(visible, now) {
 const tableCache = new Map();
 function tableRow(row, now) {
   const lease = leaseInfo(row, now);
-  const data = JSON.stringify([row.topic, row.agent, row.status, row.retired, lease.text, lease.tone, Math.round(lease.pct / 5)]);
+  const data = JSON.stringify([row.topic, row.agent, row.status, row.retired, lease.text, lease.tone, Math.round(lease.pct / 5), isNew(row, now)]);
   const current = state.selected?.name === row.name;
   const cached = tableCache.get(row.name);
   if (cached && cached.data === data) {
@@ -652,15 +663,16 @@ function tableRow(row, now) {
   const kind = workerKind(row);
   const glyphChar = workerGlyph(row);
   const glyphClass = glyphChar === githubGlyph ? "github" : glyphChar === gitlabGlyph ? "gitlab" : isPool(row) ? "pool" : "adhoc";
-  const node = el("a", "ctr worker-item", el("span", "mark"), el("span", "nm", row.name), el("span", "kd", glyph(glyphChar, glyphClass), el("span", "muted", kind)), el("span", "st-" + status[1], status[0]),
+  const node = el("a", "ctr worker-item", el("span", "mark"), el("span", "nm", row.name, newBadge(row, now) ? " " : null, newBadge(row, now)), el("span", "kd", glyph(glyphChar, glyphClass), el("span", "muted", kind)), el("span", "st-" + status[1], status[0]),
     agentLabel(row.agent), el("span", "tp", row.topic || ""),
     el("span", "ls", leaseBar(lease), el("span", "lease-text" + (lease.tone && lease.kind !== "pool" ? " " + lease.tone : ""), lease.kind === "pool" ? lease.text : lease.text.replace(" left", ""))),
     el("span", "muted", relative(row.created_at, now).replace(" ago", "")));
   node.href = workerHash(row);
   node.dataset.worker = row.name;
   if (current) node.setAttribute("aria-current", "true");
-  if (cached) node.classList.add("flash");
-  tableCache.set(row.name, { node, data });
+  const notable = JSON.stringify([row.topic, row.status, row.retired, row.pool_state, row.agent, lease.tone]);
+  if (cached && cached.notable !== notable) node.classList.add("flash");
+  tableCache.set(row.name, { node, data, notable });
   return node;
 }
 
@@ -744,7 +756,7 @@ function renderWorkerCards(visible, now) {
         el("span", null, agentLabel(row.agent)),
         el("span", null, icon("user"), row.owner || "—"),
         el("span", null, icon("clock"), relative(row.created_at, now).replace(" ago", " old")));
-      card.append(el("div", "card-head", workerTile(row), el("div", "ident", name, el("span", "sub", workerSub(row))), statusPill(row)), facts);
+      card.append(el("div", "card-head", workerTile(row), el("div", "ident", el("span", "name-line", name, newBadge(row, now)), el("span", "sub", workerSub(row))), statusPill(row)), facts);
       if (lease.kind === "lease") {
         card.append(el("div", "card-lease", el("div", null, el("span", null, "Lease"), el("span", "lease-text" + (lease.tone ? " " + lease.tone : ""), lease.text)), leaseBar(lease, true)));
       }
@@ -899,28 +911,25 @@ function logsHash(worker, job) {
 }
 
 function fillLogsPickers(root) {
-  const [workerSelect, jobSelect] = root.querySelectorAll(".log-tools select");
-  const live = (state.rows.workers || []).filter((row) => !row.retired).map((row) => row.name).sort();
-  if (state.logsWorker && !live.includes(state.logsWorker)) live.unshift(state.logsWorker);
-  const option = (value, label) => { const node = el("option", null, label); node.value = value; return node; };
-  const workerKey = live.join(",");
-  if (workerSelect.dataset.key !== workerKey) {
-    workerSelect.dataset.key = workerKey;
-    workerSelect.replaceChildren(option("", "All workers"), ...live.map((name) => option(name, name)));
+  const [workerPicker, jobPicker] = root.querySelectorAll(".log-tools .dropdown");
+  const workers = workerOptions(true);
+  if (state.logsWorker && !workers.some((option) => option.value === state.logsWorker)) {
+    workers.splice(1, 0, { value: state.logsWorker, label: state.logsWorker, mono: true, sub: "not live", icon: "archive" });
   }
-  workerSelect.value = state.logsWorker;
-  const jobs = state.logsWorker ? (state.logsJobs || []) : [];
-  const names = [...new Map(jobs.map((job) => [job.job, job])).values()]
-    .sort((a, b) => Number(filterTests.jobs.active(b)) - Number(filterTests.jobs.active(a)) || a.job.localeCompare(b.job));
-  if (state.logsJob && !names.some((job) => job.job === state.logsJob)) names.unshift({ job: state.logsJob, state: "" });
-  const jobKey = state.logsWorker + "|" + names.map((job) => job.job + job.state).join(",");
-  if (jobSelect.dataset.key !== jobKey) {
-    jobSelect.dataset.key = jobKey;
-    jobSelect.replaceChildren(option("", state.logsWorker ? "All jobs" : "Pick a worker first"),
-      ...names.map((job) => option(job.job, job.state ? job.job + " · " + job.state : job.job)));
+  workerPicker.setOptions(workers);
+  workerPicker.setValue(state.logsWorker);
+  if (state.logsWorker) {
+    const jobs = (state.logsJobs || []).map((job) => ({ worker: state.logsWorker, ...job }));
+    if (state.logsJob && !jobs.some((job) => job.job === state.logsJob)) jobs.unshift({ worker: state.logsWorker, job: state.logsJob, state: "" });
+    jobPicker.setOptions(jobOptions(jobs));
+    jobPicker.setValue(state.logsJob);
+  } else {
+    // Without a worker: any job, grouped by worker; picking one picks both.
+    const live = new Set((state.rows.workers || []).filter((row) => !row.retired).map((row) => row.name));
+    const jobs = (state.rows.jobs || []).filter((job) => job.state !== "archived" || live.has(job.worker));
+    jobPicker.setOptions(jobOptions(jobs, { withWorker: true, allLabel: "All jobs on all workers" }));
+    jobPicker.setValue("");
   }
-  jobSelect.disabled = !state.logsWorker;
-  jobSelect.value = state.logsJob;
 }
 
 function renderLogsView() {
@@ -941,12 +950,15 @@ function renderLogsView() {
   }
   const container = el("div", "logs-view");
   const tools = el("div", "log-tools");
-  const workerSelect = el("select");
-  workerSelect.setAttribute("aria-label", "Worker");
-  workerSelect.addEventListener("change", () => { state.logsJobs = null; location.hash = logsHash(workerSelect.value); });
-  const jobSelect = el("select");
-  jobSelect.setAttribute("aria-label", "Job");
-  jobSelect.addEventListener("change", () => { location.hash = logsHash(state.logsWorker, jobSelect.value); });
+  const workerSelect = dropdown({ label: "Worker", searchPlaceholder: "Worker, topic, agent", onChange: (value) => { state.logsJobs = null; location.hash = logsHash(value); } });
+  const jobSelect = dropdown({ label: "Job", searchPlaceholder: "Job or worker", onChange: (value) => {
+    if (state.logsWorker) location.hash = logsHash(state.logsWorker, value);
+    else if (value) {
+      const [worker, ...job] = value.split("/");
+      state.logsJobs = null;
+      location.hash = logsHash(worker, job.join("/"));
+    }
+  } });
   const search = el("label", "search", icon("search"));
   const input = el("input");
   input.type = "search";
@@ -991,6 +1003,7 @@ async function refresh(manual = false) {
     if (view === "logs") {
       state.rows.workers = await request("workers");
       if (state.logsWorker) state.logsJobs = await request("jobs/" + encodeURIComponent(state.logsWorker)).catch(() => state.logsJobs);
+      else state.rows.jobs = await request("jobs").catch(() => state.rows.jobs);
       connection("Live", "online");
       if (state.view === "logs") render();
       return;
@@ -1150,6 +1163,8 @@ function layoutWorkspace() {
   const split = splitActive();
   const fullPage = Boolean(row) && !split;
   $("workspace").classList.toggle("split", split);
+  $("splitter").hidden = !split;
+  applySplit();
   $("keybar").hidden = !(split && prefs.layout === "console" && state.authenticated);
   $("detail").hidden = !row;
   $("detail-empty").hidden = !split || Boolean(row);
@@ -1164,6 +1179,70 @@ function layoutWorkspace() {
   $("heading").textContent = views[state.view];
   $("banner").dataset.key = "";
   document.title = (row?.name || views[state.view]) + " · rworker";
+}
+
+// The divider between list and worker: its position per layout, in px,
+// kept in this browser.
+const splitSizes = {};
+try { Object.assign(splitSizes, JSON.parse(localStorage.getItem("rworker.split") || "{}")); } catch { /* Storage disabled. */ }
+
+function applySplit() {
+  const workspace = $("workspace");
+  const vertical = prefs.layout === "console";
+  workspace.style.removeProperty("--split-left");
+  workspace.style.removeProperty("--split-top");
+  const size = splitSizes[prefs.layout];
+  if (!size || !workspace.classList.contains("split")) return;
+  const box = workspace.getBoundingClientRect();
+  const limit = (vertical ? box.height : box.width) - 220;
+  const clamped = Math.max(vertical ? 110 : 260, Math.min(size, limit > 0 ? limit : size));
+  workspace.style.setProperty(vertical ? "--split-top" : "--split-left", Math.round(clamped) + "px");
+}
+
+function setSplit(size) {
+  if (size == null) delete splitSizes[prefs.layout];
+  else splitSizes[prefs.layout] = Math.round(size);
+  try { localStorage.setItem("rworker.split", JSON.stringify(splitSizes)); } catch { /* Storage disabled. */ }
+  applySplit();
+}
+
+function setupSplitter() {
+  const bar = $("splitter");
+  const current = () => {
+    const pane = $("inventory").getBoundingClientRect();
+    return prefs.layout === "console" ? pane.height : pane.width;
+  };
+  bar.addEventListener("pointerdown", (event) => {
+    if (event.button !== 0) return;
+    event.preventDefault();
+    bar.setPointerCapture(event.pointerId);
+    bar.classList.add("dragging");
+    document.body.classList.add("resizing");
+    const box = $("workspace").getBoundingClientRect();
+    const move = (moved) => {
+      splitSizes[prefs.layout] = prefs.layout === "console" ? moved.clientY - box.top : moved.clientX - box.left;
+      applySplit();
+    };
+    const done = () => {
+      bar.removeEventListener("pointermove", move);
+      bar.classList.remove("dragging");
+      document.body.classList.remove("resizing");
+      setSplit(current());
+    };
+    bar.addEventListener("pointermove", move);
+    bar.addEventListener("pointerup", done, { once: true });
+    bar.addEventListener("pointercancel", done, { once: true });
+  });
+  bar.addEventListener("dblclick", () => setSplit(null));
+  bar.addEventListener("keydown", (event) => {
+    const step = event.shiftKey ? 80 : 24;
+    const delta = { ArrowUp: -step, ArrowLeft: -step, ArrowDown: step, ArrowRight: step }[event.key];
+    if (!delta) return;
+    event.preventDefault();
+    setSplit(current() + delta);
+  });
+  bar.setAttribute("aria-label", "Resize the worker list");
+  addEventListener("resize", applySplit);
 }
 
 function detailPanel() {
@@ -1566,26 +1645,19 @@ function renderLogTools() {
   const row = state.selected;
   const tools = $("detail-output").querySelector(".log-tools");
   if (!row || !tools) return;
-  const select = tools.querySelector("select");
-  if (select) {
-    const jobs = state.detailJobs || [];
-    const options = [["", "All jobs"], ...jobs.map((job) => [job.job, job.job + " · " + job.state])];
-    if (state.job && !jobs.some((job) => job.job === state.job)) options.push([state.job, state.job]);
-    select.replaceChildren(...options.map(([value, label]) => {
-      const option = el("option", null, label);
-      option.value = value;
-      return option;
-    }));
-    select.value = state.job || "";
+  const picker = tools.querySelector(".dropdown");
+  if (picker) {
+    const jobs = [...(state.detailJobs || [])];
+    if (state.job && !jobs.some((job) => job.job === state.job)) jobs.push({ job: state.job, state: "" });
+    picker.setOptions(jobOptions(jobs));
+    picker.setValue(state.job || "");
   }
 }
 
 function buildLogPane(row) {
   const output = $("detail-output");
   const tools = el("div", "log-tools");
-  const jobSelect = el("select");
-  jobSelect.setAttribute("aria-label", "Job");
-  jobSelect.addEventListener("change", () => select(row, jobSelect.value || null));
+  const jobSelect = dropdown({ label: "Job", searchPlaceholder: "Job", onChange: (value) => select(row, value || null) });
   const live = el("span", "live", row.retired ? "Archived" : "Snapshot");
   const search = el("label", "search", icon("search"));
   const input = el("input");
@@ -1859,6 +1931,137 @@ function openMenu(anchor, items, point) {
   menu.style.left = Math.min(Math.max(8, box.right - menu.offsetWidth), innerWidth - menu.offsetWidth - 8) + "px";
   menuState = { menu, scrim };
   menu.querySelector("button")?.focus();
+}
+
+// Dropdowns: a button showing the chosen option and a searchable list with
+// icons, details and groups. Options: {value, label, sub, glyph, glyphCls,
+// icon, meta (text or node), group, mono}.
+function optionParts(option, compact) {
+  const parts = [];
+  if (option.glyph) parts.push(glyph(option.glyph, option.glyphCls || ""));
+  else if (option.icon) parts.push(icon(option.icon, option.iconCls || ""));
+  const text = el("span", "dd-text", el("span", "dd-label" + (option.mono ? " mono" : ""), option.label ?? ""));
+  if (!compact && option.sub) text.append(el("span", "dd-sub", option.sub));
+  parts.push(text);
+  if (!compact && option.meta) parts.push(option.meta instanceof Node ? option.meta.cloneNode(true) : el("span", "dd-meta", option.meta));
+  return parts;
+}
+
+function dropdown({ label, placeholder = "", onChange, searchPlaceholder = "Search" }) {
+  const trigger = el("button", "btn sm dropdown");
+  trigger.type = "button";
+  trigger.setAttribute("aria-haspopup", "listbox");
+  trigger.setAttribute("aria-label", label);
+  let options = [];
+  let value = "";
+  const paint = () => {
+    const chosen = options.find((option) => option.value === value);
+    trigger.replaceChildren(...optionParts(chosen || { label: placeholder, icon: "chev-r" }, true), icon("chev-d", "caret"));
+    trigger.title = chosen?.sub ? `${chosen.label} · ${chosen.sub}` : chosen?.label || placeholder;
+  };
+  trigger.addEventListener("click", () => openDropdown(trigger, options, value, (chosen) => {
+    value = chosen;
+    paint();
+    onChange(chosen);
+  }, searchPlaceholder));
+  trigger.setOptions = (next) => { options = next; paint(); };
+  trigger.setValue = (next) => { value = next ?? ""; paint(); };
+  paint();
+  return trigger;
+}
+
+function openDropdown(anchor, options, current, choose, searchPlaceholder) {
+  closeMenu();
+  const scrim = el("div", "menu-scrim");
+  const panel = el("div", "menu dropdown-panel");
+  const searchable = options.length > 6;
+  const input = el("input");
+  input.type = "search";
+  input.placeholder = searchPlaceholder;
+  input.setAttribute("aria-label", searchPlaceholder);
+  const list = el("div", "dd-list");
+  list.setAttribute("role", "listbox");
+  let shown = [];
+  let active = 0;
+  const highlight = () => {
+    list.querySelectorAll(".dd-option").forEach((node, index) => node.setAttribute("aria-selected", String(index === active)));
+    list.querySelectorAll(".dd-option")[active]?.scrollIntoView({ block: "nearest" });
+  };
+  const fill = () => {
+    const query = input.value.trim().toLowerCase();
+    shown = options.filter((option) => !query || [option.label, option.sub, option.group, option.search].filter(Boolean).join(" ").toLowerCase().includes(query));
+    list.replaceChildren();
+    let group;
+    shown.forEach((option, index) => {
+      if (option.group && option.group !== group) {
+        group = option.group;
+        list.append(el("div", "dd-group", group));
+      }
+      const node = el("button", "dd-option" + (option.value === current ? " current" : ""), ...optionParts(option, false));
+      node.type = "button";
+      node.setAttribute("role", "option");
+      node.addEventListener("click", () => { closeMenu(); anchor.focus({ preventScroll: true }); choose(option.value); });
+      node.addEventListener("mousemove", () => { if (active !== index) { active = index; highlight(); } });
+      list.append(node);
+    });
+    if (!shown.length) list.append(el("div", "dd-empty", "Nothing matches."));
+    active = Math.max(0, shown.findIndex((option) => option.value === current));
+    highlight();
+  };
+  const keys = (event) => {
+    if (event.key === "ArrowDown") { event.preventDefault(); active = Math.min(shown.length - 1, active + 1); highlight(); }
+    else if (event.key === "ArrowUp") { event.preventDefault(); active = Math.max(0, active - 1); highlight(); }
+    else if (event.key === "Enter") { event.preventDefault(); const option = shown[active]; if (option) { closeMenu(); anchor.focus(); choose(option.value); } }
+    else if (event.key === "Escape") { event.preventDefault(); closeMenu(); anchor.focus(); }
+    else if (event.key === "Tab") closeMenu();
+  };
+  input.addEventListener("input", fill);
+  panel.addEventListener("keydown", keys);
+  if (searchable) panel.append(el("div", "dd-search", icon("search"), input));
+  panel.append(list);
+  scrim.addEventListener("click", closeMenu);
+  document.body.append(scrim, panel);
+  fill();
+  const box = anchor.getBoundingClientRect();
+  panel.style.minWidth = Math.max(box.width, 300) + "px";
+  const top = box.bottom + 6 + panel.offsetHeight > innerHeight - 8 ? Math.max(8, box.top - panel.offsetHeight - 6) : box.bottom + 6;
+  panel.style.top = top + "px";
+  panel.style.left = Math.min(Math.max(8, box.left), innerWidth - panel.offsetWidth - 8) + "px";
+  menuState = { menu: panel, scrim };
+  (searchable ? input : list.querySelector(".dd-option[aria-selected=true]") || list.querySelector(".dd-option"))?.focus();
+}
+
+function workerOptions(includeAll) {
+  const now = Date.now() / 1000;
+  const rows = (state.rows.workers || []).filter((row) => !row.retired);
+  const options = includeAll ? [{ value: "", label: "All workers", sub: "Every job on every worker", icon: "server" }] : [];
+  for (const row of sortWorkers(rows, now)) {
+    const lease = leaseInfo(row, now);
+    const glyphChar = workerGlyph(row);
+    options.push({
+      value: row.name, label: row.name, mono: true,
+      sub: [row.topic, row.agent, row.owner].filter(Boolean).join(" · "),
+      glyph: glyphChar, glyphCls: glyphChar === githubGlyph ? "github" : glyphChar === gitlabGlyph ? "gitlab" : isPool(row) ? "pool" : "adhoc",
+      meta: lease.text, group: isPool(row) ? (row.pool || row.kind) + " pool" : "Ad-hoc",
+      search: [row.profile, row.kind].filter(Boolean).join(" "),
+    });
+  }
+  return options;
+}
+
+function jobOptions(jobs, { withWorker = false, allLabel = "All jobs" } = {}) {
+  const unique = [...new Map(jobs.map((job) => [(job.worker || "") + "/" + job.job, job])).values()]
+    .sort((a, b) => (withWorker ? (a.worker || "").localeCompare(b.worker || "") : 0) ||
+      Number(filterTests.jobs.active(b)) - Number(filterTests.jobs.active(a)) || a.job.localeCompare(b.job));
+  return [{ value: "", label: allLabel, icon: "jobs" }, ...unique.map((job) => {
+    const [tone, ic] = jobTone(job.state);
+    return {
+      value: withWorker ? job.worker + "/" + job.job : job.job, label: job.job, mono: true,
+      sub: [withWorker ? job.worker : "", job.started_at ? "started " + relative(job.started_at) : ""].filter(Boolean).join(" · "),
+      icon: ic, iconCls: "tone-" + (tone || "info"), meta: job.state ? jobPill(job.state) : null,
+      group: withWorker ? job.worker : undefined,
+    };
+  })];
 }
 
 // Action forms
@@ -2402,6 +2605,7 @@ function followInventory() {
   stream = socket;
   socket.onmessage = ({data}) => {
     if (data === "updated" && state.view === "workers") refresh();
+    if (data === "jobs") refreshJobs();
   };
   socket.onclose = () => {
     if (stream !== socket) return;
@@ -2474,12 +2678,30 @@ setInterval(() => {
   if (state.view !== "profiles") refresh();
   else render();
 }, 5000);
+// Job lists follow the "jobs" messages of the update socket; this timer
+// only catches up after a missed message or a reconnect.
+async function refreshJobs() {
+  if (!state.authenticated) return;
+  try {
+    state.rows.jobs = await request("jobs");
+    renderNav(Date.now() / 1000);
+    if (state.view === "jobs") render();
+    if (state.view === "logs" && !state.selected) {
+      if (state.logsWorker) state.logsJobs = await request("jobs/" + encodeURIComponent(state.logsWorker));
+      const view = $("results").querySelector(".logs-view");
+      if (view) fillLogsPickers(view);
+    }
+  } catch { /* Shown when the Jobs page is opened. */ }
+  if (state.selected) loadDetailJobs(state.selected);
+}
+setInterval(() => { if (!document.hidden) refreshJobs(); }, 60000);
 setInterval(() => {
   if (!state.authenticated || document.hidden || !state.follow || logSocket) return;
   if (state.selected && state.tab === "logs" && !state.selected.retired) updateDetail();
   else if (state.view === "logs" && !state.selected && Date.now() >= logRetryAt) followLogs(logsPath());
 }, 2500);
 $("toolbar").hidden = true;
+setupSplitter();
 if ("serviceWorker" in navigator) navigator.serviceWorker.register("/assets/sw.js", { scope: "/" }).catch(() => {});
 navigate();
 let savedToken = "";

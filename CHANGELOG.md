@@ -4,9 +4,14 @@
 
 The Rust client and controller replace the original Bash client.
 
+- Mark workers created in the last five minutes with a "new" badge in the web console.
+- Flash web console worker rows only when their status, topic, agent or lease state changes, not on every lease countdown tick.
 - Keep retrying the TUI's log preview of a worker that has no IP yet, so its logs appear once it is reachable.
 - Push job changes: the job event collector also covers pool workers (with the console's key), the web console's update socket sends "jobs" on every job event, and `jobs --watch` and the TUI refresh on the controller's job events instead of waiting for the next poll.
 - Recover workers whose creation was cut short: the reaper pins the host key from the boot console instead of deleting the worker as unready.
+- Refresh the web console's job counts every 10 seconds on every page, so the sidebar and the worker Jobs tab match the Jobs page.
+- Replace the web console's selects with searchable dropdowns that show worker topics, agents and leases and job states; the Logs view's job picker lists every job when no worker is chosen.
+- Drag the divider between the worker list and the open worker in the web console's split and console layouts to resize them (double-click resets).
 - Add `logs --filter REGEX` (`--grep`, `-g`, repeatable): only lines matching any of the case-insensitive expressions, matches highlighted and the lines' colors kept, also with `--follow`.
 - Poll jobs for lifecycle events only on workers that carry the log collector's key: logins refused on pool workers got the controller's address penalized by sshd, which made the web console's job list lose workers.
 - Show job states with icons in the web console, including an archive icon for archived jobs.
