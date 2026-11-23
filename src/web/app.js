@@ -385,9 +385,11 @@ function statusPill(row) {
 function jobTone(value) {
   const key = String(value || "").toLowerCase();
   if (key === "running") return ["busy", "play"];
+  // A registered log file: the job is live, its process is not ours to track.
+  if (key === "registered") return ["", "activity"];
   if (key === "exit 0") return ["good", "check"];
   if (/^exit /.test(key) || /error|failed/.test(key)) return ["bad", "x"];
-  if (key === "archived") return ["", "archive"];
+  if (key === "archived") return ["archived", "archive"];
   return ["", "clock"];
 }
 
@@ -888,7 +890,7 @@ function renderJobs(visible) {
   const sorted = visible.slice().sort((a, b) => Number(filterTests.jobs.active(b)) - Number(filterTests.jobs.active(a)));
   for (const row of sorted.slice(0, state.limit)) {
     const [tone, ic] = jobTone(row.state);
-    const link = el("a", "job-row", icon(ic, "tone-" + (tone || "info")), el("span", "name", row.job), el("span", "worker", row.worker), jobPill(row.state));
+    const link = el("a", "job-row" + (tone === "archived" ? " archived" : ""), icon(ic, "tone-" + (tone || "info")), el("span", "name", row.job), el("span", "worker", row.worker), jobPill(row.state));
     link.href = workerHash({ name: row.worker }, row.job);
     link.dataset.worker = row.worker;
     link.dataset.job = row.job;
@@ -1924,7 +1926,7 @@ async function updateDetail(reset = false) {
       const list = el("div", "list");
       for (const entry of state.detailJobs) {
         const [tone, ic] = jobTone(entry.state);
-        list.append(el("div", "item", icon(ic, "tone-" + (tone || "info")), el("span", "name", entry.job), jobPill(entry.state),
+        list.append(el("div", "item" + (tone === "archived" ? " archived" : ""), icon(ic, "tone-" + (tone || "info")), el("span", "name", entry.job), jobPill(entry.state),
           button("Logs", () => { state.tab = "logs"; select(row, entry.job); }, { cls: "btn sm", ic: "terminal" })));
       }
       destination.replaceChildren(el("div", "pane-pad", list));

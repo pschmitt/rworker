@@ -147,6 +147,9 @@ kbd { display: inline-grid; place-items: center; min-width: 18px; height: 18px; 
 .tone-busy { color: var(--amb); }
 .tone-bad { color: var(--red); }
 .tone-info { color: var(--cyan); }
+.tone-archived { color: var(--dim); }
+.pill.archived { background: transparent; color: var(--dim); box-shadow: inset 0 0 0 1px var(--line2); font-weight: 500; }
+.job-row.archived .name, .item.archived .name { color: var(--mut); font-weight: 500; }
 
 /* App shell: rail, main column, phone tab bar. */
 .app { display: grid; grid-template-columns: var(--rail-w) minmax(0, 1fr); height: 100dvh; }
