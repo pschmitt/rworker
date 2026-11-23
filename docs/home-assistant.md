@@ -20,6 +20,14 @@ In Home Assistant, add **rworker** under **Settings → Devices & services**.
 Enter the controller base URL and its access token. The token grants worker
 management and command execution on workers. Store it like an admin credential.
 
+## Updating
+
+Home Assistant runs the integration from its own copy. Update it with HACS, or
+move the git submodule forward if your configuration pins this repository as
+one, then restart Home Assistant. New code, translations and brand images load
+only at startup; a browser may keep showing a cached brand image until a hard
+refresh.
+
 ## Entities
 
 Each controller has sensors for total live workers, ad hoc workers, pool workers,
