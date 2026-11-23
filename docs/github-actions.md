@@ -18,6 +18,9 @@ mounting the writable store so daemon builds use the encrypted filesystem.
 See [CI lease storage](usage.md#ci-lease-storage) for the layout and
 operator commands.
 
+For private services reachable over Tailscale or NetBird, see
+[Mesh access from CI workers](ci-mesh.md).
+
 The workflow lives in the repository associated with the build. The rworker
 workflow provides native Linux ARM64 and x86-64 profiles and installs Nix.
 The agent advertises KVM after the build user successfully opens a VM

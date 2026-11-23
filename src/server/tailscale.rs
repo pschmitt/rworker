@@ -83,13 +83,17 @@ impl Tailscale {
     }
 
     pub fn create_key(&mut self, name: &str) -> Result<Value, String> {
+        self.create_ephemeral_key(name, 86400)
+    }
+
+    pub fn create_ephemeral_key(&mut self, name: &str, ttl: u64) -> Result<Value, String> {
         let description: String = format!("rworker {name}").chars().take(50).collect();
         self.call(
             "POST",
             "tailnet/-/keys",
             Some(json!({
                 "description": description,
-                "expirySeconds": 86400,
+                "expirySeconds": ttl,
                 "capabilities": {"devices": {"create": {
                     "reusable": false,
                     "ephemeral": true,

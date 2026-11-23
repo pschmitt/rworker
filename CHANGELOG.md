@@ -4,6 +4,7 @@
 
 The Rust client and controller replace the original Bash client.
 
+- Add optional ephemeral Tailscale and NetBird proxies for CI workers.
 - Include a sample flake for building a custom OpenStack worker image.
 
 - Verify new CI smoke-test files and Nix store registrations on the LUKS2 backing filesystem.

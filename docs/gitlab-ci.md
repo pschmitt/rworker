@@ -60,6 +60,9 @@ outside the lease volume.
 See [CI lease storage](usage.md#ci-lease-storage) for the common layout and
 operator commands.
 
+For private services reachable over Tailscale or NetBird, see
+[Mesh access from CI workers](ci-mesh.md).
+
 Configure these protected project CI/CD variables.
 
 - `RWORKER_AGENT_URL` is the controller's HTTPS URL for agent registration.

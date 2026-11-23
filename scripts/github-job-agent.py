@@ -189,7 +189,7 @@ def build_environment(profile):
         yield kvm_capabilities(), volume
 
 
-def prepare_sshd(paths, public_key):
+def prepare_sshd(paths, public_key, proxy_environment=()):
     host_key = paths / "host-key"
     subprocess.run(["ssh-keygen", "-q", "-t", "ed25519", "-N", "", "-f", host_key], check=True)
     authorized = paths / "authorized"
@@ -211,6 +211,7 @@ def prepare_sshd(paths, public_key):
     # PAM permits public-key login while password-based methods stay disabled.
     sshd_config = paths / "sshd_config"
     trust = " SSL_CERT_FILE=/etc/ssl/certs/ca-bundle.crt" if LEASE_IMAGE else ""
+    proxies = "".join(f" {name}={value}" for name, value in proxy_environment)
     sshd_config.write_text(
         f"""ListenAddress 127.0.0.1
 Port 22222
@@ -224,7 +225,7 @@ KbdInteractiveAuthentication no
 AuthenticationMethods publickey
 DisableForwarding yes
 PermitUserEnvironment no
-SetEnv XDG_CONFIG_HOME={pwd.getpwnam(BUILD_USER).pw_dir}/.config PATH=/nix/var/nix/profiles/default/bin:/usr/local/bin:/usr/bin:/bin{trust}
+SetEnv XDG_CONFIG_HOME={pwd.getpwnam(BUILD_USER).pw_dir}/.config PATH=/nix/var/nix/profiles/default/bin:/usr/local/bin:/usr/bin:/bin{trust}{proxies}
 AcceptEnv LANG LC_*
 Subsystem sftp internal-sftp
 """
@@ -232,7 +233,7 @@ Subsystem sftp internal-sftp
     return sshd_config, host_key
 
 
-def start_ssh_worker(url, token, assignment):
+def start_ssh_worker(url, token, assignment, proxy_environment):
     gateway = os.environ["RWORKER_GATEWAY"]
     if not re.fullmatch(r"[a-z_][a-z0-9_-]*@[a-zA-Z0-9][a-zA-Z0-9.-]*", gateway):
         raise ValueError("Invalid SSH gateway address")
@@ -243,7 +244,7 @@ def start_ssh_worker(url, token, assignment):
         identity.chmod(0o600)
         known_hosts = paths / "known_hosts"
         known_hosts.write_text(os.environ["RWORKER_GATEWAY_KNOWN_HOSTS"].strip() + "\n")
-        sshd_config, host_key = prepare_sshd(paths, assignment["public_key"])
+        sshd_config, host_key = prepare_sshd(paths, assignment["public_key"], proxy_environment)
         with subprocess.Popen(
             privileged("/usr/sbin/sshd", "-D", "-e", "-f", sshd_config),
             stdin=subprocess.DEVNULL,
@@ -501,6 +502,97 @@ def check_runtime(profile):
     print("rworker runtime check passed", flush=True)
 
 
+def mesh_tools(providers):
+    lock = json.loads(Path("flake.lock").read_text())
+    revision = lock["nodes"]["nixpkgs"]["locked"]["rev"]
+    paths = subprocess.check_output([
+        "nix", "build", "--no-link", "--print-out-paths",
+        *(f"github:NixOS/nixpkgs/{revision}#{provider}" for provider in providers),
+    ], text=True, timeout=180).splitlines()
+    return {path.name: path for directory in paths for path in (Path(directory) / "bin").iterdir()}
+
+
+def stop_mesh_process(process):
+    if process.poll() is None:
+        process.terminate()
+        try:
+            process.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            process.kill()
+            process.wait()
+
+
+def wait_for_mesh(process, provider, address):
+    deadline = time.monotonic() + 45
+    while process.poll() is None and time.monotonic() < deadline:
+        try:
+            with socket.create_connection(address, timeout=1):
+                return
+        except OSError:
+            time.sleep(0.1)
+    raise RuntimeError(f"{provider} mesh proxy did not start")
+
+
+@contextmanager
+def mesh_environment(assignment):
+    mesh = assignment.pop("mesh", {})
+    providers = [name for name in ("tailscale", "netbird") if name in mesh]
+    if not providers:
+        yield []
+        return
+    tools = mesh_tools(providers)
+    with ExitStack() as stack:
+        directory = Path(stack.enter_context(tempfile.TemporaryDirectory(prefix="rworker-mesh-", dir="/dev/shm")))
+        proxies = []
+        for provider in providers:
+            peer = mesh[provider]
+            key = directory / f"{provider}.key"
+            with os.fdopen(os.open(key, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600), "w") as handle:
+                handle.write(peer.pop("key"))
+            with socket.socket() as listener:
+                listener.bind(("127.0.0.1", 0))
+                address = listener.getsockname()
+            host, port = address
+            proxy = f"{host}:{port}"
+            env = {name: os.environ[name] for name in ("PATH", "SSL_CERT_FILE") if name in os.environ}
+            env["HOME"] = str(directory)
+            if provider == "tailscale":
+                control = directory / "tailscale.sock"
+                daemon = [
+                    tools["tailscaled"], "--tun=userspace-networking", "--state=mem:",
+                    f"--statedir={directory}", f"--socket={control}", f"--socks5-server={proxy}",
+                ]
+            else:
+                env.update(
+                    NB_USE_NETSTACK_MODE="true",
+                    NB_SOCKS5_LISTENER_ADDRESS=host,
+                    NB_SOCKS5_LISTENER_PORT=str(port),
+                )
+                daemon = [
+                    tools["netbird"], "up", "--foreground-mode",
+                    "--config", directory / "netbird.json", "--log-file", "console",
+                    "--management-url", peer["management_url"], "--setup-key-file", key,
+                    "--hostname", mesh["hostname"],
+                ]
+            process = subprocess.Popen(
+                daemon, env=env, stdin=subprocess.DEVNULL,
+                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+            )
+            stack.callback(stop_mesh_process, process)
+            wait_for_mesh(process, provider, address)
+            if provider == "tailscale":
+                subprocess.run([
+                    tools["tailscale"], f"--socket={control}", "up",
+                    f"--auth-key=file:{key}", f'--hostname={mesh["hostname"]}',
+                    "--accept-dns=false", "--accept-routes=false",
+                ], check=True, timeout=45, env=env, stdin=subprocess.DEVNULL,
+                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            key.unlink()
+            print(f"rworker mesh proxy ready: {provider}", flush=True)
+            proxies.append((f"RWORKER_{provider.upper()}_PROXY", f"socks5h://{proxy}"))
+        yield proxies
+
+
 def main():
     profile = os.environ["RWORKER_PROFILE"]
     architecture = platform.machine()
@@ -526,12 +618,14 @@ def main():
             {
                 "profile": profile,
                 "architecture": architecture,
-                "capabilities": capabilities,
+                "capabilities": [*capabilities, "mesh-v1"],
                 "disk": build_disk(),
             },
+            timeout=60,
         ) as response:
             assignment = json.load(response)
-        start_ssh_worker(url, assignment["token"], assignment)
+        with mesh_environment(assignment) as proxies:
+            start_ssh_worker(url, assignment["token"], assignment, proxies)
     return 0
 
 

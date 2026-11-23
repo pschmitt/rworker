@@ -67,10 +67,7 @@ async fn claim(
             &token,
             &request.profile,
             &request.architecture,
-            request
-                .capabilities
-                .iter()
-                .any(|capability| capability == "kvm"),
+            &request.capabilities,
             request.disk,
         )
     })

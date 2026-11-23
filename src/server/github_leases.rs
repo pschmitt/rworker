@@ -13,9 +13,13 @@ use serde_json::{Value, json};
 
 use super::github::{GitHub, RunStatus};
 use super::gitlab::GitLab;
+use super::netbird::NetBird;
+use super::openstack::setting;
+use super::tailscale::Tailscale;
 use crate::github_profiles::{Forge, WORKER_SUFFIX_BYTES, valid_worker_suffix};
 
 const MAX_LEASE_SECONDS: u64 = 7200;
+const MESH_KEY_TTL: u64 = 600;
 
 #[derive(Serialize, Deserialize)]
 struct Lease {
@@ -267,7 +271,7 @@ pub(super) fn claim(
     oidc_token: &str,
     profile: &str,
     architecture: &str,
-    kvm: bool,
+    capabilities: &[String],
     disk: Option<Disk>,
 ) -> Result<Value, String> {
     let (forge, id) = agent_lease(id);
@@ -307,15 +311,84 @@ pub(super) fn claim(
     {
         return Err("Pipeline job cannot claim the lease".into());
     }
+    if !config["meshProfiles"][profile].is_null()
+        && !capabilities
+            .iter()
+            .any(|capability| capability == "mesh-v1")
+    {
+        return Err("Pipeline agent does not support mesh enrollment".into());
+    }
     let token = random_hex::<32>()?;
     let hash = ring::digest::digest(&ring::digest::SHA256, token.as_bytes());
     lease.token_hash = Some(STANDARD.encode(hash.as_ref()));
     lease.state = LeaseState::Claimed;
     lease.job_id = job_id;
-    lease.kvm = kvm;
+    lease.kvm = capabilities.iter().any(|capability| capability == "kvm");
     lease.disk = disk.filter(|disk| disk.total_bytes != 0);
     write_lease(&dir, &lease).map_err(|error| error.to_string())?;
-    Ok(json!({"token": token, "expires_at": lease.expires_at, "public_key": lease.public_key}))
+    let mut assignment = json!({
+        "token": token, "expires_at": lease.expires_at, "public_key": lease.public_key,
+    });
+    if let Some(mesh) = mesh_assignment(settings, config, forge, &lease)? {
+        assignment["mesh"] = mesh;
+    }
+    Ok(assignment)
+}
+
+fn mesh_assignment(
+    settings: &Value,
+    config: &Value,
+    forge: Forge,
+    lease: &Lease,
+) -> Result<Option<Value>, String> {
+    let mesh = &config["meshProfiles"][&lease.profile];
+    if mesh.is_null() {
+        return Ok(None);
+    }
+    let ttl = MESH_KEY_TTL.min(lease.expires_at.saturating_sub(now()));
+    if ttl == 0 {
+        return Err("Lease has ended".into());
+    }
+    let name = format!(
+        "{}{}",
+        forge.prefix(),
+        lease.worker_suffix.as_deref().unwrap_or(&lease.id)
+    );
+    let mut assignment = json!({"hostname": name});
+    let netbird = if mesh["netbird"].is_null() {
+        None
+    } else {
+        let config = &mesh["netbird"];
+        let management_url = setting(config, "managementUrl")?;
+        if !management_url.starts_with("https://") {
+            return Err("NetBird management URL must use HTTPS".into());
+        }
+        let client = NetBird::from_settings(settings)?;
+        let group = client.group(setting(config, "group")?)?;
+        let key = client.create_ephemeral_key(&name, setting(&group, "id")?, ttl)?;
+        assignment["netbird"] = json!({
+            "management_url": management_url,
+            "key": setting(&key, "key")?,
+        });
+        Some((client, setting(&key, "id")?.to_owned()))
+    };
+    if mesh["tailscale"].as_bool() == Some(true) {
+        let tailscale = (|| {
+            let mut client = Tailscale::from_settings(&settings["tailscale"])?;
+            let key = client.create_ephemeral_key(&name, ttl)?;
+            Ok::<_, String>(json!({"key": setting(&key, "key")?}))
+        })();
+        match tailscale {
+            Ok(key) => assignment["tailscale"] = key,
+            Err(error) => {
+                if let Some((client, id)) = netbird {
+                    client.delete_key(&id);
+                }
+                return Err(error);
+            }
+        }
+    }
+    Ok(Some(assignment))
 }
 
 pub(super) fn inventory(settings: &Value) -> Result<Vec<Value>, String> {

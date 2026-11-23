@@ -88,11 +88,15 @@ impl NetBird {
     }
 
     pub fn create_key(&self, name: &str, group: &str) -> Result<Value, String> {
+        self.create_ephemeral_key(name, group, 86400)
+    }
+
+    pub fn create_ephemeral_key(&self, name: &str, group: &str, ttl: u64) -> Result<Value, String> {
         self.call(
             "POST",
             "setup-keys",
             Some(json!({
-                "name": name, "type": "one-off", "expires_in": 86400,
+                "name": name, "type": "one-off", "expires_in": ttl,
                 "auto_groups": [group], "usage_limit": 1, "ephemeral": true,
             })),
         )
