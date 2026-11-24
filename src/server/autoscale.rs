@@ -88,10 +88,7 @@ impl Demand {
     /// Runnable builds Circus has not dispatched yet, from its operator
     /// queue. The API key goes to curl on stdin, never in argv.
     fn read_circus(demand: &Value) -> Result<Self, String> {
-        let url = format!(
-            "{}/api/v1/operator/queue",
-            setting(demand, "url")?.trim_end_matches('/')
-        );
+        let url = circus_queue_url(demand)?;
         let key = fs::read_to_string(setting(demand, "apiKeyFile")?)
             .map_err(|error| format!("Read Circus API key: {error}"))?;
         let mut child = Command::new("curl")
@@ -126,6 +123,34 @@ impl Demand {
             demand["qemuOverflow"].as_bool().unwrap_or(false),
         )
     }
+}
+
+/// The operator queue, limited to builds needing only the pool's `features`
+/// (`demand.features`): a pool must not stay up for builds it cannot run.
+fn circus_queue_url(demand: &Value) -> Result<String, String> {
+    let mut url = format!(
+        "{}/api/v1/operator/queue",
+        setting(demand, "url")?.trim_end_matches('/')
+    );
+    if let Some(features) = demand["features"].as_array() {
+        let features = features
+            .iter()
+            .map(|feature| {
+                feature
+                    .as_str()
+                    .filter(|name| {
+                        !name.is_empty()
+                            && name
+                                .chars()
+                                .all(|c| c.is_ascii_alphanumeric() || "-_.".contains(c))
+                    })
+                    .ok_or_else(|| "Invalid demand feature".to_owned())
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        url.push_str("?features=");
+        url.push_str(&features.join(","));
+    }
+    Ok(url)
 }
 
 /// `GET /api/v1/operator/queue` answers `[{"system": ..., "count": ...}]`:
@@ -827,6 +852,25 @@ mod tests {
         )
         .unwrap();
         assert_eq!(stale_or_unconfigured.pending, 0);
+    }
+
+    #[test]
+    fn circus_queue_url_carries_the_pool_features() {
+        let mut demand = json!({"url": "https://circus.example/"});
+        let base = "https://circus.example/api/v1/operator/queue";
+        assert_eq!(circus_queue_url(&demand).unwrap(), base);
+        demand["features"] = json!(["nixos-test", "uid-range"]);
+        assert_eq!(
+            circus_queue_url(&demand).unwrap(),
+            format!("{base}?features=nixos-test,uid-range")
+        );
+        demand["features"] = json!([]);
+        assert_eq!(
+            circus_queue_url(&demand).unwrap(),
+            format!("{base}?features=")
+        );
+        demand["features"] = json!(["a&b"]);
+        assert!(circus_queue_url(&demand).is_err());
     }
 
     #[test]
