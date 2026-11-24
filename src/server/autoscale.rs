@@ -427,11 +427,14 @@ impl Pool<'_> {
         let classification = legacy_prefixes(cfg);
         let pools = pools::Pools::from_settings(&classification)?;
         if now - self.last_membership_check > 600.0 {
-            self.netbird.ensure_member(
+            match self.netbird.ensure_member(
                 setting(cfg, "netbirdNixbotGroup")?,
                 setting(cfg, "netbirdSelf")?,
-            )?;
-            self.last_membership_check = now;
+            ) {
+                Ok(()) => self.last_membership_check = now,
+                // The rest of the pool does not need the NetBird API.
+                Err(error) => eprintln!("checking the NetBird group membership: {error}"),
+            }
         }
         if cfg["reapAdhoc"] == true {
             super::reap_command::reap(cfg, false)?;

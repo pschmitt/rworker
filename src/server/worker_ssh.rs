@@ -219,13 +219,11 @@ pub(super) fn route(settings: &Value, name: &str) -> Result<Option<IpAddr>, Stri
 type Routes = (Option<IpAddr>, serde_json::Map<String, Value>);
 
 pub(super) fn routes(settings: &Value, name: &str) -> Result<Routes, String> {
-    let netbird = super::netbird::NetBird::from_settings(settings)?;
-    let peer = netbird
-        .peers()?
-        .into_iter()
-        .find(|peer| peer["name"] == name);
-    let primary: Option<IpAddr> = peer
+    let peers = super::netbird::NetBird::from_settings(settings)?.peers();
+    let primary: Option<IpAddr> = peers
         .as_ref()
+        .ok()
+        .and_then(|peers| peers.iter().find(|peer| peer["name"] == name))
         .and_then(|peer| peer["ip"].as_str())
         .and_then(|ip| ip.parse().ok());
     let mut secondary = None;
@@ -247,6 +245,14 @@ pub(super) fn routes(settings: &Value, name: &str) -> Result<Routes, String> {
             }
             Err(error) => eprintln!("Tailscale device lookup for {name}: {error}"),
         }
+    }
+    // Without its API, NetBird is only optional for a worker Tailscale knows:
+    // "no address" must not look like "gone" to the reaper.
+    if let Err(error) = peers {
+        if secondary.is_none() {
+            return Err(error);
+        }
+        eprintln!("{name}: using Tailscale only: {error}");
     }
     let ips = [("netbird", primary), ("tailscale", secondary)]
         .into_iter()
