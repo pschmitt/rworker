@@ -127,8 +127,9 @@ OpenStack worker, as far as the client host has something to give:
 - the client's Nix `access-tokens` (private flake inputs);
 - a niks3 push token, valid until the lease ends.
 
-`--no-nix-cache`, `--no-nix-auth` and `--no-niks3-token` skip one part
-(MCP: `nix_cache`, `nix_auth`, `niks3_token` set to false). A failure warns and leaves a usable lease.
+`--no-nix-cache`, `--no-nix-auth` and `--no-niks3-token` skip one part,
+`--no-credentials` all three (MCP: `nix_cache`, `nix_auth`, `niks3_token` and
+`credentials` set to false). A failure warns and leaves a usable lease.
 `rworker setup nix [cache|auth] NAME` and `rworker setup niks3-token NAME`
 repeat it. `extend` does not apply: a lease has a fixed expiry, and the niks3
 token expires with it.
@@ -137,7 +138,7 @@ token expires with it.
 public, so the workflow never prints them: the client sends them over SSH,
 as stdin only, to the build user's home (`~/.config/rworker-nix`,
 `~/.config/rworker-niks3`; 0700 directories, 0600 files). Use read-only
-credentials, and the flags above for work that should not hold them.
+credentials, and `--no-credentials` for work that should not hold them.
 
 How the runner picks them up (the agent script and the workflow are read from
 `main`, so this applies after a push):

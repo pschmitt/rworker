@@ -73,7 +73,7 @@ are not reachable from OpenStack anyway.
                    tokens are never printed)
 
 up and exec do both by default, as far as this host has something to give
-(--no-nix-cache, --no-nix-auth to leave one out).
+(--no-nix-cache, --no-nix-auth to leave one out, --no-credentials for none).
 
   __ME__ setup nix cache NAME [--dry-run]
   __ME__ setup nix auth NAME [--auth-host H]... [--dry-run]

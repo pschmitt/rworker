@@ -20,7 +20,7 @@ and file copies use the controller's loopback relay and the pinned runner
 host key. `up` and `exec` give the worker this host's Nix cache credentials,
 flake input tokens and a niks3 push token by default, as for OpenStack
 workers; see [Nix cache and tokens](github-actions.md#nix-cache-and-tokens).
-`--no-nix-cache`, `--no-nix-auth` and `--no-niks3-token` keep them off the runner.
+Pass `--no-credentials` to keep all three off the runner.
 
 To run the rworker CLI itself inside a GitLab job, use the
 [OCI client image](oci-client.md).

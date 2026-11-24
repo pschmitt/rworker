@@ -586,6 +586,11 @@ fn up_attempt(
             "--no-nix-cache" => nix_cache = Some(false),
             "--nix-auth" => nix_auth = Some(true),
             "--no-nix-auth" => nix_auth = Some(false),
+            "--no-credentials" => {
+                nix_cache = Some(false);
+                nix_auth = Some(false);
+                rest.push("--no-niks3-token".to_string());
+            }
             "--queue-timeout" => {
                 let Some(seconds) = args
                     .get(i + 1)

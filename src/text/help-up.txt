@@ -1,6 +1,6 @@
 Usage: __ME__ up [--ttl DURATION] [--flavor FLAVOR] [--disk GIB] [--profile PROFILE|--arch ARCH] [--scratch] [--ssh]
           [--nix-cache|--no-nix-cache] [--nix-auth|--no-nix-auth]
-          [--no-niks3-token] [--topic TEXT] [-l USER]
+          [--no-niks3-token] [--no-credentials] [--topic TEXT] [-l USER]
 
 Create an ad-hoc worker, wait until it is reachable (usually 1-4 min) and
 print it as JSON (name, ip, host_key, user, expires_at, builder).
@@ -31,6 +31,12 @@ print it as JSON (name, ip, host_key, user, expires_at, builder).
                    extend); the `niks3` command on the worker uses it
                    (see: __ME__ help setup). The browser-daemon profile
                    has none.
+  --no-credentials give the worker no credentials at all: the same as
+                   --no-nix-cache --no-nix-auth --no-niks3-token. GitHub
+                   Actions and GitLab CI workers get the same cache, tokens
+                   and niks3 token as OpenStack workers by default; the
+                   runners are shared infrastructure, so use this (or one of
+                   the narrower flags) for work that should not hold them.
   --ssh            log in (as agent) as soon as it is ready
   -l USER          with --ssh: log in as USER (pschmitt, nix-remote-builder)
   --topic TEXT     what it is for (shown by ls and inspect; none unless

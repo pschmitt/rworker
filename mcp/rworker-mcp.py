@@ -100,7 +100,8 @@ def observe(argv, seconds, limit):
 
 
 def provision_flags(ttl, flavor, disk_gib, scratch, topic, agent_id,
-                    nix_cache, nix_auth, profile, niks3_token, arch, queue_timeout):
+                    nix_cache, nix_auth, profile, niks3_token, arch, queue_timeout,
+                    credentials=True):
     argv = ["--ttl", ttl]
     for flag, value in (
         ("--flavor", flavor), ("--disk", disk_gib), ("--topic", topic),
@@ -117,6 +118,8 @@ def provision_flags(ttl, flavor, disk_gib, scratch, topic, agent_id,
         argv.append("--no-nix-auth")
     if not niks3_token:
         argv.append("--no-niks3-token")
+    if not credentials:
+        argv.append("--no-credentials")
     return argv
 
 
@@ -134,6 +137,7 @@ def up(
     niks3_token: bool = True,
     arch: str | None = None,
     queue_timeout: int | None = None,
+    credentials: bool = True,
 ) -> dict:
     """Create an ad-hoc build worker and wait until it is ready (2-4 min).
 
@@ -163,11 +167,14 @@ def up(
     off the worker. The browser-daemon profile never gets one.
     GitHub Actions and GitLab CI profiles get the same cache, tokens and
     niks3 token by default (the credentials then sit on a shared runner).
+    credentials=False gives the worker none of the three (nix_cache,
+    nix_auth and niks3_token all off).
     Returns name, ip, host_key, user and expires_at. Always call down() when
     the task is done.
     """
     flags = provision_flags(ttl, flavor, disk_gib, scratch, topic, agent_id,
-                            nix_cache, nix_auth, profile, niks3_token, arch, queue_timeout)
+                            nix_cache, nix_auth, profile, niks3_token, arch, queue_timeout,
+                            credentials)
     return json.loads(run("up", "--json", *flags, timeout=1200))
 
 
@@ -354,6 +361,7 @@ def exec_ephemeral(
     niks3_token: bool = True,
     arch: str | None = None,
     queue_timeout: int | None = None,
+    credentials: bool = True,
     sync_sources: list[str] | None = None,
     fetch_paths: list[str] | None = None,
     keep: bool = False,
@@ -370,7 +378,8 @@ def exec_ephemeral(
     if timeout_seconds < 1:
         raise ToolError("Timeout must be positive")
     flags = provision_flags(ttl, flavor, disk_gib, scratch, topic, agent_id,
-                            nix_cache, nix_auth, profile, niks3_token, arch, queue_timeout)
+                            nix_cache, nix_auth, profile, niks3_token, arch, queue_timeout,
+                            credentials)
     for flag, paths in (("--sync", sync_sources), ("--fetch", fetch_paths)):
         for path in paths or []:
             flags += [flag, path]

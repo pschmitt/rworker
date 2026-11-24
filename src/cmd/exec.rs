@@ -75,7 +75,7 @@ pub fn cmd_exec(ctx: &Ctx, args: &[String]) -> R {
                 i += 1;
             }
             "--scratch" | "--nix-cache" | "--no-nix-cache" | "--nix-auth" | "--no-nix-auth"
-            | "--no-niks3-token" => {
+            | "--no-niks3-token" | "--no-credentials" => {
                 up_args.push(a.to_string());
             }
             "--topic" | "--agent-id" => {

@@ -22,7 +22,8 @@ Actions:
   profiles [NAME] [-o wide]
                        list worker profiles and optionally their image details
   up [--ttl 2h] [--flavor s1.xlarge] [--disk 150] [--topic TEXT]
-     [--no-nix-cache] [--no-nix-auth] [--no-niks3-token] [--ssh [-l USER]]
+     [--no-nix-cache] [--no-nix-auth] [--no-niks3-token | --no-credentials]
+     [--ssh [-l USER]]
                        create a worker and wait until it is ready
   image create [--flake FLAKE] [--upload] | image upload --name NAME IMAGE
                        build or upload a worker disk image

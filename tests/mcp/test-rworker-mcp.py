@@ -45,6 +45,20 @@ class WorkerMcpTest(unittest.TestCase):
             self.assertEqual(module.profiles(), [{"name": "standard"}])
             run.assert_called_once_with("profiles", "--json", timeout=120)
 
+    def test_credentials_opt_out_covers_up_and_exec(self):
+        module = self.module
+        with patch.object(module, "run", return_value="{}") as run:
+            module.up(profile="gh-aarch64")
+            self.assertNotIn("--no-credentials", run.call_args.args)
+            module.up(profile="gh-aarch64", credentials=False)
+            self.assertIn("--no-credentials", run.call_args.args)
+            module.up(profile="gl-x86_64", nix_cache=False, nix_auth=False, niks3_token=False)
+            for flag in ("--no-nix-cache", "--no-nix-auth", "--no-niks3-token"):
+                self.assertIn(flag, run.call_args.args)
+        with patch.object(module, "run_bounded", return_value=(0, '{"name":"w","exit_code":0,"stdout":"","stderr":""}', "", False)) as bounded:
+            module.exec_ephemeral("true", credentials=False)
+            self.assertIn("--no-credentials", bounded.call_args.args)
+
     def test_niks3_token_is_default_and_optional(self):
         module = self.module
         with patch.object(module, "run", return_value="{}") as run:

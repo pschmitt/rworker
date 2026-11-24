@@ -82,6 +82,8 @@ flag exec --no-nix-auth keep the access-tokens off the worker
 flag exec --no-nix-cache keep the S3 cache credentials off the worker
 flag up --no-niks3-token do not give the worker a niks3 push token
 flag exec --no-niks3-token do not give the worker a niks3 push token
+flag up --no-credentials give the worker no Nix cache, access-tokens or niks3 token
+flag exec --no-credentials give the worker no Nix cache, access-tokens or niks3 token
 flag extend --no-niks3-token extend without renewing the niks3 token
 flag setup --force reissue the niks3 token of someone else's worker
 flag setup --no-cache leave out the S3 cache part
