@@ -1,7 +1,7 @@
 //! Drawing for the current view, status line, and modal overlays.
 
 use super::ansi;
-use super::app::{App, Jobs, LogDivider, Profiles, Sub, TextView, Urgency};
+use super::app::{App, Jobs, LogDivider, Profiles, Sub, TextView, Urgency, Worker};
 use super::create::{CreateWorker, Field};
 use crate::{
     paint,
@@ -236,7 +236,7 @@ impl App {
             None => status = self.draw_workers(f, body, status),
             Some(Sub::Jobs(j)) => {
                 self.mouse_table = Some(borderless_rows(body));
-                draw_jobs(f, body, j);
+                draw_jobs(f, body, j, &self.workers);
             }
             Some(Sub::Profiles(profiles)) => {
                 let table = if !profiles.rows.is_empty() && body.height >= 3 {
@@ -844,7 +844,7 @@ fn draw_profiles(f: &mut Frame, area: Rect, profiles: &mut Profiles, icons: bool
     f.render_stateful_widget(table, area, &mut profiles.state);
 }
 
-fn draw_jobs(f: &mut Frame, area: Rect, j: &mut Jobs) {
+fn draw_jobs(f: &mut Frame, area: Rect, j: &mut Jobs, workers: &[Worker]) {
     if j.rows.is_empty() {
         let message = if j.loading.is_some() {
             "Loading jobs…"
@@ -862,8 +862,10 @@ fn draw_jobs(f: &mut Frame, area: Rect, j: &mut Jobs) {
         return;
     }
     let all_workers = j.worker.is_none();
-    let show_start = area.width >= 54;
-    let show_topic = area.width >= if all_workers { 80 } else { 64 };
+    // The start time goes before the topic when space runs out.
+    let extra = if all_workers { 16 } else { 0 };
+    let show_topic = area.width >= 40 + extra;
+    let show_start = area.width >= 72 + extra;
     let rows: Vec<Row> = j
         .rows
         .iter()
@@ -886,8 +888,14 @@ fn draw_jobs(f: &mut Frame, area: Rect, j: &mut Jobs) {
                 Style::new().fg(ACCENT),
             )));
             if show_topic {
+                // Without one of its own, a job shows its worker's, dimmed.
                 cells.push(Cell::from(if topic.is_empty() {
-                    Span::styled("-", dim())
+                    let inherited = workers
+                        .iter()
+                        .find(|w| w.name == *worker)
+                        .map_or("", |w| w.topic.as_str());
+                    let shown = if inherited.is_empty() { "-" } else { inherited };
+                    Span::styled(shown.to_owned(), dim())
                 } else {
                     Span::raw(topic.clone())
                 }));
