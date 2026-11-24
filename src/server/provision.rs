@@ -181,10 +181,7 @@ pub(super) fn create(
     if netbird.configured()
         && let Err(error) = &netbird_key
     {
-        eprintln!(
-            "warning: {} does not join NetBird: {error}",
-            request.name
-        );
+        eprintln!("warning: {} does not join NetBird: {error}", request.name);
     }
     let mut tailscale = if cfg["tailscale"].is_object() {
         Tailscale::from_settings(&cfg["tailscale"])

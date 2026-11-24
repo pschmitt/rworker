@@ -20,8 +20,8 @@ impl NetBird {
             return Self(None);
         };
         Self(Some(setting(config, "netbirdTokenFile").and_then(|file| {
-            let token = fs::read_to_string(file)
-                .map_err(|error| format!("Read NetBird token: {error}"))?;
+            let token =
+                fs::read_to_string(file).map_err(|error| format!("Read NetBird token: {error}"))?;
             Ok(Api {
                 url: url.trim_end_matches('/').into(),
                 token: token.trim().into(),

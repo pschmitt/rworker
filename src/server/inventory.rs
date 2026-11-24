@@ -89,8 +89,8 @@ pub(super) fn list(cfg: &Value) -> Result<Value, String> {
         workers.push(worker);
     }
     if !failed.is_empty()
-        && let Some(Value::Array(previous)) =
-            super::inventory_cache::directory().and_then(|dir| super::inventory_cache::read_last(&dir))
+        && let Some(Value::Array(previous)) = super::inventory_cache::directory()
+            .and_then(|dir| super::inventory_cache::read_last(&dir))
     {
         keep_addresses(&mut workers, &previous, &failed);
     }
