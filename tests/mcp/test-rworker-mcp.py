@@ -8,6 +8,10 @@ import unittest
 from unittest.mock import patch
 
 
+class FakeToolError(Exception):
+    pass
+
+
 class FakeServer:
     def __init__(self, _name):
         pass
@@ -18,8 +22,11 @@ class FakeServer:
 
 class WorkerMcpTest(unittest.TestCase):
     def setUp(self):
-        modules = {name: ModuleType(name) for name in ("mcp", "mcp.server", "mcp.server.mcpserver")}
+        modules = {name: ModuleType(name) for name in (
+            "mcp", "mcp.server", "mcp.server.mcpserver", "mcp.server.mcpserver.exceptions",
+        )}
         modules["mcp.server.mcpserver"].MCPServer = FakeServer
+        modules["mcp.server.mcpserver.exceptions"].ToolError = FakeToolError
         spec = importlib.util.spec_from_file_location("worker_mcp", Path(__file__).resolve().parents[2] / "mcp" / "rworker-mcp.py")
         module = importlib.util.module_from_spec(spec)
         with patch.dict(sys.modules, modules), patch.object(sys, "argv", ["rworker-mcp", "--rworker", "rworker"]):
@@ -87,7 +94,7 @@ class WorkerMcpTest(unittest.TestCase):
                 "logs", "--lines", "200", "worker", "job", "--cached",
                 "--redact", timeout=60,
             )
-            with self.assertRaises(ValueError):
+            with self.assertRaises(FakeToolError):
                 self.module.logs(cached=True)
 
     def test_setup_register_log_file(self):
@@ -109,6 +116,78 @@ class WorkerMcpTest(unittest.TestCase):
             self.assertEqual(self.module.events(agent_id="codex:abc", limit=1), [{"id": 2}])
             run.assert_called_once_with(
                 "events", "--json", "--agent-id", "codex:abc", timeout=60,
+            )
+
+
+    def test_blob_upload_uses_grouped_setup_and_local_paths(self):
+        with patch.object(self.module, "run", return_value='{"paths":["/nix/store/test"]}') as run:
+            result = self.module.setup_nix_upload_blob("worker", ["-local file.zip"], "vendor.zip")
+            self.assertEqual(result["paths"], ["/nix/store/test"])
+            run.assert_called_once_with(
+                "setup", "nix", "upload-blob", "worker", "--json", "--name", "vendor.zip",
+                "--", "-local file.zip", timeout=1800,
+            )
+            with self.assertRaises(FakeToolError):
+                self.module.setup_nix_upload_blob("worker", ["one", "two"], "vendor.zip")
+            run.assert_called_once()
+
+    def test_grouped_nix_setup_modes(self):
+        with patch.object(self.module, "run", return_value="{}") as run:
+            self.module.setup_nix("cache")
+            run.assert_called_with("setup", "nix", "--json", "--", "cache", timeout=300)
+            self.module.setup_nix("worker", auth=False)
+            run.assert_called_with("setup", "nix", "cache", "--json", "worker", timeout=300)
+            self.module.setup_nix("worker", cache=False, auth_hosts=["github.com"], dry_run=True)
+            run.assert_called_with(
+                "setup", "nix", "auth", "--json", "--auth-host", "github.com",
+                "--dry-run", "worker", timeout=300,
+            )
+
+    def test_builder_keeps_hosted_ssh_config_and_legacy_gateway_result(self):
+        with patch.object(self.module, "run", return_value='{"builder":"line"}') as run:
+            self.assertEqual(self.module.setup_nix_builder(gateway="example.test", jobs=4), "line")
+            run.assert_called_with(
+                "setup", "nix", "builder", "--gateway", "example.test", "--jobs", "4",
+                "--json", timeout=60,
+            )
+            run.return_value = '{"builder":"line","ssh_config":"relay config"}'
+            self.assertEqual(self.module.setup_nix_builder("gh-worker")["ssh_config"], "relay config")
+
+    def test_ephemeral_exec_returns_nonzero_command_result(self):
+        output = '{"name":"w","exit_code":7,"stdout":"output","stderr":"","kept":true}'
+        with patch.object(self.module, "run_bounded", return_value=(7, output, "", False)) as run:
+            result = self.module.exec_ephemeral(
+                "exit 7", arch="aarch64", queue_timeout=15, sync_sources=["src:app"],
+                fetch_paths=["app/out:out"], keep_on_failure=True,
+            )
+        self.assertEqual(result["exit_code"], 7)
+        self.assertTrue(result["kept"])
+        run.assert_called_once_with(
+            "exec", "--json", "--ttl", "2h", "--arch", "aarch64", "--queue-timeout", "15",
+            "--sync", "src:app", "--fetch", "app/out:out", "--keep-on-failure", "--",
+            "exit 7", seconds=1800,
+        )
+
+    def test_watch_returns_complete_json_on_timeout(self):
+        with patch.object(
+            self.module, "run_bounded",
+            return_value=(-15, '{"id":1}\n{"id":2}\n{"id":', "", True),
+        ) as run:
+            self.assertEqual(
+                self.module.events(watch_seconds=5, since_now=True, limit=1), [{"id": 2}],
+            )
+            run.assert_called_once_with(
+                "events", "--json", "--watch", "--since-now", seconds=5,
+            )
+
+    def test_copy_and_image_upload_preserve_paths(self):
+        with patch.object(self.module, "run", return_value="{}") as run:
+            self.module.cp("file with spaces", "w:dir")
+            run.assert_called_with("cp", "--json", "file with spaces", "w:dir", timeout=1800)
+            self.module.image_upload("-disk.qcow2", "image", tag="release")
+            run.assert_called_with(
+                "image", "upload", "--json", "--name", "image", "--tag", "release",
+                "--", "-disk.qcow2", timeout=3600,
             )
 
 

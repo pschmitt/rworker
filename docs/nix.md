@@ -62,6 +62,25 @@ completions come with the package (`share/zsh/site-functions`,
 `rworker-mcp --rworker PATH` serves the actions as MCP tools over stdio, on
 top of the client, so state and pinned host keys are shared.
 
+Use `setup_nix_upload_blob(name, files, store_name)` to import files from
+the MCP host into a worker's Nix store. `setup_nix` handles cache access and
+authentication. `setup_nix_builder` includes the required `ssh_config` for
+hosted builders.
+
+`exec` runs a registered job on an existing worker and can return while the
+job is still running. `exec_ephemeral` creates a worker, syncs inputs, runs a
+command, fetches outputs and cleans up. `ssh` runs a one-off command over pinned
+SSH. `cp` copies files and directories in either direction.
+
+`ls`, `jobs` and `events` accept `watch_seconds`, and `logs` accepts
+`follow_seconds`. These calls return bounded results when the watch ends.
+`image_create` and `image_upload` run on the MCP host and require the same
+Nix and OpenStack setup as the CLI. Interactive terminals, SSH forwarding,
+and controller service operations use the CLI.
+
+Restart or reconnect the MCP client after updating to pick up the tool
+definitions.
+
 ### Control-host inventory API
 
 The control service refreshes inventory five seconds after each successful or

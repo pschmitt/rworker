@@ -4,6 +4,7 @@
 
 The Rust client and controller replace the original Bash client.
 
+- Bring MCP tools up to date with worker provisioning, file copy and blob uploads, one-shot execution, hosted builder setup, image operations, and bounded inventory, job, log and event watches.
 - Group Nix worker setup under `setup nix`, with `cache`, `auth`, `builder`, and `upload-blob` for local fixed-output sources. The existing `nix-cache` and `nix-builder` spellings still work.
 
 - Ignore a deleted worker that OpenStack lists once more as DELETING: the event history recorded it as added and deleted a second time, without the deletion reason.
