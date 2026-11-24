@@ -443,6 +443,13 @@ pub fn ssh_opts_with_relay(ctx: &Ctx, name: &str, local_relay: bool) -> Vec<Stri
         "StrictHostKeyChecking=yes".to_string(),
         "-o".to_string(),
         "BatchMode=yes".to_string(),
+        // A build can keep a session silent for minutes. Without probes a NAT
+        // or mesh path (a phone on Wi-Fi) forgets the connection; with them it
+        // stays alive and a blip of up to two minutes does not end it.
+        "-o".to_string(),
+        "ServerAliveInterval=15".to_string(),
+        "-o".to_string(),
+        "ServerAliveCountMax=8".to_string(),
     ];
     if hosted_id(name).is_some() {
         let port = read_state(ctx, name)
