@@ -367,7 +367,7 @@ fn remove(
         {
             return Err("worker is no longer owned by the builder gateway".into());
         }
-        let netbird = super::netbird::NetBird::from_settings(settings)?;
+        let netbird = super::netbird::NetBird::from_settings(settings);
         mutations::delete(
             settings,
             &cloud,

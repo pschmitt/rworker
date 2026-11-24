@@ -10,7 +10,7 @@ pub(super) fn reap(cfg: &serde_json::Value, dry_run: bool) -> Result<(), String>
     use serde_json::{Value, json};
 
     let mut compute = OpenStack::from_settings(cfg)?;
-    let netbird = NetBird::from_settings(cfg)?;
+    let netbird = NetBird::from_settings(cfg);
     let pools = Pools::from_settings(cfg)?;
     let number = |key: &str| {
         cfg[key]
@@ -97,7 +97,13 @@ pub(super) fn reap(cfg: &serde_json::Value, dry_run: bool) -> Result<(), String>
                 .and_then(Value::as_str)
                 .filter(|key| !key.is_empty());
             match key {
-                Some(key) => worker_ssh::activity(cfg, name, key, protect_in_use)?,
+                Some(key) => match worker_ssh::activity(cfg, name, key, protect_in_use) {
+                    Ok(active) => active,
+                    Err(error) => {
+                        eprintln!("keeping {name} (activity unknown: {error})");
+                        continue;
+                    }
+                },
                 None => None,
             }
         } else {

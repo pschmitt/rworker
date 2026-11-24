@@ -160,7 +160,7 @@ pub(super) fn create(
         ));
     };
 
-    let netbird = NetBird::from_settings(cfg)?;
+    let netbird = NetBird::from_settings(cfg);
     // NetBird is preferred, not required: when its API fails the worker is
     // enrolled with Tailscale alone, and the lease only fails if no overlay
     // can enroll it.
@@ -178,8 +178,13 @@ pub(super) fn create(
                 setting(&key, "key")?.to_owned(),
             ))
         });
-    if let Err(error) = &netbird_key {
-        eprintln!("no NetBird key for {}: {error}", request.name);
+    if netbird.configured()
+        && let Err(error) = &netbird_key
+    {
+        eprintln!(
+            "warning: {} does not join NetBird: {error}",
+            request.name
+        );
     }
     let mut tailscale = if cfg["tailscale"].is_object() {
         Tailscale::from_settings(&cfg["tailscale"])
@@ -212,13 +217,13 @@ pub(super) fn create(
                 Err(error) => eprintln!("no Tailscale key for {}: {error}", request.name),
             }
         }
-        if let Err(error) = &netbird_key {
-            if !data.contains_key("tailscale_auth_key") {
-                return Err(format!(
-                    "no overlay network can enroll {}: NetBird: {error}; Tailscale: not available",
-                    request.name
-                ));
-            }
+        if let Err(error) = &netbird_key
+            && !data.contains_key("tailscale_auth_key")
+        {
+            return Err(format!(
+                "no overlay network can enroll {}: {error}; Tailscale: not available",
+                request.name
+            ));
         }
         let suffix = super::niks3::token_id().map_err(|err| err.to_string())?;
         let path = std::env::temp_dir().join(format!("rworker-user-data-{suffix}"));

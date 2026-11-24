@@ -183,7 +183,6 @@ pub(super) fn read(dir: &Path, fresh: bool) -> Option<(Value, Duration)> {
     .then(|| (snapshot["workers"].take(), age))
 }
 
-#[cfg(feature = "web")]
 pub(super) fn read_last(dir: &Path) -> Option<Value> {
     let snapshot = File::open(dir.join("inventory.json")).ok()?;
     let mut snapshot: Value = serde_json::from_reader(BufReader::new(snapshot)).ok()?;

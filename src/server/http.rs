@@ -43,6 +43,8 @@ pub(super) fn json_request(
             "--disable",
             "--silent",
             "--fail",
+            "--connect-timeout",
+            "5",
             "--max-time",
             "30",
             "--proto",

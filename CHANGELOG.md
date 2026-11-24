@@ -5,7 +5,7 @@
 The Rust client and controller replace the original Bash client.
 
 - The web console no longer underlines worker names in the cards and in the expiry banner.
-- NetBird is optional: when its API fails, a lease enrolls the worker with Tailscale alone (it fails only if no overlay can enroll it), `ls` lists workers without NetBird peers, and deleting a worker no longer fails because its NetBird peer cannot be removed.
+- NetBird is optional: leave `netbirdApi` unset to run without it. When its API fails, a lease enrolls the worker with Tailscale alone (it fails only if no overlay can enroll it) and waits for it to join, CI leases join the overlay that works, `ls` keeps the last known addresses, the reaper keeps workers whose activity it cannot determine, and one unreachable worker no longer stops a reaper or autoscaler pass. Deleting a worker no longer fails because its NetBird peer cannot be removed.
 - Worker SSH sessions send keepalives (every 15 s, eight misses allowed), so a long silent build from a phone is no longer reset by a NAT or mesh path.
 - Show the topic in the TUI's jobs view on narrower terminals too (the start time goes first), and the worker's topic, dimmed, for jobs without one.
 - Add a topic to jobs: `start --topic`, `setup register-log-file --topic` (MCP `topic` on `start`, `exec` and `setup_register_log_file`; `exec` workers give the job their own topic). `jobs`, the TUI and the web console show it as a column, `jobs --json` as `topic`; tab-separated output has it last. `start` without `--topic` warns. The web console falls back to the worker's topic.

@@ -12,7 +12,7 @@ use super::{
 
 pub(super) fn list(cfg: &Value) -> Result<Value, String> {
     let compute = OpenStack::from_settings(cfg)?;
-    let netbird = NetBird::from_settings(cfg)?;
+    let netbird = NetBird::from_settings(cfg);
     let pools = Pools::from_settings(cfg)?;
     let (list, peers, devices) = std::thread::scope(|scope| {
         let peers = scope.spawn(|| netbird.peers());
@@ -43,11 +43,18 @@ pub(super) fn list(cfg: &Value) -> Result<Value, String> {
             .map_err(|_| "Tailscale lookup thread failed")?;
         Ok::<_, String>((list?, peers, devices))
     })?;
-    // NetBird is optional: without its peers the workers are still listed with
-    // their Tailscale addresses.
+    // Either overlay is optional: while its API fails, the workers keep the
+    // addresses they were last listed with.
+    let mut failed = Vec::new();
     let peers = peers.unwrap_or_else(|error| {
         eprintln!("NetBird peers unavailable: {error}");
+        failed.push("netbird");
         Vec::new()
+    });
+    let devices = devices.unwrap_or_else(|error| {
+        eprintln!("Tailscale device list: {error}");
+        failed.push("tailscale");
+        HashMap::new()
     });
     let list: Vec<Value> =
         serde_json::from_slice(&list).map_err(|_| "Invalid OpenStack server listing")?;
@@ -80,6 +87,12 @@ pub(super) fn list(cfg: &Value) -> Result<Value, String> {
                 .unwrap_or_default();
         }
         workers.push(worker);
+    }
+    if !failed.is_empty()
+        && let Some(Value::Array(previous)) =
+            super::inventory_cache::directory().and_then(|dir| super::inventory_cache::read_last(&dir))
+    {
+        keep_addresses(&mut workers, &previous, &failed);
     }
     workers.extend(super::github_leases::inventory(cfg)?);
     Ok(Value::Array(workers))
@@ -126,16 +139,38 @@ fn image_labels<'a>(
     })
 }
 
-fn tailscale_devices(cfg: &Value) -> HashMap<String, Value> {
+fn tailscale_devices(cfg: &Value) -> Result<HashMap<String, Value>, String> {
     if !cfg["tailscale"].is_object() {
-        return HashMap::new();
+        return Ok(HashMap::new());
     }
-    Tailscale::from_settings(&cfg["tailscale"])
-        .and_then(|mut client| client.devices())
-        .unwrap_or_else(|err| {
-            eprintln!("Tailscale device list: {err}");
-            HashMap::new()
-        })
+    Tailscale::from_settings(&cfg["tailscale"]).and_then(|mut client| client.devices())
+}
+
+/// Fill in the addresses of overlays that could not be asked from the
+/// previous listing.
+fn keep_addresses(workers: &mut [Value], previous: &[Value], failed: &[&str]) {
+    for worker in workers {
+        let Some(old) = previous
+            .iter()
+            .find(|old| old["name"] == worker["name"] && old["created_at"] == worker["created_at"])
+        else {
+            continue;
+        };
+        let mut kept = false;
+        for overlay in failed {
+            if let Some(ip) = old["ips"].get(overlay) {
+                worker["ips"][*overlay] = ip.clone();
+                kept = true;
+            }
+        }
+        if kept {
+            worker["ip"] = ["netbird", "tailscale"]
+                .iter()
+                .find_map(|overlay| worker["ips"].get(overlay).cloned())
+                .unwrap_or_default();
+            worker["connected"] = json!(worker["connected"] == true || old["connected"] == true);
+        }
+    }
 }
 
 fn info(
@@ -260,5 +295,31 @@ mod icon_tests {
         assert_eq!(icon_glyph("\u{f0ad}").as_deref(), Some("\u{f0ad}"));
         assert_eq!(icon_glyph("U+ZZZZ"), None);
         assert_eq!(icon_glyph(" "), None);
+    }
+}
+
+#[cfg(test)]
+mod address_tests {
+    use super::*;
+
+    #[test]
+    fn a_failed_overlay_keeps_the_last_known_addresses() {
+        let previous = [
+            json!({"name": "a", "created_at": "1", "connected": true, "ips": {"netbird": "100.64.0.1", "tailscale": "100.64.1.1"}}),
+            json!({"name": "b", "created_at": "1", "connected": true, "ips": {"netbird": "100.64.0.2"}}),
+        ];
+        let mut workers = [
+            json!({"name": "a", "created_at": "1", "connected": false, "ip": "100.64.1.9", "ips": {"tailscale": "100.64.1.9"}}),
+            // Same name, but another worker.
+            json!({"name": "b", "created_at": "2", "connected": false, "ip": null, "ips": {}}),
+        ];
+        keep_addresses(&mut workers, &previous, &["netbird"]);
+        assert_eq!(workers[0]["ip"], "100.64.0.1");
+        assert_eq!(
+            workers[0]["ips"],
+            json!({"netbird": "100.64.0.1", "tailscale": "100.64.1.9"})
+        );
+        assert_eq!(workers[0]["connected"], true);
+        assert!(workers[1]["ip"].is_null());
     }
 }

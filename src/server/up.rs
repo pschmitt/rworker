@@ -75,7 +75,7 @@ impl<'a> Args<'a> {
 
 pub(super) fn up(cfg: &Value, args: Args<'_>) -> Result<Value, String> {
     let compute = OpenStack::from_settings(cfg)?;
-    let netbird = NetBird::from_settings(cfg)?;
+    let netbird = NetBird::from_settings(cfg);
     let profile = args
         .profile
         .filter(|value| !value.is_empty())
@@ -178,7 +178,7 @@ pub(super) fn up(cfg: &Value, args: Args<'_>) -> Result<Value, String> {
         &compute,
         provision::Request {
             name: &name,
-            group: setting(cfg, "netbirdAdhocGroup")?,
+            group: cfg["netbirdAdhocGroup"].as_str().unwrap_or_default(),
             flavor,
             disk,
             profile,
@@ -445,8 +445,9 @@ pub(super) fn boot_status(
         stage = "ACTIVE · booting";
         if let Some(key) = key {
             stage = "ACTIVE · joining overlay";
-            let (ip, ips) = worker_ssh::routes(cfg, name)?;
-            if let Some(ip) = ip {
+            // A worker that has not joined yet looks the same as one whose
+            // overlay cannot be looked up: wait, until the boot timeout.
+            if let Ok((Some(ip), ips)) = worker_ssh::routes(cfg, name) {
                 stage = "ACTIVE · ready";
                 ready = Some((key.to_owned(), ip, ips));
             }

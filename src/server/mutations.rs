@@ -167,7 +167,7 @@ pub(super) fn down(
     args: &super::EditArgs<'_>,
 ) -> Result<(), String> {
     let name = args.name;
-    let netbird = super::netbird::NetBird::from_settings(settings)?;
+    let netbird = super::netbird::NetBird::from_settings(settings);
     let (id, metadata) = compute
         .worker(name)?
         .ok_or_else(|| format!("no worker {name}"))?;

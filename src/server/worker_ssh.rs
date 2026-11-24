@@ -219,7 +219,22 @@ pub(super) fn route(settings: &Value, name: &str) -> Result<Option<IpAddr>, Stri
 type Routes = (Option<IpAddr>, serde_json::Map<String, Value>);
 
 pub(super) fn routes(settings: &Value, name: &str) -> Result<Routes, String> {
-    let peers = super::netbird::NetBird::from_settings(settings)?.peers();
+    let (routes, netbird_error) = lookup(settings, name);
+    match netbird_error {
+        // Without its API, NetBird is only optional for a worker Tailscale
+        // knows: "no address" must not look like "gone".
+        Some(error) if routes.1.is_empty() => Err(error),
+        Some(error) => {
+            eprintln!("{name}: using Tailscale only: {error}");
+            Ok(routes)
+        }
+        None => Ok(routes),
+    }
+}
+
+/// The routes to a worker, and why NetBird could not be asked.
+fn lookup(settings: &Value, name: &str) -> (Routes, Option<String>) {
+    let peers = super::netbird::NetBird::from_settings(settings).peers();
     let primary: Option<IpAddr> = peers
         .as_ref()
         .ok()
@@ -246,31 +261,23 @@ pub(super) fn routes(settings: &Value, name: &str) -> Result<Routes, String> {
             Err(error) => eprintln!("Tailscale device lookup for {name}: {error}"),
         }
     }
-    // Without its API, NetBird is only optional for a worker Tailscale knows:
-    // "no address" must not look like "gone" to the reaper.
-    if let Err(error) = peers {
-        if secondary.is_none() {
-            return Err(error);
-        }
-        eprintln!("{name}: using Tailscale only: {error}");
-    }
     let ips = [("netbird", primary), ("tailscale", secondary)]
         .into_iter()
         .filter_map(|(overlay, ip)| Some((overlay.into(), Value::String(ip?.to_string()))))
         .collect();
-    Ok((
-        primary.into_iter().chain(secondary).find(|ip| answers(*ip)),
-        ips,
-    ))
+    let route = primary.into_iter().chain(secondary).find(|ip| answers(*ip));
+    ((route, ips), peers.err())
 }
 
+/// Whether a worker is in use; `None` if it could not be reached. An error
+/// means that NetBird, which may reach it, could not be asked.
 pub(super) fn activity(
     settings: &Value,
     name: &str,
     host_key: &str,
     workloads_only: bool,
 ) -> Result<Option<bool>, String> {
-    let (preferred, overlays) = routes(settings, name)?;
+    let ((preferred, overlays), netbird_error) = lookup(settings, name);
     let mut routes = preferred.into_iter();
     let mut alternate = overlays
         .values()
@@ -278,11 +285,15 @@ pub(super) fn activity(
         .filter_map(|ip| ip.parse::<IpAddr>().ok())
         .filter(|ip| Some(*ip) != preferred);
     let result = routes.find_map(|ip| active(settings, ip, host_key, workloads_only));
-    Ok(if workloads_only {
+    let result = if workloads_only {
         result.or_else(|| alternate.find_map(|ip| active(settings, ip, host_key, workloads_only)))
     } else {
         result
-    })
+    };
+    match (result, netbird_error) {
+        (None, Some(error)) => Err(error),
+        (result, _) => Ok(result),
+    }
 }
 
 fn active(settings: &Value, ip: IpAddr, host_key: &str, workloads_only: bool) -> Option<bool> {
@@ -341,5 +352,28 @@ mod web_key_tests {
         assert!(
             restrict_web_key("ssh-ed25519 Zml4dHVyZQ==\nssh-ed25519 Zml4dHVyZQ==", &[]).is_err()
         );
+    }
+}
+
+#[cfg(test)]
+mod route_tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn a_failing_netbird_api_is_unknown_not_unreachable() {
+        let settings = json!({
+            "netbirdApi": "http://127.0.0.1:1", "netbirdTokenFile": "/nonexistent/token",
+        });
+        assert!(routes(&settings, "adhoc-1").is_err());
+        assert!(activity(&settings, "adhoc-1", "key", false).is_err());
+        assert!(activity(&settings, "adhoc-1", "key", true).is_err());
+    }
+
+    #[test]
+    fn unconfigured_netbird_just_has_no_route() {
+        let (route, ips) = routes(&json!({}), "adhoc-1").unwrap();
+        assert!(route.is_none() && ips.is_empty());
+        assert_eq!(activity(&json!({}), "adhoc-1", "key", false), Ok(None));
     }
 }

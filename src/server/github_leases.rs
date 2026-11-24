@@ -496,21 +496,34 @@ fn mesh_assignment(
         &mesh["netbird"]
     };
     let netbird = if netbird_config.is_null() || only == Some("tailscale") {
-        None
+        false
     } else {
         let config = netbird_config;
         let management_url = setting(config, "managementUrl")?;
         if !management_url.starts_with("https://") {
             return Err("NetBird management URL must use HTTPS".into());
         }
-        let client = NetBird::from_settings(settings)?;
-        let group = client.group(setting(config, "group")?)?;
-        let key = client.create_ephemeral_key(&name, setting(&group, "id")?, ttl)?;
-        assignment["netbird"] = json!({
-            "management_url": management_url,
-            "key": setting(&key, "key")?,
-        });
-        Some((client, setting(&key, "id")?.to_owned()))
+        let group = setting(config, "group")?;
+        let client = NetBird::from_settings(settings);
+        let key = client
+            .group(group)
+            .and_then(|group| client.create_ephemeral_key(&name, setting(&group, "id")?, ttl))
+            .and_then(|key| Ok(setting(&key, "key")?.to_owned()));
+        match key {
+            Ok(key) => {
+                assignment["netbird"] = json!({"management_url": management_url, "key": key});
+                true
+            }
+            // Asked for by name, or by the profile alone: nothing to fall
+            // back to.
+            Err(error) if only.is_some() || mesh["tailscale"].as_bool() != Some(true) => {
+                return Err(error);
+            }
+            Err(error) => {
+                eprintln!("warning: {name} does not join NetBird: {error}");
+                false
+            }
+        }
     };
     if only == Some("tailscale") || (only.is_none() && mesh["tailscale"].as_bool() == Some(true)) {
         let tailscale = (|| {
@@ -520,12 +533,10 @@ fn mesh_assignment(
         })();
         match tailscale {
             Ok(key) => assignment["tailscale"] = key,
-            Err(error) => {
-                if let Some((client, id)) = netbird {
-                    client.delete_key(&id);
-                }
-                return Err(error);
+            Err(error) if netbird => {
+                eprintln!("warning: {name} does not join Tailscale: {error}");
             }
+            Err(error) => return Err(error),
         }
     }
     Ok(Some(assignment))

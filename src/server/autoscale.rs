@@ -382,7 +382,7 @@ pub(super) fn run(cfg: &Value, once: bool) -> Result<(), String> {
         files,
         cfg,
         compute: OpenStack::from_settings(cfg)?,
-        netbird: NetBird::from_settings(cfg)?,
+        netbird: NetBird::from_settings(cfg),
         scale: ScaleUp::default(),
         last_membership_check: 0.0,
     };
@@ -426,7 +426,7 @@ impl Pool<'_> {
         let own = pools::own_pool(cfg);
         let classification = legacy_prefixes(cfg);
         let pools = pools::Pools::from_settings(&classification)?;
-        if now - self.last_membership_check > 600.0 {
+        if self.netbird.configured() && now - self.last_membership_check > 600.0 {
             match self.netbird.ensure_member(
                 setting(cfg, "netbirdNixbotGroup")?,
                 setting(cfg, "netbirdSelf")?,
@@ -481,7 +481,9 @@ impl Pool<'_> {
             .map(|(name, _)| name.clone())
             .collect();
         for name in vanished {
-            self.netbird.delete_peer(&name)?;
+            if let Err(error) = self.netbird.delete_peer(&name) {
+                eprintln!("removing {name} from NetBird: {error}");
+            }
             self.workers.remove(&name);
             self.publish()?;
         }
@@ -588,7 +590,7 @@ impl Pool<'_> {
             &self.compute,
             provision::Request {
                 name: &name,
-                group: setting(cfg, "netbirdWorkersGroup")?,
+                group: cfg["netbirdWorkersGroup"].as_str().unwrap_or_default(),
                 flavor: setting(cfg, "flavor")?,
                 disk: count(cfg, "volumeSize")? as i64,
                 profile: cfg["profile"].as_str().unwrap_or("standard"),
@@ -597,7 +599,7 @@ impl Pool<'_> {
             },
         )?;
         self.workers.insert(name, json!({
-            "id": id, "created": epoch(), "ready": false, "setupKeyId": metadata["setup_key_id"],
+            "id": id, "created": epoch(), "ready": false, "setupKeyId": metadata.get("setup_key_id"),
         }));
         self.files.save(&self.workers)
     }
@@ -685,11 +687,14 @@ impl Pool<'_> {
         {
             worker["routeCheck"] = json!(now);
             if !worker_ssh::answers(ip) {
-                let (route, ips) = worker_ssh::routes(cfg, name)?;
-                if let Some(route) = route {
-                    ip = route;
-                    worker["ip"] = json!(ip);
-                    worker["ips"] = json!(ips);
+                match worker_ssh::routes(cfg, name) {
+                    Ok((Some(route), ips)) => {
+                        ip = route;
+                        worker["ip"] = json!(ip);
+                        worker["ips"] = json!(ips);
+                    }
+                    Ok((None, _)) => {}
+                    Err(error) => eprintln!("finding a route to {name}: {error}"),
                 }
             }
         }

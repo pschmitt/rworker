@@ -91,7 +91,10 @@ pub(super) fn install(
     else {
         return Ok(json!({"ok": false, "error": "worker not reachable yet"}));
     };
-    let route = super::worker_ssh::route(settings, name)?;
+    let route = match super::worker_ssh::route(settings, name) {
+        Ok(route) => route,
+        Err(error) => return Ok(json!({"ok": false, "error": error})),
+    };
     let Some(ip) = route else {
         return Ok(json!({"ok": false, "error": "worker not reachable yet"}));
     };
