@@ -185,7 +185,7 @@ owner. The gateway uses that connection's source IP, or the corresponding
 name in `clientNamesFile` if one is configured. For example, a file containing
 `{"192.0.2.10":"workstation"}` labels that client as `workstation`.
 A warm build from another machine leaves the original owner's name in place.
-The agent is displayed as `nix build`.
+The agent is displayed as `nix build`, and the topic names the client host and the profile, for example `Nix builder for fnuc (standard)`.
 
 Use `rworker ls --all` (also `-A` or `--history`) or press `h` in the TUI
 to include retired workers. Use `rworker logs WORKER` to read saved

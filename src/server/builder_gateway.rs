@@ -21,7 +21,11 @@ use crate::ctx::{Ctx, Fail, R};
 use crate::github_profiles::{self, Forge, Profile};
 
 const AGENT: &str = "nix build";
-const TOPIC: &str = "On-demand Nix builder";
+
+/// The topic of a worker the gateway leased: who asked and for what.
+fn topic(owner: &str, profile: &str) -> String {
+    format!("Nix builder for {owner} ({profile})")
+}
 const LEGACY_OWNER: &str = "rworker-builder@controller";
 /// Hosted leases serve Nix from an isolated store through the controller's
 /// local relay port, as the runner's build account.
@@ -436,7 +440,7 @@ fn hosted_up(
             ttl.to_string(),
             controller_public_key(settings)?,
             owner.to_owned(),
-            TOPIC.to_owned(),
+            topic(owner, profile.name),
         ],
     )?;
     let id = setting(&lease, "id")?.to_owned();
@@ -529,7 +533,7 @@ fn session(
                 &public_key,
                 "--no-niks3-token",
                 "--meta",
-                &format!("topic={TOPIC}"),
+                &format!("topic={}", topic(owner, profile)),
                 "--meta",
                 &format!("agent={AGENT}"),
             ]
@@ -550,7 +554,8 @@ fn session(
     if lease["created_at"].is_string() {
         let record = json!({
             "owner": lease["owner"], "profile": lease["profile"], "created_at": lease["created_at"],
-            "topic": TOPIC, "agent": AGENT, "status": "ACTIVE",
+            "topic": topic(owner, lease["profile"].as_str().unwrap_or("-")), "agent": AGENT,
+            "status": "ACTIVE",
         });
         let name = setting(&lease, "name")?;
         if crate::cmd::history::record_builder(&base.join("worker-history"), name, &record).is_err()
