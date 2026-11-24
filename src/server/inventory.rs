@@ -41,8 +41,14 @@ pub(super) fn list(cfg: &Value) -> Result<Value, String> {
         let devices = devices
             .join()
             .map_err(|_| "Tailscale lookup thread failed")?;
-        Ok::<_, String>((list?, peers?, devices))
+        Ok::<_, String>((list?, peers, devices))
     })?;
+    // NetBird is optional: without its peers the workers are still listed with
+    // their Tailscale addresses.
+    let peers = peers.unwrap_or_else(|error| {
+        eprintln!("NetBird peers unavailable: {error}");
+        Vec::new()
+    });
     let list: Vec<Value> =
         serde_json::from_slice(&list).map_err(|_| "Invalid OpenStack server listing")?;
     let peers: HashMap<_, _> = peers

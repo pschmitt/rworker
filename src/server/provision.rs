@@ -161,12 +161,26 @@ pub(super) fn create(
     };
 
     let netbird = NetBird::from_settings(cfg)?;
-    let group = netbird.group(request.group)?;
-    let key = netbird.create_key(
-        &format!("nixbot-worker {}", request.name),
-        setting(&group, "id")?,
-    )?;
-    let key_id = setting(&key, "id")?;
+    // NetBird is preferred, not required: when its API fails the worker is
+    // enrolled with Tailscale alone, and the lease only fails if no overlay
+    // can enroll it.
+    let netbird_key = netbird
+        .group(request.group)
+        .and_then(|group| {
+            netbird.create_key(
+                &format!("nixbot-worker {}", request.name),
+                setting(&group, "id")?,
+            )
+        })
+        .and_then(|key| {
+            Ok((
+                setting(&key, "id")?.to_owned(),
+                setting(&key, "key")?.to_owned(),
+            ))
+        });
+    if let Err(error) = &netbird_key {
+        eprintln!("no NetBird key for {}: {error}", request.name);
+    }
     let mut tailscale = if cfg["tailscale"].is_object() {
         Tailscale::from_settings(&cfg["tailscale"])
             .map_err(|error| eprintln!("Tailscale disabled: {error}"))
@@ -177,14 +191,13 @@ pub(super) fn create(
     let mut ts_id = None;
     let result = (|| {
         let mut data = request.user_data;
-        data.insert(
-            "netbird_setup_key".into(),
-            Value::String(setting(&key, "key")?.into()),
-        );
         let mut metadata = request.metadata;
         metadata.insert("image_name".into(), Value::String(image_name.clone()));
         metadata.insert("image_id".into(), Value::String(image_id.clone()));
-        metadata.insert("setup_key_id".into(), Value::String(key_id.into()));
+        if let Ok((key_id, key)) = &netbird_key {
+            data.insert("netbird_setup_key".into(), Value::String(key.clone()));
+            metadata.insert("setup_key_id".into(), Value::String(key_id.clone()));
+        }
         if let Some(client) = &mut tailscale {
             match client.create_key(request.name) {
                 Ok(key) => {
@@ -197,6 +210,14 @@ pub(super) fn create(
                     }
                 }
                 Err(error) => eprintln!("no Tailscale key for {}: {error}", request.name),
+            }
+        }
+        if let Err(error) = &netbird_key {
+            if !data.contains_key("tailscale_auth_key") {
+                return Err(format!(
+                    "no overlay network can enroll {}: NetBird: {error}; Tailscale: not available",
+                    request.name
+                ));
             }
         }
         let suffix = super::niks3::token_id().map_err(|err| err.to_string())?;
@@ -255,7 +276,9 @@ pub(super) fn create(
         Ok((setting(&server, "id")?.to_owned(), metadata))
     })();
     if result.is_err() {
-        netbird.delete_key(key_id);
+        if let Ok((key_id, _)) = &netbird_key {
+            netbird.delete_key(key_id);
+        }
         if let (Some(client), Some(id)) = (&mut tailscale, ts_id) {
             client.delete_key(&id);
         }

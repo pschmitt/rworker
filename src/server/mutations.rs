@@ -228,5 +228,10 @@ pub(super) fn delete(
     }
     compute.command(&["server", "delete", "--", id])?;
     crate::event_history::note_deletion(name, why.0, why.1);
-    netbird.delete_peer(name)
+    // The server is gone; an ephemeral peer that NetBird cannot remove now
+    // expires on its own, so do not fail the deletion over it.
+    if let Err(error) = netbird.delete_peer(name) {
+        eprintln!("removing {name} from NetBird: {error}");
+    }
+    Ok(())
 }
