@@ -765,6 +765,16 @@ mod tests {
             cmd::setup::TOPICS,
         );
 
+        assert_eq!(
+            spec_lines("values")
+                .iter()
+                .find_map(|line| line.strip_prefix("setup-nix-topic "))
+                .unwrap()
+                .split_whitespace()
+                .collect::<Vec<_>>(),
+            cmd::setup::NIX_TOPICS,
+        );
+
         let ctx = Ctx::from_env();
         for line in spec_lines("flag") {
             let mut parts = line.split(' ');

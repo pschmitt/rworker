@@ -50,6 +50,7 @@ flag events --since-now skip retained history while watching
 flag events --interval=interval reconnect delay in seconds
 flag events --topic=topic-re limit to workers whose topic matches this regex (prefix with ! to invert)
 flag events --agent=agent-re limit to workers whose creating agent matches this regex (prefix with ! to invert)
+flag setup --name=name Nix store name for a single uploaded file
 flag setup --log=path absolute path to an existing log file on the worker
 flag setup --profile=profile nix-builder gateway: lease a worker of this profile
 flag setup --arch=arch nix-builder gateway: lease a worker for this architecture
@@ -155,6 +156,7 @@ values tui-view workers jobs profiles events logs
 values duration 30m 1h 2h 4h 8h 24h
 values flavor s1.large s1.xlarge s1.2xlarge
 values setup-topic nix nix-cache nix-builder niks3-token register-log-file netbird tailscale
+values setup-nix-topic cache auth builder upload-blob
 values profile standard browser-daemon large-builder gh-aarch64 gh-x86_64 gl-x86_64 gl-x86_64-lease
 values size 100 150 250 500
 values path

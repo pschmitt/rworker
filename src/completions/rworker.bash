@@ -55,16 +55,48 @@ _rworker() {
   elif [[ "$action" == setup && $COMP_CWORD -eq 3 && "$cur" != -* ]]
   then
     words=$(_rworker_workers)
+    if [[ "${COMP_WORDS[2]}" == nix ]]
+    then
+      words="$(sed -n 's/^values setup-nix-topic //p' <<< "$spec") $words"
+    fi
+  elif [[ "$action" == setup && "${COMP_WORDS[2]}" == nix &&
+          $COMP_CWORD -eq 4 && "$cur" != -* &&
+          " cache auth builder upload-blob -- " == *" ${COMP_WORDS[3]} "* ]]
+  then
+    words=$(_rworker_workers)
+  elif [[ "$action" == setup && "${COMP_WORDS[2]}" == nix &&
+          "${COMP_WORDS[3]}" == upload-blob && $COMP_CWORD -gt 4 ]]
+  then
+    if [[ "$prev" == --name ]]
+    then
+      return
+    elif [[ "$cur" == -* ]]
+    then
+      words='--name --help --'
+    else
+      mapfile -t COMPREPLY < <(compgen -f -- "$cur")
+      return
+    fi
   else
     if [[ "$action" == setup ]]
     then
-      case "${COMP_WORDS[2]}" in
+      local setup_topic="${COMP_WORDS[2]}"
+      if [[ "$setup_topic" == nix && $COMP_CWORD -gt 3 ]]
+      then
+        case "${COMP_WORDS[3]}" in
+          cache|builder) setup_topic="nix-${COMP_WORDS[3]}" ;;
+          auth|upload-blob) setup_topic="${COMP_WORDS[3]}" ;;
+        esac
+      fi
+      case "$setup_topic" in
+        auth) spec=$(sed -n '/^flag setup /!p; /^flag setup \(--dry-run \|-n \|--auth-host=\)/p' <<< "$spec") ;;
+        upload-blob) spec=$(sed -n '/^flag setup /!p; /^flag setup --name=/p' <<< "$spec") ;;
         niks3-token) spec=$(sed '/^flag setup /{ /^flag setup --force /!d; }' <<< "$spec") ;;
         register-log-file) spec=$(sed '/^flag setup /{ /^flag setup --log=/!d; }' <<< "$spec") ;;
         netbird|tailscale) spec=$(sed '/^flag setup /d' <<< "$spec") ;;
         nix-cache) spec=$(sed '/^flag setup /{ /^flag setup \(--dry-run\|-n\) /!d; }' <<< "$spec") ;;
         nix-builder) spec=$(sed -n '/^flag setup /!p; /^flag setup \(--profile\|--arch\|--pool\|--gateway\|--identity\|-i\|--host-key\|--system\|--jobs\|--features\)=/p' <<< "$spec") ;;
-        *) spec=$(sed '/^flag setup --force /d; /^flag setup --log=/d; /^flag setup \(--profile\|--arch\|--pool\|--gateway\|--identity\|-i\|--host-key\|--system\|--jobs\|--features\)=/d' <<< "$spec") ;;
+        *) spec=$(sed '/^flag setup --force /d; /^flag setup --name=/d; /^flag setup --log=/d; /^flag setup \(--profile\|--arch\|--pool\|--gateway\|--identity\|-i\|--host-key\|--system\|--jobs\|--features\)=/d' <<< "$spec") ;;
       esac
     fi
     # ssh --create takes up's flags.

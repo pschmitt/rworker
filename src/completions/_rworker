@@ -139,9 +139,37 @@ _rworker() {
       return
     fi
     setup_topic="${words[3]}"
-    if (( CURRENT == 4 )) && [[ "$PREFIX" != -* ]]
+    local worker_pos=4
+    if [[ "$setup_topic" == nix ]]
+    then
+      if (( CURRENT == 4 )) && [[ "$PREFIX" != -* ]]
+      then
+        topics=(${=${${(M)_rworker_spec_cache:#values setup-nix-topic *}#values setup-nix-topic }})
+        _describe -t values 'Nix setup command' topics
+        _rworker_workers
+        return
+      fi
+      case "${words[4]}" in
+        cache|builder) setup_topic="nix-${words[4]}"; worker_pos=5 ;;
+        auth|upload-blob|--) setup_topic="${words[4]}"; worker_pos=5 ;;
+      esac
+    fi
+    if (( CURRENT == worker_pos )) && [[ "$PREFIX" != -* ]]
     then
       _rworker_workers
+      return
+    fi
+    if [[ "$setup_topic" == upload-blob ]] && (( CURRENT > worker_pos ))
+    then
+      if [[ "${words[CURRENT-1]}" == --name ]]
+      then
+        _message 'Nix store name'
+      elif [[ "$PREFIX" == -* && "${words[(Ie)--]}" == 0 ]]
+      then
+        compadd -- --name --help --
+      else
+        _files
+      fi
       return
     fi
   fi
@@ -233,7 +261,8 @@ _rworker() {
         nix-builder:--host-key=*|nix-builder:--system=*|nix-builder:--jobs=*|nix-builder:--features=*) ;;
         nix:--profile=*|nix:--arch=*|nix:--pool=*|nix:--gateway=*|nix:--identity=*|nix:-i=*) continue ;;
         nix:--host-key=*|nix:--system=*|nix:--jobs=*|nix:--features=*) continue ;;
-        nix:--force|nix:--log=path) continue ;;
+        auth:--auth-host=*|auth:--dry-run|auth:-n) ;;
+        nix:--force|nix:--log=path|nix:--name=*) continue ;;
         nix:*) ;;
         *) continue ;;
       esac

@@ -93,12 +93,13 @@ fn ssh_command_with_options(ctx: &Ctx, args: &[String], extra: &[&str]) -> R<Com
         target_user(ctx, &t).map_err(|_| Fail(1))?
     };
     let mut opts = state::ssh_opts_with_relay(ctx, &t.name, local_relay);
+    if opts.is_empty() {
+        ctx.err("Worker SSH host key or relay unavailable");
+        return Err(Fail(1));
+    }
     if let Some(identity) = super::jobs::identity_override()
         .or_else(|| std::env::var("RWORKER_LOG_CACHE_IDENTITY").ok())
     {
-        if opts.is_empty() {
-            return Err(Fail(1));
-        }
         // Keep the restricted collector transport separate from interactive SSH.
         // Its initial jobs request opens a master before the parallel tail reads.
         let directory = ctx.state_dir.join("log-ssh");
@@ -136,10 +137,6 @@ fn ssh_command_with_options(ctx: &Ctx, args: &[String], extra: &[&str]) -> R<Com
         );
     }
     if web_terminal {
-        if opts.is_empty() {
-            ctx.err("Worker SSH host key or relay unavailable");
-            return Err(Fail(1));
-        }
         opts.retain(|option| option != "-q");
         opts.splice(0..0, extra.iter().map(|option| (*option).to_owned()));
     }

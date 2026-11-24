@@ -53,9 +53,12 @@ Actions:
                        reissue a worker's short-lived niks3 push token
   setup register-log-file NAME JOB --log PATH
                        make an existing worker log available as a job
-  setup nix-cache NAME [--dry-run]
-                       the cache part of setup nix
-  setup nix-builder [NAME] [--profile P | --arch A | --pool P]
+  setup nix cache NAME [--dry-run]
+  setup nix auth NAME [--auth-host HOST] [--dry-run]
+                       configure only the selected part of setup nix
+  setup nix upload-blob NAME [--name STORE_NAME] FILE...
+                       upload local files into the worker’s Nix store
+  setup nix builder [NAME] [--profile P | --arch A | --pool P]
                        print a Nix builders line for the worker, or without
                        NAME for the on-demand builder gateway
   setup netbird NAME | setup tailscale NAME

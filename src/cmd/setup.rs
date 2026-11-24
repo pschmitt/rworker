@@ -4,7 +4,12 @@
 use crate::ctx::{Ctx, Fail, R};
 use crate::github_profiles::Forge;
 use serde_json::{Value, json};
+use std::fs::File;
+use std::path::Path;
 use std::time::{Duration, Instant};
+
+#[cfg(test)]
+pub const NIX_TOPICS: &[&str] = &["cache", "auth", "builder", "upload-blob"];
 
 /// The topics `setup` knows, for the help and the completion.
 pub const TOPICS: &[&str] = &[
@@ -26,7 +31,7 @@ pub fn cmd_setup(ctx: &Ctx, args: &[String]) -> R {
         return Err(Fail(2));
     };
     match topic.as_str() {
-        "nix" => super::nix_cache::cmd_setup_nix(ctx, &args[1..], "setup", Default::default()),
+        "nix" => setup_nix(ctx, &args[1..]),
         "nix-cache" => super::nix_cache::cmd_nix_cache(ctx, &args[1..]),
         "nix-builder" => super::simple::cmd_builder(ctx, &args[1..]),
         "niks3-token" => super::simple::cmd_niks3_token(ctx, &args[1..]),
@@ -45,6 +50,130 @@ pub fn cmd_setup(ctx: &Ctx, args: &[String]) -> R {
             Err(Fail(2))
         }
     }
+}
+
+fn setup_nix(ctx: &Ctx, args: &[String]) -> R {
+    use super::nix_cache::{Opts, cmd_nix_cache, cmd_setup_nix};
+    match args.first().map(String::as_str) {
+        Some("cache") => cmd_nix_cache(ctx, &args[1..]),
+        Some("auth") => cmd_setup_nix(
+            ctx,
+            &args[1..],
+            "setup",
+            Opts {
+                cache: false,
+                ..Opts::default()
+            },
+        ),
+        Some("builder") => super::simple::cmd_builder(ctx, &args[1..]),
+        Some("upload-blob") => upload_blobs(ctx, &args[1..]),
+        Some("--") => cmd_setup_nix(ctx, &args[1..], "setup", Opts::default()),
+        _ => cmd_setup_nix(ctx, args, "setup", Opts::default()),
+    }
+}
+
+fn upload_blobs(ctx: &Ctx, args: &[String]) -> R {
+    let Some((worker, args)) = args
+        .split_first()
+        .filter(|(worker, _)| !worker.starts_with('-'))
+    else {
+        crate::help::show(ctx, "setup");
+        return Err(Fail(2));
+    };
+    let mut args = args.iter();
+    let mut paths = Vec::new();
+    let mut name = None;
+    while let Some(arg) = args.next() {
+        match arg.as_str() {
+            "--name" if name.is_none() => {
+                name = Some(args.next().ok_or_else(|| {
+                    ctx.err("--name needs a store name");
+                    Fail(2)
+                })?);
+            }
+            "--" => {
+                paths.extend(args);
+                break;
+            }
+            s if s.starts_with('-') => {
+                ctx.err(&format!("Unexpected upload-blob option: {s}"));
+                return Err(Fail(2));
+            }
+            _ => paths.push(arg),
+        }
+    }
+    if paths.is_empty() || (name.is_some() && paths.len() != 1) {
+        ctx.err("Provide at least one local file, or exactly one with --name");
+        return Err(Fail(2));
+    }
+
+    let mut uploads = Vec::new();
+    for path in paths {
+        let store_name = name.map(String::as_str).unwrap_or_else(|| {
+            Path::new(path)
+                .file_name()
+                .and_then(|n| n.to_str())
+                .unwrap_or_default()
+        });
+        if store_name.is_empty()
+            || store_name.len() > 211
+            || store_name.starts_with('.')
+            || !store_name
+                .bytes()
+                .all(|b| b.is_ascii_alphanumeric() || b"+-._?=".contains(&b))
+        {
+            ctx.err(&format!(
+                "Invalid Nix store name: {store_name:?}; use --name"
+            ));
+            return Err(Fail(2));
+        }
+        // Check before opening so a FIFO cannot block the client.
+        if !Path::new(path).is_file() {
+            ctx.err(&format!("{path}: expected a local regular file"));
+            return Err(Fail(2));
+        }
+        let (file, size) = File::open(path)
+            .and_then(|file| {
+                let size = file.metadata()?.len();
+                Ok((file, size))
+            })
+            .map_err(|error| {
+                ctx.err(&format!("{path}: {error}"));
+                Fail(1)
+            })?;
+        uploads.push((store_name, file, size));
+    }
+
+    let mut results = Vec::new();
+    for (name, file, size) in uploads {
+        let script = format!(
+            r#"set -eu
+umask 077
+stage=$(mktemp -d -- "$HOME/.rworker-blob.XXXXXXXXXX")
+trap 'rm -rf -- "$stage"' EXIT
+trap 'exit 1' HUP INT TERM
+file="$stage"/{}
+cat > "$file"
+if [ "$(wc -c < "$file")" -ne {size} ]
+then
+  printf '%s\n' 'Blob upload was incomplete or the local file changed size' >&2
+  exit 1
+fi
+nix-store --add-fixed sha256 "$file""#,
+            crate::proc::shell_quote(name),
+        );
+        let mut cmd = super::files::ssh_command(ctx, &[worker.clone(), "-T".into(), script])?;
+        let store_path = crate::proc::capture_ok(ctx, cmd.stdin(file))?;
+        if ctx.json.get() {
+            results.push(store_path);
+        } else {
+            crate::ctx::outln(&store_path);
+        }
+    }
+    if ctx.json.get() {
+        crate::ctx::json_out(ctx, &json!({ "paths": results }).to_string());
+    }
+    Ok(())
 }
 
 fn setup_mesh(ctx: &Ctx, provider: &str, args: &[String]) -> R {

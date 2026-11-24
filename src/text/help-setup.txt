@@ -5,9 +5,12 @@ settings. Everything is on by default; flags switch parts off.
 
 Topics:
   nix                configure the S3 cache and access tokens for private inputs
-  nix-cache          only the S3 cache part of nix (setup nix --no-auth)
-  nix-builder        print a Nix builders line for a worker, or without NAME
-                     for the on-demand builder gateway
+  nix cache          configure only the S3 cache
+  nix auth           configure only private-input access tokens
+  nix builder        print a Nix builders line for a worker or the gateway
+  nix upload-blob    import local files into the worker’s Nix store
+  nix-cache          alias for nix cache
+  nix-builder        alias for nix builder
   niks3-token        reissue the worker's short-lived cache push token
   register-log-file  make an existing log available as a job
   netbird            start or restart NetBird on an existing CI worker
@@ -61,8 +64,12 @@ are not reachable from OpenStack anyway.
                    tokens are never printed)
 
 up and exec do both by default, as far as this host has something to give
-(--no-nix-cache, --no-nix-auth to leave one out). `setup nix-cache NAME`
-is `setup nix NAME --no-auth`.
+(--no-nix-cache, --no-nix-auth to leave one out).
+
+  __ME__ setup nix cache NAME [--dry-run]
+  __ME__ setup nix auth NAME [--auth-host H]... [--dry-run]
+
+Use `setup nix -- NAME` for a worker whose name matches a Nix subcommand.
 
 Use read-only credentials only: anyone with a shell on the worker (the agent
 user) can read what you push, tokens included. Run it again after rotating a
@@ -71,11 +78,11 @@ nothing; the command says so and fails. For builds through --builders, also
 set builders-use-substitutes on this host, or this host fetches the inputs
 itself and copies them over instead of letting the worker substitute.
 
-  __ME__ setup nix-builder NAME [--json]
-  __ME__ setup nix-builder [--profile NAME | --arch ARCH | --pool NAME] [options]
+  __ME__ setup nix builder NAME [--json]
+  __ME__ setup nix builder [--profile NAME | --arch ARCH | --pool NAME] [options]
 
 With NAME, print a Nix builders line for that worker, e.g.:
-  nix build --max-jobs 0 --builders "$(__ME__ setup nix-builder NAME)" .#pkg
+  nix build --max-jobs 0 --builders "$(__ME__ setup nix builder NAME)" .#pkg
 For hosted workers, use --json. The result includes ssh_config for the
 worker's pinned relay connection. Prepend it to the client's SSH config.
 
@@ -97,4 +104,12 @@ remote-program); without one the gateway uses its default profile:
   --jobs N         builds Nix runs at once on the entry
   --features LIST  comma-separated system features, - for none
 
-  nix build --max-jobs 0 --builders "$(__ME__ setup nix-builder --arch aarch64)" .#pkg
+  nix build --max-jobs 0 --builders "$(__ME__ setup nix builder --arch aarch64)" .#pkg
+
+  __ME__ setup nix upload-blob NAME [--name STORE_NAME] [--] FILE...
+
+Upload regular files over pinned SSH and import them with flat SHA-256.
+The store name defaults to the local basename. Use --name with one file
+to match a package's required filename. Prints one store path per file
+(or a JSON object with a paths array). Imported paths are subject to the
+worker's normal Nix garbage collection.
