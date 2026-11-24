@@ -161,7 +161,13 @@ pub fn warn_niks3_token(ctx: &Ctx, name: &str, info: &Value) {
         return;
     }
     let err = jq::or(jq::path(info, &["niks3_token", "error"]), "unknown error");
-    if err == "image-too-old" {
+    if err == "not-configured" {
+        ctx.err(&format!(
+            "{} the controller has no niks3 token issuer: none given to {}",
+            paint::warn_mark(ctx),
+            paint::vm(ctx, name)
+        ));
+    } else if err == "image-too-old" {
         ctx.err(&format!(
             "{} image predates niks3 tokens: none given to {}",
             paint::warn_mark(ctx),
@@ -174,6 +180,68 @@ pub fn warn_niks3_token(ctx: &Ctx, name: &str, info: &Value) {
             paint::vm(ctx, name),
             ctx.me
         ));
+    }
+}
+
+/// Whether to push the S3 cache and the access-tokens: as asked, else
+/// whatever this host's Nix has to give (an s3:// substituter, tokens).
+fn nix_wants(ctx: &Ctx, nix_cache: Option<bool>, nix_auth: Option<bool>) -> (bool, bool) {
+    if nix_cache.is_some() && nix_auth.is_some() {
+        return (nix_cache == Some(true), nix_auth == Some(true));
+    }
+    let have = ctx.muted(|| super::nix_cache::settings(ctx)).ok();
+    let has = |key: &str| {
+        have.as_ref()
+            .and_then(|s| jq::get(s, key).as_array().map(|a| !a.is_empty()))
+            .unwrap_or(false)
+    };
+    (
+        nix_cache.unwrap_or_else(|| has("substituters")),
+        nix_auth.unwrap_or_else(|| has("auth_hosts")),
+    )
+}
+
+/// What `up` gives a CI lease, as it does an OpenStack worker: the Nix cache
+/// and access-tokens this host has, and a niks3 push token. Each is a
+/// convenience: a failure warns and leaves a usable lease. The results go
+/// into `info` as "nix_cache" and "niks3_token" (never the token itself).
+fn setup_lease_credentials(
+    ctx: &Ctx,
+    name: &str,
+    nix_cache: Option<bool>,
+    nix_auth: Option<bool>,
+    niks3_token: bool,
+    info: &mut Value,
+) {
+    let (want_cache, want_auth) = nix_wants(ctx, nix_cache, nix_auth);
+    if want_cache || want_auth {
+        let opts = super::nix_cache::Opts {
+            cache: want_cache,
+            auth: want_auth,
+            auth_hosts: Vec::new(),
+        };
+        let result = super::nix_cache::push(ctx, name, false, &opts)
+            .ok()
+            .and_then(|s| serde_json::from_str::<Value>(&s).ok())
+            .filter(Value::is_object)
+            .unwrap_or_else(|| json!({"ok": false}));
+        if get(&result, "ok") != &Value::Bool(true) {
+            ctx.err(&format!(
+                "{} could not set up Nix on {} (the worker is fine); retry: {} setup nix {name}",
+                paint::warn_mark(ctx),
+                paint::vm(ctx, name),
+                ctx.me
+            ));
+        }
+        info["nix_cache"] = result;
+    }
+    if niks3_token {
+        let result = super::nix_cache::issue_lease_niks3_token(ctx, name, false);
+        // A controller without niks3 has nothing to give: not a failure.
+        if get(&result, "error").as_str() != Some("not-configured") {
+            info["niks3_token"] = result;
+            warn_niks3_token(ctx, name, info);
+        }
     }
 }
 
@@ -568,10 +636,7 @@ fn up_attempt(
         .last()
         .and_then(crate::github_profiles::from_name);
     if let Some(profile) = hosted_profile {
-        if nix_cache == Some(true) || nix_auth == Some(true) {
-            ctx.err("CI workers do not accept Nix cache credentials");
-            return Err(Fail(2));
-        }
+        let no_niks3_token = rest.iter().any(|arg| arg == "--no-niks3-token");
         let ttl = rest
             .windows(2)
             .filter(|pair| pair[0] == "--ttl")
@@ -589,13 +654,21 @@ fn up_attempt(
             result
         })?;
         created.set(true);
+        let name = need(&output, "name")?;
+        setup_lease_credentials(
+            ctx,
+            &name,
+            nix_cache,
+            nix_auth,
+            !no_niks3_token,
+            &mut output,
+        );
         if capture {
             if !login_user.is_empty() {
                 output["ssh_user"] = json!(login_user);
             }
             return Ok(Some(jq::compact(&output)));
         }
-        let name = need(&output, "name")?;
         let _cleanup = cleanup(&name);
         if ctx.json.get() {
             crate::ctx::json_out(ctx, &jq::compact(&output));
@@ -695,16 +768,7 @@ fn up_attempt(
         }
     }
 
-    // Default: push what this host's Nix has to give: the S3 cache when it
-    // has an s3:// substituter, the access-tokens when it has any.
-    let have = ctx.muted(|| super::nix_cache::settings(ctx)).ok();
-    let has = |key: &str| {
-        have.as_ref()
-            .and_then(|s| jq::get(s, key).as_array().map(|a| !a.is_empty()))
-            .unwrap_or(false)
-    };
-    let want_cache = nix_cache.unwrap_or_else(|| has("substituters"));
-    let want_auth = nix_auth.unwrap_or_else(|| has("auth_hosts"));
+    let (want_cache, want_auth) = nix_wants(ctx, nix_cache, nix_auth);
     let mut info_text = raw_info;
     let mut info = parsed;
     if want_cache || want_auth {

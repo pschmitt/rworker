@@ -174,6 +174,11 @@ pub fn run(ctx: &crate::ctx::Ctx, args: &[String]) -> R {
             github_leases::run(&settings, forge, command, rest)?
         } else if let Some(args) = up {
             up::up(&settings, args)?
+        } else if let Some(edit) = &edit
+            && action == "niks3-token"
+            && let Some((forge, suffix)) = crate::state::hosted_id(edit.name)
+        {
+            github_leases::niks3_token(&settings, forge, suffix, edit.owner, edit.force)?
         } else if let Some(edit) = edit {
             let mut compute = openstack::OpenStack::from_settings(&settings)?;
             let pools = pools::Pools::from_settings(&settings)?;

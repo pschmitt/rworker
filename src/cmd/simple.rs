@@ -185,6 +185,22 @@ pub fn cmd_niks3_token(ctx: &Ctx, args: &[String]) -> R {
         crate::help::show(ctx, "niks3-token");
         return Err(Fail(2));
     }
+    if let Some(name) = args.iter().find(|arg| !arg.starts_with('-'))
+        && crate::state::hosted_id(name).is_some()
+    {
+        let force = args.iter().any(|arg| arg == "--force");
+        let result = super::nix_cache::issue_lease_niks3_token(ctx, name, force);
+        let v = json!({"name": name, "niks3_token": result});
+        if ctx.json.get() {
+            crate::ctx::json_out(ctx, &jq::compact(&v));
+            return if result["ok"] == true {
+                Ok(())
+            } else {
+                Err(Fail(1))
+            };
+        }
+        return report_niks3_token(ctx, &v);
+    }
     let mut remote = vec!["niks3-token".to_string()];
     remote.extend(args.iter().cloned());
     remote.extend(["--owner".to_string(), ctx.owner()]);
@@ -193,23 +209,26 @@ pub fn cmd_niks3_token(ctx: &Ctx, args: &[String]) -> R {
         crate::ctx::json_out(ctx, &out);
         return Ok(());
     }
-    let v = parsed(&out);
-    let name = jq::raw(get(&v, "name"));
-    if jq::path(&v, &["niks3_token", "ok"]) == &Value::Bool(true) {
+    report_niks3_token(ctx, &parsed(&out))
+}
+
+fn report_niks3_token(ctx: &Ctx, v: &Value) -> R {
+    let name = jq::raw(get(v, "name"));
+    if jq::path(v, &["niks3_token", "ok"]) == &Value::Bool(true) {
         paint::ok(
             ctx,
             &format!(
                 "{} has a niks3 token until {}",
                 paint::vm(ctx, &name),
                 super::up::fmt_expiry(super::up::epoch(jq::path(
-                    &v,
+                    v,
                     &["niks3_token", "expires_at"]
                 )))
             ),
         );
         Ok(())
     } else {
-        super::up::warn_niks3_token(ctx, &name, &v);
+        super::up::warn_niks3_token(ctx, &name, v);
         Err(Fail(1))
     }
 }

@@ -115,3 +115,54 @@ waits for SSH readiness, and requests cancellation if the lease expires.
 Disk in `rworker profiles` shows total filesystem size in GiB for the most
 recent worker on each GitHub profile. The field is blank until the first
 measurement.
+
+## Nix cache and tokens
+
+`rworker up`, `exec` and `ssh --create` with a GitHub profile (and with a
+[GitLab CI](gitlab-ci.md) profile, see below) set the lease up like an
+OpenStack worker, as far as the client host has something to give:
+
+- the S3 Nix cache: the `s3://` substituters, the trusted public keys and the
+  AWS profile they name;
+- the client's Nix `access-tokens` (private flake inputs);
+- a niks3 push token, valid until the lease ends.
+
+`--no-nix-cache`, `--no-nix-auth` and `--no-niks3-token` skip one part
+(MCP: `nix_cache`, `nix_auth`, `niks3_token` set to false). A failure warns and leaves a usable lease.
+`rworker setup nix [cache|auth] NAME` and `rworker setup niks3-token NAME`
+repeat it. `extend` does not apply: a lease has a fixed expiry, and the niks3
+token expires with it.
+
+**These credentials end up on a GitHub-hosted runner.** The repository is
+public, so the workflow never prints them: the client sends them over SSH,
+as stdin only, to the build user's home (`~/.config/rworker-nix`,
+`~/.config/rworker-niks3`; 0700 directories, 0600 files). Use read-only
+credentials, and the flags above for work that should not hold them.
+
+How the runner picks them up (the agent script and the workflow are read from
+`main`, so this applies after a push):
+
+- The runner's SSH sessions set `NIX_USER_CONF_FILES` and
+  `AWS_SHARED_CREDENTIALS_FILE` to those files and put `~/.local/bin` first
+  in `PATH`, so plain `rworker ssh NAME 'nix build ...'` and `rworker start`
+  jobs need no exports.
+- The pushed `nix.conf` uses `access-tokens`, not `extra-access-tokens`: the
+  runner's own `/etc/nix/nix.conf` has an `access-tokens` entry for its own
+  GitHub token, which Nix would otherwise keep, and private inputs would 404.
+- With the cache, the file also selects the lease's own store
+  (`~/.local/share/nix/rworker`, the store the `rworker-nix-daemon` builder
+  uses, with `build-users-group` empty). The system daemon would ignore the
+  substituters of an untrusted user; the lease store is the user's own.
+- `rworker-nix-daemon`, which serves the lease as a remote builder, reads the
+  same files, so `builders-use-substitutes` substitutes from the cache.
+- `~/.local/bin/niks3` runs the niks3 client from nixpkgs with the lease's
+  token and server: `nix path-info -r PATHS | niks3 push --stdin`.
+
+On GitLab CI the container has no system `nix.conf` tokens to override. The
+`gl-x86_64` job installs Ubuntu's Nix (2.18), which cannot open `s3://`
+stores: `setup nix` notices when the runner cannot read the bucket, warns,
+leaves the cache out and still sets up the tokens. Use `gl-x86_64-lease` for
+the cache. Its image runs a daemon for the build user, and a daemon ignores
+the substituters of an untrusted user, so the agent marks the build user
+trusted (`trusted-users`) and gives the daemon the credentials file. The
+container is the build user's alone.

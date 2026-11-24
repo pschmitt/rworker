@@ -176,6 +176,198 @@ fn ssh_capture(opts: &[String], login: &str, script: &str) -> String {
         .unwrap_or_default()
 }
 
+/// The nix.conf pushed to a worker. An OpenStack worker keeps the system
+/// nix.conf, so `extra-` adds to it. A CI runner already has an
+/// `access-tokens` line (its own GitHub token) and Nix keeps that entry over
+/// an `extra-access-tokens` one, so a private input would 404: a lease gets
+/// plain `access-tokens`, which replaces it.
+fn render_conf(
+    header: &str,
+    cache: Option<(&[String], Vec<String>)>,
+    tokens: &[(String, String)],
+    lease: bool,
+) -> String {
+    let mut conf = header.to_owned();
+    if let Some((subs, keys)) = cache {
+        conf.push_str(&format!(
+            "\nextra-substituters = {}\nextra-trusted-public-keys = {}",
+            subs.join(" "),
+            keys.join(" ")
+        ));
+    }
+    if !tokens.is_empty() {
+        let pairs: Vec<String> = tokens.iter().map(|(h, t)| format!("{h}={t}")).collect();
+        let key = if lease {
+            "access-tokens"
+        } else {
+            "extra-access-tokens"
+        };
+        conf.push_str(&format!("\n{key} = {}", pairs.join(" ")));
+    }
+    conf
+}
+
+/// The account of a CI lease and where it keeps what `setup nix` pushes
+/// (under its home, 0700 directory, 0600 files).
+const LEASE_USER: &str = "rworker-build";
+
+/// Shell for a lease: write stdin plus `tail` to `$HOME/.config/rworker-nix/FILE`.
+fn lease_write(file: &str, tail: &str) -> String {
+    format!(
+        "umask 077; d=\"$HOME/.config/rworker-nix\"; mkdir -p \"$d\" && chmod 0700 \"$d\" && {{ cat; {tail} }} > \"$d/{file}.new\" && mv -f \"$d/{file}.new\" \"$d/{file}\""
+    )
+}
+
+/// What a GitHub lease adds to the pushed nix.conf for the cache: sessions
+/// use the lease's own store (in the build user's home, see
+/// scripts/github-job-agent.py) so the S3 substituters are trusted and read
+/// the AWS credentials of the session. The system daemon would ignore the
+/// substituters of an untrusted user.
+const GITHUB_STORE_LINES: &str = "printf 'build-users-group =\\nsandbox = true\\nstore = %s/.local/share/nix/rworker\\n' \"$HOME\";";
+
+/// `setup nix` on a CI lease: the files go to the build user's home and the
+/// agent's session environment (NIX_USER_CONF_FILES,
+/// AWS_SHARED_CREDENTIALS_FILE) picks them up; no daemon to restart. The
+/// cache goes into nix.conf only after the runner's Nix has read the bucket
+/// with the credentials: Ubuntu's Nix, which a GitLab job installs, cannot
+/// open s3:// stores at all, and listing one as a substituter would only
+/// make every build complain.
+#[allow(clippy::too_many_arguments)]
+fn push_lease(
+    ctx: &Ctx,
+    name: &str,
+    forge: crate::github_profiles::Forge,
+    header: &str,
+    cache: Option<(&[String], Vec<String>)>,
+    tokens: &[(String, String)],
+    creds: &str,
+    shown: &dyn Fn(bool, &str, bool) -> Value,
+) -> R<String> {
+    let opts_ssh = state::ssh_opts(ctx, name);
+    if opts_ssh.is_empty() {
+        ctx.err(&format!("No pinned host key or relay known for {name}"));
+        return Err(Fail(1));
+    }
+    let login = format!("{LEASE_USER}@{name}");
+    for _ in 1..=3 {
+        if super::up::probe(&opts_ssh, &login) {
+            break;
+        }
+        proc::sleep_secs(2.0);
+    }
+    let mut verified = true;
+    let mut cache = cache;
+    if let Some((subs, _)) = &cache {
+        let code = proc::run_with_input(
+            ctx,
+            state::worker_ssh(&opts_ssh, &login).arg(lease_write("aws-credentials", "")),
+            creds.as_bytes(),
+        )?;
+        crate::ctx::status(code).map_err(|_| Fail(1))?;
+        // `nix store info` is `nix store ping` before Nix 2.19.
+        let url = proc::shell_quote(&subs[0]);
+        let check = Command::new("ssh")
+            .args(&opts_ssh)
+            .arg(&login)
+            .arg(format!(
+                "export AWS_SHARED_CREDENTIALS_FILE=\"$HOME/.config/rworker-nix/aws-credentials\"; timeout 60 nix store info --store {url} || timeout 60 nix store ping --store {url}"
+            ))
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::piped())
+            .output();
+        verified = match check {
+            Ok(o) if o.status.success() => true,
+            Ok(o) => {
+                let err = String::from_utf8_lossy(&o.stderr);
+                let lines: Vec<&str> = err.lines().collect();
+                let tail = lines[lines.len().saturating_sub(3)..].join("\n");
+                ctx.err(&format!("The worker cannot reach the S3 cache: {tail}"));
+                false
+            }
+            Err(_) => false,
+        };
+        if !verified {
+            // Keep the unusable cache out of the runner's Nix.
+            cache = None;
+            let _ = Command::new("ssh")
+                .args(&opts_ssh)
+                .arg(&login)
+                .arg("rm -f \"$HOME/.config/rworker-nix/aws-credentials\"")
+                .stderr(std::process::Stdio::null())
+                .status();
+        }
+    }
+    let store = if cache.is_some() && forge == crate::github_profiles::Forge::GitHub {
+        GITHUB_STORE_LINES
+    } else {
+        ""
+    };
+    if cache.is_some() || !tokens.is_empty() {
+        let conf = render_conf(header, cache, tokens, true);
+        let code = proc::run_with_input(
+            ctx,
+            state::worker_ssh(&opts_ssh, &login).arg(lease_write("nix.conf", store)),
+            format!("{conf}\n").as_bytes(),
+        )?;
+        crate::ctx::status(code).map_err(|_| Fail(1))?;
+    }
+    let mut result = shown(verified, "lease", verified);
+    if !verified {
+        result["cache"] = json!(false);
+        result["substituters"] = json!([]);
+        result["profiles"] = json!([]);
+    }
+    Ok(jq::compact(&result))
+}
+
+/// Install a niks3 push token on a CI lease (`token` on stdin only).
+pub fn install_niks3_token(ctx: &Ctx, name: &str, token: &str, server_url: &str) -> R {
+    let opts_ssh = state::ssh_opts(ctx, name);
+    if opts_ssh.is_empty() {
+        return Err(Fail(1));
+    }
+    let login = format!("{LEASE_USER}@{name}");
+    let url = proc::shell_quote(server_url);
+    let remote = format!(
+        "umask 077; d=\"$HOME/.config/rworker-niks3\"; mkdir -p \"$d\" && chmod 0700 \"$d\" && printf '%s\\n' {url} > \"$d/server-url\" && cat > \"$d/token.new\" && mv -f \"$d/token.new\" \"$d/token\""
+    );
+    let code = proc::run_with_input(
+        ctx,
+        state::worker_ssh(&opts_ssh, &login).arg(remote),
+        token.as_bytes(),
+    )?;
+    crate::ctx::status(code).map_err(|_| Fail(1))
+}
+
+/// Ask the controller for a niks3 token for a CI lease and install it. The
+/// controller cannot log in to a lease (only the operator's key is
+/// authorized there), so the token comes back to this host and goes to the
+/// runner over SSH. The result is `{"ok", "expires_at", "server_url"}` or
+/// `{"ok": false, "error"}`; the token never leaves this function.
+pub fn issue_lease_niks3_token(ctx: &Ctx, name: &str, force: bool) -> Value {
+    let mut args = vec!["niks3-token".to_string(), name.to_string()];
+    if force {
+        args.push("--force".into());
+    }
+    args.extend(["--owner".to_string(), ctx.owner()]);
+    let Ok(raw) = ctx.muted(|| state::remote(ctx, &args)) else {
+        return json!({"ok": false, "error": "the controller refused"});
+    };
+    let mut reply: Value = serde_json::from_str(&raw).unwrap_or(Value::Null);
+    let issued = reply["niks3_token"].take();
+    drop(raw);
+    if issued["ok"] != true {
+        return json!({"ok": false, "error": jq::or(&issued["error"], "unknown error")});
+    }
+    let (Some(token), Some(url)) = (issued["token"].as_str(), issued["server_url"].as_str()) else {
+        return json!({"ok": false, "error": "invalid controller reply"});
+    };
+    match ctx.muted(|| install_niks3_token(ctx, name, token, url)) {
+        Ok(()) => json!({"ok": true, "expires_at": issued["expires_at"], "server_url": url}),
+        Err(_) => json!({"ok": false, "error": "could not reach the worker over SSH"}),
+    }
+}
+
 /// Push the settings to a worker. The JSON result, progress on stderr.
 pub fn push(ctx: &Ctx, name: &str, dry: bool, opts: &Opts) -> R<String> {
     let cfg = read_config(ctx)?;
@@ -228,22 +420,17 @@ pub fn push(ctx: &Ctx, name: &str, dry: bool, opts: &Opts) -> R<String> {
             }
         }
     }
-    let mut conf = format!(
+    let header = format!(
         "# Pushed by rworker setup nix from {} at {}.",
         ctx.hostname,
         crate::time::utc_iso(),
     );
-    if do_cache {
-        conf.push_str(&format!(
-            "\nextra-substituters = {}\nextra-trusted-public-keys = {}",
-            subs.join(" "),
-            strings(get(&settings, "keys")).join(" ")
-        ));
-    }
-    if do_auth {
-        let pairs: Vec<String> = tokens.iter().map(|(h, t)| format!("{h}={t}")).collect();
-        conf.push_str(&format!("\nextra-access-tokens = {}", pairs.join(" ")));
-    }
+    let conf = render_conf(
+        &header,
+        do_cache.then(|| (subs.as_slice(), strings(get(&settings, "keys")))),
+        &tokens,
+        false,
+    );
     let profiles = get(&settings, "profiles").clone();
     let subs_v = get(&settings, "substituters").clone();
     let shown = |ok: bool, daemon: &str, reachable: bool| {
@@ -266,6 +453,18 @@ pub fn push(ctx: &Ctx, name: &str, dry: bool, opts: &Opts) -> R<String> {
         return Ok(jq::compact(&v));
     }
 
+    if let Some((forge, _)) = state::hosted_id(name) {
+        return push_lease(
+            ctx,
+            name,
+            forge,
+            &header,
+            do_cache.then(|| (subs.as_slice(), strings(get(&settings, "keys")))),
+            &tokens,
+            &creds,
+            &shown,
+        );
+    }
     let ip = state::worker_ip(ctx, name)?;
     let opts_ssh = state::ssh_opts(ctx, name);
     let login = format!("agent@{ip}");
@@ -450,6 +649,22 @@ pub fn cmd_setup_nix(ctx: &Ctx, args: &[String], help_topic: &str, defaults: Opt
     };
     match get(&v, "daemon").as_str() {
         Some("restarted") => paint::ok(ctx, &format!("{} {what}", paint::vm(ctx, &name))),
+        Some("lease") if get(&v, "ok") == &Value::Bool(true) => {
+            paint::ok(ctx, &format!("{} {what}", paint::vm(ctx, &name)))
+        }
+        Some("lease") => {
+            let pushed = if pushes_auth {
+                "only the access-tokens were set up"
+            } else {
+                "nothing was set up"
+            };
+            ctx.err(&format!(
+                "{} the S3 cache does not work on {}; {pushed}",
+                paint::warn_mark(ctx),
+                paint::vm(ctx, &name)
+            ));
+            return Err(Fail(1));
+        }
         Some("image-too-old") => {
             ctx.err(&format!(
                 "{} {} runs an image from before `setup nix` existed: nothing was pushed (create a new worker)",
@@ -547,6 +762,35 @@ mod tests {
             Err("niks3".to_string())
         );
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_lease_replaces_the_runners_access_tokens_a_worker_extends_its_own() {
+        let tokens = [("github.com".to_string(), "ghp_secret".to_string())];
+        let subs = ["s3://b?profile=niks3".to_string()];
+        let cache = || Some((subs.as_slice(), vec!["k1".to_string(), "k2".to_string()]));
+        let lease = render_conf("# h", cache(), &tokens, true);
+        assert_eq!(
+            lease,
+            "# h\nextra-substituters = s3://b?profile=niks3\nextra-trusted-public-keys = k1 k2\naccess-tokens = github.com=ghp_secret"
+        );
+        let worker = render_conf("# h", None, &tokens, false);
+        assert_eq!(worker, "# h\nextra-access-tokens = github.com=ghp_secret");
+        assert_eq!(render_conf("# h", None, &[], true), "# h");
+    }
+
+    #[test]
+    fn lease_files_are_written_privately_from_stdin() {
+        let script = lease_write("nix.conf", GITHUB_STORE_LINES);
+        assert!(script.starts_with("umask 077;"), "{script}");
+        assert!(script.contains("chmod 0700 \"$d\""), "{script}");
+        assert!(script.contains("{ cat; printf "), "{script}");
+        assert!(
+            script.contains("store = %s/.local/share/nix/rworker"),
+            "{script}"
+        );
+        assert!(script.ends_with("mv -f \"$d/nix.conf.new\" \"$d/nix.conf\""));
+        assert!(lease_write("aws-credentials", "").contains("{ cat;  }"));
     }
 
     #[test]

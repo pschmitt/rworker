@@ -43,6 +43,12 @@ def exercise(binary, root, provider, runner_pin=None, prebuilt=False):
         }}
     if runner_pin is not None:
         settings["gitlabCi"]["runnerId"] = runner_pin
+    jwt_key = root / "niks3.pem"
+    subprocess.run(["openssl", "genpkey", "-algorithm", "ED25519", "-out", str(jwt_key)], check=True)
+    settings["niks3"] = {
+        "signingKeyFile": str(jwt_key), "keyId": "fixture", "issuer": "fixture-issuer",
+        "audience": "fixture-audience", "serverUrl": "https://cache.example.invalid",
+    }
     config.write_text(json.dumps(settings))
     key = root / "signing.pem"
     subprocess.run(
@@ -224,6 +230,24 @@ else:
             assert ready["job_url"].endswith("/77")
             assert ready["state"] == "ready" and ready["endpoint"] == endpoint and ready["kvm"]
             assert "token_hash" not in ready
+            name = ("glci-" if gitlab else "gha-") + suffix
+            issued = control("niks3-token", name, "--owner", "operator@fixture")["niks3_token"]
+            assert issued["ok"] and issued["expires_at"] == ready["expires_at"]
+            assert issued["server_url"] == "https://cache.example.invalid"
+            claims = json.loads(base64.urlsafe_b64decode(issued["token"].split(".")[1] + "=="))
+            assert claims["sub"] == f"rworker:{name}" and claims["exp"] == ready["expires_at"]
+            for refused in (["--owner", "someone@else"], []):
+                refusal = subprocess.run([*command, "niks3-token", name, *refused],
+                                         env=environment, capture_output=True, text=True)
+                assert refusal.returncode != 0 and "different operator" in refusal.stderr, refusal.stderr
+            assert control("niks3-token", name, "--owner", "someone@else", "--force")["niks3_token"]["ok"]
+            unconfigured = dict(settings)
+            unconfigured.pop("niks3")
+            (root / "plain.json").write_text(json.dumps(unconfigured))
+            plain = json.loads(subprocess.check_output(
+                [binary, "server", root / "plain.json", "niks3-token", name, "--owner", "operator@fixture"],
+                env=environment))
+            assert plain["niks3_token"] == {"ok": False, "error": "not-configured"}
             legacy = "a" * 32
             legacy_dir = state / legacy
             legacy_dir.mkdir()

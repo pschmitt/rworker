@@ -339,6 +339,46 @@ pub(super) fn run(
     }
 }
 
+/// A niks3 push token for a CI lease, valid until the lease ends. The
+/// controller cannot log in to a lease (only the operator's key is
+/// authorized there), so the token goes back to the operator's client, which
+/// installs it over its own SSH route. `error: "not-configured"` when the
+/// controller has no niks3 issuer.
+pub(super) fn niks3_token(
+    settings: &Value,
+    forge: Forge,
+    suffix: &str,
+    owner: Option<&str>,
+    force: bool,
+) -> Result<Value, String> {
+    let name = format!("{}{suffix}", forge.prefix());
+    let cfg = &settings["niks3"];
+    if !cfg.as_object().is_some_and(|cfg| !cfg.is_empty()) {
+        return Ok(json!({"name": name, "niks3_token": {"ok": false, "error": "not-configured"}}));
+    }
+    let config = &settings[forge.settings_key()];
+    let repository = repository(config, forge).ok_or("Missing worker pipeline project")?;
+    let root = state_directory(config).ok_or("Missing worker lease state directory")?;
+    let dir = worker_lease_dir(root, suffix).map_err(|_| format!("no worker {name}"))?;
+    let guard = File::open(dir.join("lock")).map_err(|_| format!("no worker {name}"))?;
+    lock(&guard)?;
+    let lease = read_lease(&dir).map_err(|error| error.to_string())?;
+    if lease.repository != repository {
+        return Err("Worker lease belongs to a different repository".into());
+    }
+    if !force && owner != Some(lease.owner.as_str()) {
+        return Err("Worker lease belongs to a different operator".into());
+    }
+    if lease.state != LeaseState::Ready || now() >= lease.expires_at {
+        return Err(format!("{name} is not running"));
+    }
+    let token = super::niks3::mint(cfg, &name, now() as i64, lease.expires_at as i64)?;
+    Ok(json!({"name": name, "niks3_token": {
+        "ok": true, "expires_at": lease.expires_at,
+        "server_url": super::openstack::setting(cfg, "serverUrl")?, "token": token,
+    }}))
+}
+
 pub(super) fn claim(
     settings: &Value,
     id: &str,

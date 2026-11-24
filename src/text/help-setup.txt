@@ -32,7 +32,11 @@ Use an absolute path to an existing file on the worker. View it with
   __ME__ setup niks3-token NAME [--force]
 
 The controller installs a fresh token in /run/rworker-niks3 on the worker
-for the rest of its lifetime. The worker can use `niks3 push /nix/store/...`
+for the rest of its lifetime. On a GitHub Actions or GitLab CI worker the
+controller hands the token to this host, which installs it over SSH in
+~/.config/rworker-niks3 of the build user (a `niks3` command in
+~/.local/bin uses it); it is valid until the lease ends, which cannot be
+extended. The worker can use `niks3 push /nix/store/...`
 and write `rworker-*` pins. Use this after opting out or to retry a failed
 install. `up` issues the token by default, and `extend` renews it.
 Workers whose images lack /run/rworker-niks3 are skipped.
@@ -43,7 +47,12 @@ Workers whose images lack /run/rworker-niks3 are skipped.
 
 Over SSH (pinned host key), never through the OpenStack metadata service and
 never via the control host, `setup nix` pushes into /run/rworker-nix on the
-worker (tmpfs, agent-owned, 0700, gone with the worker):
+worker (tmpfs, agent-owned, 0700, gone with the worker). On a GitHub Actions
+or GitLab CI worker the files go to ~/.config/rworker-nix of the build user
+(0700 directory, 0600 files) and the runner's SSH sessions read them. The
+access-tokens replace the runner's own, and a GitHub worker builds in its
+lease store so the cache substituters apply. That puts the credentials on a
+hosted runner; they are never echoed to a workflow log:
   cache  this host's s3:// substituters, the trusted public keys and the AWS
          profile each s3:// URL names (profile=...), read from
          $RWORKER_AWS_CREDENTIALS_FILE, $AWS_SHARED_CREDENTIALS_FILE or

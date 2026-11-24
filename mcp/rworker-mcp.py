@@ -161,6 +161,8 @@ def up(
     `niks3` command on the worker uses (`niks3 push PATH`); the result has a
     niks3_token object, ok=false if it did not work. Pass False to keep it
     off the worker. The browser-daemon profile never gets one.
+    GitHub Actions and GitLab CI profiles get the same cache, tokens and
+    niks3 token by default (the credentials then sit on a shared runner).
     Returns name, ip, host_key, user and expires_at. Always call down() when
     the task is done.
     """

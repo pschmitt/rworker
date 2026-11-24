@@ -29,6 +29,24 @@ LEASE_IMAGE = Path("/etc/rworker/lease-image").is_file()
 AUDIENCE = "rworker-job"
 BUILD_USER = "rworker-build"
 NIX_BUILDER_PATH = ".local/bin/rworker-nix-daemon"
+# Where `rworker setup nix` and `setup niks3-token` put the client's Nix
+# settings and the lease's niks3 token, relative to the build user's home.
+NIX_SETTINGS = ".config/rworker-nix"
+NIKS3_SETTINGS = ".config/rworker-niks3"
+# Pushes to the private Nix cache with the lease's own token, through the
+# lease's Nix (the runner has no niks3).
+NIKS3_WRAPPER = """#!/bin/sh
+d="$HOME/.config/rworker-niks3"
+if [ -r "$d/token" ]; then
+  NIKS3_AUTH_TOKEN_FILE="$d/token"
+  export NIKS3_AUTH_TOKEN_FILE
+fi
+if [ -r "$d/server-url" ]; then
+  NIKS3_SERVER_URL=$(cat "$d/server-url")
+  export NIKS3_SERVER_URL
+fi
+exec nix shell nixpkgs#niks3 -c niks3 "$@"
+"""
 
 
 class NoRedirect(urllib.request.HTTPRedirectHandler):
@@ -147,6 +165,22 @@ with open('/dev/kvm', 'r+b', buffering=0) as device:
     return ["kvm"] if result.returncode == 0 else []
 
 
+def build_user_home():
+    return Path(pwd.getpwnam(BUILD_USER).pw_dir)
+
+
+def install_build_user_file(relative, content, mode="0700"):
+    run_as_build_user(
+        ["/bin/bash", "-eu", "-c", 'umask 077; mkdir -p "${1%/*}"; cat > "$1"; chmod "$2" "$1"',
+         "rworker-install", str(build_user_home() / relative), mode],
+        input=content, text=True, check=True,
+    )
+
+
+def prepare_session_tools():
+    install_build_user_file(".local/bin/niks3", NIKS3_WRAPPER)
+
+
 def prepare_gitlab_nix():
     # Only the build user owns the store in this disposable container.
     subprocess.run(["install", "-d", "-o", BUILD_USER, "-g", BUILD_USER, "/nix/var/nix"], check=True)
@@ -175,21 +209,44 @@ profile rworker-nix-builder "{daemon.resolve(strict=True)}" flags=(unconfined) {
 }}
 '''
         subprocess.run(privileged("apparmor_parser", "--replace"), input=profile, text=True, check=True)
-    run_as_build_user(
-        ["/bin/bash", "-eu", "-c", 'umask 077; mkdir -p "${1%/*}"; cat > "$1"; chmod 0700 "$1"',
-         "rworker-nix-daemon", str(Path(pwd.getpwnam(BUILD_USER).pw_dir) / NIX_BUILDER_PATH)],
-        input=f"""#!/bin/sh
+    # The daemon also reads what `setup nix` pushed (substituters, access
+    # tokens and the AWS credentials of the S3 cache), so a client that
+    # builds through it with builders-use-substitutes substitutes there too.
+    # NIX_REMOTE would point the daemon at itself.
+    install_build_user_file(
+        NIX_BUILDER_PATH,
+        f"""#!/bin/sh
+unset NIX_REMOTE
 export NIX_CONFIG="build-users-group =
 sandbox = true"
+c="$HOME/{NIX_SETTINGS}"
+NIX_USER_CONF_FILES="$HOME/.config/nix/nix.conf:$c/nix.conf"
+export NIX_USER_CONF_FILES
+if [ -r "$c/aws-credentials" ]; then
+  AWS_SHARED_CREDENTIALS_FILE="$c/aws-credentials"
+  export AWS_SHARED_CREDENTIALS_FILE
+fi
 exec {daemon} --store "$HOME/.local/share/nix/rworker" "$@"
 """,
-        text=True, check=True,
     )
 
 
 @contextmanager
 def gitlab_nix_daemon():
-    with subprocess.Popen(["nix-daemon"], stdin=subprocess.DEVNULL, start_new_session=True) as daemon:
+    # The build user is a client of this daemon. To use the cache and tokens
+    # `setup nix` pushes (substituters are only honoured from a trusted user)
+    # it has to be trusted, and the daemon, which does the substituting, reads
+    # the AWS credentials from the file `setup nix` writes. The container is
+    # the build user's alone.
+    with Path("/etc/nix/nix.conf").open("a") as config:
+        config.write(f"\ntrusted-users = root {BUILD_USER}\n")
+    environment = dict(
+        os.environ,
+        AWS_SHARED_CREDENTIALS_FILE=str(build_user_home() / NIX_SETTINGS / "aws-credentials"),
+    )
+    with subprocess.Popen(
+        ["nix-daemon"], stdin=subprocess.DEVNULL, start_new_session=True, env=environment,
+    ) as daemon:
         try:
             ready = Path("/nix/var/nix/daemon-socket/socket")
             deadline = time.monotonic() + 10
@@ -217,6 +274,7 @@ def build_environment(profile):
                 prepare_gitlab_nix()
         else:
             prepare_github_nix_builder()
+        prepare_session_tools()
         yield kvm_capabilities(), volume
 
 
@@ -242,6 +300,14 @@ def prepare_sshd(paths, public_key, proxy_environment=()):
     # PAM permits public-key login while password-based methods stay disabled.
     sshd_config = paths / "sshd_config"
     trust = " SSL_CERT_FILE=/etc/ssl/certs/ca-bundle.crt" if LEASE_IMAGE else ""
+    # Sessions find the niks3 command, and Nix and the AWS SDK find what
+    # `setup nix` pushed (files that may not exist: both skip them).
+    home = build_user_home()
+    nix_settings = home / NIX_SETTINGS
+    session = (
+        f" NIX_USER_CONF_FILES={home}/.config/nix/nix.conf:{nix_settings}/nix.conf"
+        f" AWS_SHARED_CREDENTIALS_FILE={nix_settings}/aws-credentials"
+    )
     proxies = "".join(f" {name}={value}" for name, value in proxy_environment)
     sshd_config.write_text(
         f"""ListenAddress 127.0.0.1
@@ -256,7 +322,7 @@ KbdInteractiveAuthentication no
 AuthenticationMethods publickey
 DisableForwarding yes
 PermitUserEnvironment no
-SetEnv XDG_CONFIG_HOME={pwd.getpwnam(BUILD_USER).pw_dir}/.config PATH=/nix/var/nix/profiles/default/bin:/usr/local/bin:/usr/bin:/bin{trust}{proxies}
+SetEnv XDG_CONFIG_HOME={home}/.config PATH={home}/.local/bin:/nix/var/nix/profiles/default/bin:/usr/local/bin:/usr/bin:/bin{session}{trust}{proxies}
 AcceptEnv LANG LC_*
 Subsystem sftp internal-sftp
 """
