@@ -543,9 +543,9 @@ function render() {
     return;
   }
   const test = filterTests[view]?.[state.filters[view]] || (() => true);
-  // Jobs also match their worker's topic and agent, as shown in the list.
+  // Jobs also match the topic and agent shown in the list.
   const workerOf = view === "jobs" && search ? new Map((state.rows.workers || []).map((worker) => [worker.name, worker])) : null;
-  const searchable = (row) => workerOf ? { ...row, topic: workerOf.get(row.worker)?.topic, agent: workerOf.get(row.worker)?.agent } : row;
+  const searchable = (row) => workerOf ? { ...row, topic: row.topic || workerOf.get(row.worker)?.topic, agent: workerOf.get(row.worker)?.agent } : row;
   let visible = source.filter((row) => searchMatch(searchable(row), search) && test(row, now));
   if (view === "events") visible = visible.slice().reverse();
   const key = JSON.stringify([view, prefs.layout, state.filters[view], state.sort, state.tableSort, state.jobSort, state.profileSort, search, state.limit,
@@ -897,7 +897,12 @@ function renderWorkerCards(visible, now) {
   $("results").replaceChildren(container);
 }
 
-// Jobs have no topic or agent of their own: they show their worker's.
+// A job's own topic, or its worker's when it has none. The agent is always
+// the worker's.
+function jobTopic(row, worker) {
+  return row.topic || worker.topic || "";
+}
+
 function jobContext(visible) {
   const workers = new Map((state.rows.workers || []).map((worker) => [worker.name, worker]));
   const sorted = visible.slice().sort((a, b) => Number(filterTests.jobs.active(b)) - Number(filterTests.jobs.active(a)));
@@ -913,10 +918,11 @@ function jobLink(cls, row) {
   return link;
 }
 
-function topicCell(cls, worker) {
-  const topic = el("span", cls, worker.topic || "");
-  if (worker.topic) topic.title = worker.topic;
-  return topic;
+function topicCell(cls, topic, worker) {
+  const cell = el("span", cls, topic);
+  const other = worker.topic && worker.topic !== topic ? "Worker: " + worker.topic : "";
+  cell.title = [topic, other].filter(Boolean).join("\n");
+  return cell;
 }
 
 function finishJobs(container, rows, total) {
@@ -942,10 +948,10 @@ function renderJobs(visible) {
     const link = jobLink("job-row" + (tone === "archived" ? " archived" : ""), row);
     if (compact) {
       link.append(icon(ic, "tone-" + (tone || "info")),
-        el("span", "ident", el("span", "name", row.job), el("span", "sub", [row.worker, worker.topic].filter(Boolean).join(" · "))), jobPill(row.state));
-      link.title = [row.worker, worker.topic, worker.agent].filter(Boolean).join(" · ");
+        el("span", "ident", el("span", "name", row.job), el("span", "sub", [row.worker, jobTopic(row, worker)].filter(Boolean).join(" · "))), jobPill(row.state));
+      link.title = [row.worker, jobTopic(row, worker), worker.agent].filter(Boolean).join(" · ");
     } else {
-      link.append(icon(ic, "tone-" + (tone || "info")), el("span", "name", row.job), topicCell("topic", worker),
+      link.append(icon(ic, "tone-" + (tone || "info")), el("span", "name", row.job), topicCell("topic", jobTopic(row, worker), worker),
         el("span", "agent", agentLabel(worker.agent)), el("span", "worker", row.worker), jobPill(row.state));
     }
     container.append(link);
@@ -963,7 +969,7 @@ function renderJobCards(visible) {
     const card = jobLink("card job-card" + (tone === "archived" ? " archived" : ""), row);
     card.append(
       el("div", "card-head", el("span", "tile", icon(ic, "tone-" + (tone || "info"))), el("div", "ident", el("span", "name", row.job), el("span", "sub", row.worker)), jobPill(row.state)),
-      el("div", "card-facts", el("span", "card-topic", worker.topic || "—"), el("span", null, agentLabel(worker.agent))));
+      el("div", "card-facts", el("span", "card-topic", jobTopic(row, worker) || "—"), el("span", null, agentLabel(worker.agent))));
     container.append(card);
   }
   finishJobs(container, shown, visible.length);
@@ -972,7 +978,7 @@ function renderJobCards(visible) {
 // Column sort for the console jobs table: [label, key, value].
 const jobColumns = [
   ["JOB", "job", (row) => row.job],
-  ["TOPIC", "topic", (row, worker) => worker.topic || ""],
+  ["TOPIC", "topic", jobTopic],
   ["AGENT", "agent", (row, worker) => worker.agent || ""],
   ["WORKER", "worker", (row) => row.worker],
   ["STATE", "state", (row) => String(row.state || "")],
@@ -1012,7 +1018,7 @@ function renderJobTable(visible) {
     const worker = workers.get(row.worker) || {};
     const state_ = String(row.state || "?").toLowerCase();
     const node = jobLink("ctr" + (tone === "archived" ? " archived" : ""), row);
-    node.append(el("span", "mark"), el("span", "nm", row.job), topicCell("tp", worker), agentLabel(worker.agent),
+    node.append(el("span", "mark"), el("span", "nm", row.job), topicCell("tp", jobTopic(row, worker), worker), agentLabel(worker.agent),
       el("span", "muted", row.worker), el("span", "st-" + (tone === "busy" ? "busy" : tone === "good" ? "good" : tone === "bad" ? "bad" : "idle"), state_));
     table.append(node);
   }
@@ -2188,7 +2194,7 @@ async function updateDetail(reset = false) {
       const list = el("div", "list");
       for (const entry of state.detailJobs) {
         const [tone, ic] = jobTone(entry.state);
-        list.append(el("div", "item" + (tone === "archived" ? " archived" : ""), icon(ic, "tone-" + (tone || "info")), el("span", "name", entry.job), jobPill(entry.state),
+        list.append(el("div", "item" + (tone === "archived" ? " archived" : ""), icon(ic, "tone-" + (tone || "info")), el("span", "ident", el("span", "name", entry.job), entry.topic ? el("span", "sub", entry.topic) : ""), jobPill(entry.state),
           button("Logs", () => { state.tab = "logs"; select(row, entry.job); }, { cls: "btn sm", ic: "terminal" })));
       }
       destination.replaceChildren(el("div", "pane-pad", list));
@@ -2399,7 +2405,7 @@ function jobOptions(jobs, { withWorker = false, allLabel = "All jobs" } = {}) {
     const [tone, ic] = jobTone(job.state);
     return {
       value: withWorker ? job.worker + "/" + job.job : job.job, label: job.job, mono: true,
-      sub: [withWorker ? job.worker : "", job.started_at ? "started " + relative(job.started_at) : ""].filter(Boolean).join(" · "),
+      sub: [withWorker ? job.worker : "", job.topic, job.started_at ? "started " + relative(job.started_at) : ""].filter(Boolean).join(" · "),
       icon: ic, iconCls: "tone-" + (tone || "info"), meta: job.state ? jobPill(job.state) : null,
       group: withWorker ? job.worker : undefined,
     };
@@ -2586,10 +2592,13 @@ async function form(action, worker, options = {}) {
   }
   if (action === "start") {
     fields.append(field("Job name", "job", { placeholder: "e.g. cargo-test" }),
+      field("Topic", "topic", { required: false, placeholder: "What is this job for?", attrs: { maxlength: "255" } }),
       field("Command", "command", { kind: "textarea", placeholder: "cd repo && nix develop -c cargo test", help: "Runs on the worker from the home directory. Output appears under Logs." }));
   }
   if (action === "register") {
-    fields.append(field("Job name", "job"), field("Absolute log path on the worker", "path", { placeholder: "/home/agent/build.log" }));
+    fields.append(field("Job name", "job"),
+      field("Topic", "topic", { required: false, placeholder: "What is this job for?", attrs: { maxlength: "255" } }),
+      field("Absolute log path on the worker", "path", { placeholder: "/home/agent/build.log" }));
   }
   if (action === "delete") {
     const running = state.selected?.name === worker.name ? (state.detailJobs || []).filter((job) => filterTests.jobs.active(job)) : [];

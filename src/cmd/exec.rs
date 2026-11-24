@@ -61,6 +61,7 @@ pub fn cmd_exec(ctx: &Ctx, args: &[String]) -> R {
     let mut up_args: Vec<String> = vec!["--quiet-topic-warning".into()];
     let (mut syncs, mut fetches): (Vec<String>, Vec<String>) = (Vec::new(), Vec::new());
     let mut cmd: Vec<String> = Vec::new();
+    let mut topic = String::new();
     let mut i = 0;
     while i < args.len() && !args[i].is_empty() {
         let a = args[i].as_str();
@@ -83,6 +84,9 @@ pub fn cmd_exec(ctx: &Ctx, args: &[String]) -> R {
                 let Some(v) = args.get(i + 1) else {
                     return Err(Fail(1));
                 };
+                if a == "--topic" {
+                    topic.clone_from(v);
+                }
                 up_args.extend([a.to_string(), v.clone()]);
                 i += 1;
             }
@@ -176,9 +180,10 @@ pub fn cmd_exec(ctx: &Ctx, args: &[String]) -> R {
     // OpenSSH joins command words with spaces before the remote shell parses
     // them. Preserve that command string inside the job wrapper.
     ssh.args(&opts).arg(&login).arg(format!(
-        "bash -c {} -- {}",
+        "bash -c {} -- {} {}",
         proc::shell_quote(include_str!("../exec-job.sh")),
-        proc::shell_quote(&cmd.join(" "))
+        proc::shell_quote(&cmd.join(" ")),
+        proc::shell_quote(&topic)
     ));
     let archive = info["archive_logs"] == true;
     let (rc, stdout, stderr) = if json {

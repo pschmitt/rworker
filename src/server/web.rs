@@ -573,12 +573,16 @@ async fn cached_jobs(headers: &HeaderMap, worker: Option<String>) -> Response {
             rows.insert((name, job), row);
         }
         if let Some(dir) = crate::event_history::directory() {
-            for (name, jobs) in crate::event_history::jobs(&dir)? {
+            let (states, topics) = crate::event_history::jobs(&dir)?;
+            for (name, jobs) in states {
                 if worker.as_ref().is_some_and(|filter| filter != &name) {
                     continue;
                 }
                 for (job, state) in jobs {
-                    let row = json!({"worker": name, "job": job, "state": state});
+                    let mut row = json!({"worker": name, "job": job, "state": state});
+                    if let Some(topic) = topics.get(&name).and_then(|jobs| jobs.get(&job)) {
+                        row["topic"] = json!(topic);
+                    }
                     rows.insert((name.clone(), job), row);
                 }
             }
@@ -693,11 +697,15 @@ enum Action {
         worker: String,
         job: String,
         command: String,
+        #[serde(default)]
+        topic: String,
     },
     Register {
         worker: String,
         job: String,
         path: String,
+        #[serde(default)]
+        topic: String,
     },
     Exec {
         profile: String,
@@ -813,14 +821,31 @@ impl Action {
                 worker,
                 job,
                 command,
-            } if !command.trim().is_empty() && !command.contains('\0') => {
-                words(&["start", name(worker)?, "--name", name(job)?, "--", command])
-            }
-            Self::Register { worker, job, path }
-                if path.starts_with('/') && !path.contains('\0') =>
-            {
-                words(&["register", name(worker)?, name(job)?, "--log", path])
-            }
+                topic: title,
+            } if !command.trim().is_empty() && !command.contains('\0') => words(&[
+                "start",
+                name(worker)?,
+                "--name",
+                name(job)?,
+                "--topic",
+                topic(title)?,
+                "--",
+                command,
+            ]),
+            Self::Register {
+                worker,
+                job,
+                path,
+                topic: title,
+            } if path.starts_with('/') && !path.contains('\0') => words(&[
+                "register",
+                name(worker)?,
+                name(job)?,
+                "--log",
+                path,
+                "--topic",
+                topic(title)?,
+            ]),
             Self::Exec {
                 profile,
                 ttl: duration,
@@ -985,6 +1010,7 @@ mod tests {
             worker: "example".into(),
             job: "build".into(),
             command: "printf 'hello world'".into(),
+            topic: "greeting".into(),
         };
         assert_eq!(
             action.command().unwrap().0,
@@ -993,6 +1019,8 @@ mod tests {
                 "example",
                 "--name",
                 "build",
+                "--topic",
+                "greeting",
                 "--",
                 "printf 'hello world'"
             ]

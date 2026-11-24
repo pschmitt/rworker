@@ -60,6 +60,8 @@ struct History {
     workers: BTreeMap<String, Worker>,
     jobs: Jobs,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    job_topics: Jobs,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     deletions: BTreeMap<String, Deletion>,
     /// When each recently deleted worker vanished, to ignore its echoes.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
@@ -168,6 +170,7 @@ impl History {
         for (name, worker) in old {
             if !self.workers.contains_key(&name) {
                 self.jobs.remove(&name);
+                self.job_topics.remove(&name);
                 self.deleted.insert(name.clone(), now);
                 let details = self
                     .deletions
@@ -229,6 +232,23 @@ impl History {
         }
         changed
     }
+
+    /// Keep the topics of the polled workers' jobs.
+    fn job_topics(&mut self, polled: Jobs) -> bool {
+        let mut changed = false;
+        for (name, topics) in polled {
+            if !self.workers.contains_key(&name) {
+                continue;
+            }
+            if topics.is_empty() {
+                changed |= self.job_topics.remove(&name).is_some();
+            } else if self.job_topics.get(&name) != Some(&topics) {
+                self.job_topics.insert(name, topics);
+                changed = true;
+            }
+        }
+        changed
+    }
 }
 
 /// Record who deleted a worker and why, for its `worker-deleted` event.
@@ -283,17 +303,22 @@ pub(crate) fn observe_workers(dir: &Path, inventory: &Value) -> io::Result<()> {
     update(dir, |history, now| history.workers(now, workers))
 }
 
-pub(crate) fn observe_jobs(dir: &Path, jobs: &Jobs) -> io::Result<()> {
-    update(dir, |history, now| history.jobs(now, jobs))
+pub(crate) fn observe_jobs(dir: &Path, jobs: &Jobs, topics: Jobs) -> io::Result<()> {
+    update(dir, |history, now| {
+        let changed = history.jobs(now, jobs);
+        history.job_topics(topics) || changed
+    })
 }
 
 pub(crate) fn list(dir: &Path) -> io::Result<VecDeque<Event>> {
     Ok(read(dir)?.events)
 }
 
+/// The states and the topics of the observed jobs.
 #[cfg(feature = "web")]
-pub(crate) fn jobs(dir: &Path) -> io::Result<Jobs> {
-    Ok(read(dir)?.jobs)
+pub(crate) fn jobs(dir: &Path) -> io::Result<(Jobs, Jobs)> {
+    let history = read(dir)?;
+    Ok((history.jobs, history.job_topics))
 }
 
 pub(crate) fn latest_id(dir: &Path) -> io::Result<u64> {
@@ -359,9 +384,13 @@ mod tests {
         };
         assert!(history.jobs(3, &jobs("running")));
         assert!(!history.jobs(4, &Jobs::new()));
+        assert!(history.job_topics(jobs("release build")));
+        assert!(!history.job_topics(jobs("release build")));
+        assert!(!history.job_topics(Jobs::new()));
         assert!(history.jobs(5, &jobs("exit 0")));
         assert!(history.jobs(6, &BTreeMap::from([("worker".into(), BTreeMap::new())])));
         assert!(history.workers(7, BTreeMap::new()));
+        assert!(history.job_topics.is_empty());
         let kinds: Vec<_> = history
             .events
             .iter()

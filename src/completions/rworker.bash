@@ -92,11 +92,11 @@ _rworker() {
         auth) spec=$(sed -n '/^flag setup /!p; /^flag setup \(--dry-run \|-n \|--auth-host=\)/p' <<< "$spec") ;;
         upload-blob) spec=$(sed -n '/^flag setup /!p; /^flag setup --name=/p' <<< "$spec") ;;
         niks3-token) spec=$(sed '/^flag setup /{ /^flag setup --force /!d; }' <<< "$spec") ;;
-        register-log-file) spec=$(sed '/^flag setup /{ /^flag setup --log=/!d; }' <<< "$spec") ;;
+        register-log-file) spec=$(sed '/^flag setup /{ /^flag setup --\(log\|topic\)=/!d; }' <<< "$spec") ;;
         netbird|tailscale) spec=$(sed '/^flag setup /d' <<< "$spec") ;;
         nix-cache) spec=$(sed '/^flag setup /{ /^flag setup \(--dry-run\|-n\) /!d; }' <<< "$spec") ;;
         nix-builder) spec=$(sed -n '/^flag setup /!p; /^flag setup \(--profile\|--arch\|--pool\|--gateway\|--identity\|-i\|--host-key\|--system\|--jobs\|--features\)=/p' <<< "$spec") ;;
-        *) spec=$(sed '/^flag setup --force /d; /^flag setup --name=/d; /^flag setup --log=/d; /^flag setup \(--profile\|--arch\|--pool\|--gateway\|--identity\|-i\|--host-key\|--system\|--jobs\|--features\)=/d' <<< "$spec") ;;
+        *) spec=$(sed '/^flag setup --force /d; /^flag setup --name=/d; /^flag setup --\(log\|topic\)=/d; /^flag setup \(--profile\|--arch\|--pool\|--gateway\|--identity\|-i\|--host-key\|--system\|--jobs\|--features\)=/d' <<< "$spec") ;;
       esac
     fi
     # ssh --create takes up's flags.

@@ -24,10 +24,11 @@ or GitLab prebuilt-image worker. The controller must allow the provider
 for that profile. The command prints a SOCKS proxy URL for use on the
 worker. The SSH relay stays available throughout setup.
 
-  __ME__ setup register-log-file WORKER JOB --log PATH
+  __ME__ setup register-log-file WORKER JOB --log PATH [--topic TEXT]
 
 Use an absolute path to an existing file on the worker. View it with
 `logs WORKER JOB`. Registration leaves the process that writes the log alone.
+--topic says what the job is for (shown by jobs); agents should always set it.
 
   __ME__ setup niks3-token NAME [--force]
 

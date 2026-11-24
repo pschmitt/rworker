@@ -25,6 +25,8 @@ Use `rworker profiles` to list the configured profiles. Select one with
   has been idle for an hour, up to its maximum lifetime.
 - Always pass `--topic` (what it is for) and `--agent-id` when you create
   one; `claim NAME` takes a worker over when you reuse it.
+- Give each job a `--topic` too: `start NAME --topic "release build" -- CMD`.
+  `jobs`, the TUI and the web console show it. Agents should always set it.
 
 [GitHub Actions workers](github-actions.md) use the `gh-aarch64` and
 `gh-x86_64` profiles. Their default lease is 30 minutes, including time

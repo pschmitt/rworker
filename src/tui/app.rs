@@ -145,7 +145,8 @@ pub struct Jobs {
     pub worker: Option<String>,
     pub open_single: bool,
     pub show_finished: bool,
-    pub rows: Vec<[String; 4]>,
+    /// Worker, job, state, start time and topic.
+    pub rows: Vec<[String; 5]>,
     pub state: TableState,
     pub loading: Option<u64>,
     pub error: Option<String>,
@@ -205,6 +206,7 @@ pub enum PromptKind {
     Topic(String),
     Claim(String),
     Start(String),
+    StartTopic(String, String),
     Command,
 }
 
@@ -931,7 +933,7 @@ impl App {
                                     .filter(|line| !line.is_empty())
                                     .filter_map(|line| {
                                         let mut fields = line
-                                            .splitn(if j.worker.is_some() { 3 } else { 4 }, '\t');
+                                            .splitn(if j.worker.is_some() { 4 } else { 5 }, '\t');
                                         let worker =
                                             j.worker.as_deref().or_else(|| fields.next())?;
                                         let job = fields.next()?;
@@ -946,6 +948,7 @@ impl App {
                                             job.to_owned(),
                                             state.to_owned(),
                                             fields.next()?.to_owned(),
+                                            fields.next().unwrap_or_default().to_owned(),
                                         ])
                                     })
                                     .collect();
@@ -1579,8 +1582,16 @@ impl App {
                 self.act(args, format!("claim {w}"));
             }
             PromptKind::Start(w) if !input.is_empty() => {
+                self.ask(
+                    PromptKind::StartTopic(w, input),
+                    "start job: topic",
+                    "",
+                    "what the job is for; empty leaves it out",
+                );
+            }
+            PromptKind::StartTopic(w, command) => {
                 let label = format!("start on {w}");
-                self.act(vec!["start".into(), w, "--".into(), input], label);
+                self.act(s(&["start", &w, "--topic", &input, "--", &command]), label);
                 self.reload_jobs();
             }
             PromptKind::Command if !input.is_empty() => match split_words(&input) {

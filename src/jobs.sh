@@ -4,16 +4,23 @@ root="$HOME/.local/state/rworker/jobs"
 mkdir -p "$root"
 action=$1
 shift
+# A topic is one line of the tab-separated job list.
+save_topic() {
+  local topic=${2//[[:cntrl:]]/ }
+  [[ -z "$topic" ]] || printf '%s\n' "${topic:0:255}" > "$1/topic"
+}
 valid() { [[ "$1" =~ ^[a-zA-Z0-9][a-zA-Z0-9_.-]*$ ]]; }
 case "$action" in
   start)
     label=""
     workdir="$HOME"
+    topic=""
     while [[ $# -gt 0 ]]
     do
       case "$1" in
         --name) label=$2; shift 2 ;;
         --workdir) workdir=$2; shift 2 ;;
+        --topic) topic=$2; shift 2 ;;
         --) shift; break ;;
         *) printf 'unknown option: %s\n' "$1" >&2; exit 2 ;;
       esac
@@ -29,6 +36,7 @@ case "$action" in
     fi
     printf '%s\n' "$1" > "$dir/command"
     printf '%s\n' "$workdir" > "$dir/workdir"
+    save_topic "$dir" "$topic"
     date -u +%FT%TZ > "$dir/started"
     cat > "$dir/run" <<'RUN_JOB'
 #!/usr/bin/env bash
@@ -45,12 +53,25 @@ RUN_JOB
     basename "$dir"
     ;;
   register)
-    [[ $# -eq 3 && "$2" == --log ]] || { printf 'usage: register JOB --log PATH\n' >&2; exit 2; }
-    valid "$1" || { printf 'invalid job name\n' >&2; exit 2; }
-    [[ "$3" == /* && -f "$3" ]] || { printf 'log must be an existing absolute file path\n' >&2; exit 2; }
-    mkdir "$root/$1"
-    printf '%s\n' "$3" > "$root/$1/log-path"
-    date -u +%FT%TZ > "$root/$1/started"
+    job=${1:-}
+    logfile=""
+    topic=""
+    [[ $# -eq 0 ]] || shift
+    while [[ $# -ge 2 ]]
+    do
+      case "$1" in
+        --log) logfile=$2; shift 2 ;;
+        --topic) topic=$2; shift 2 ;;
+        *) break ;;
+      esac
+    done
+    [[ $# -eq 0 && -n "$logfile" ]] || { printf 'usage: register JOB --log PATH [--topic TEXT]\n' >&2; exit 2; }
+    valid "$job" || { printf 'invalid job name\n' >&2; exit 2; }
+    [[ "$logfile" == /* && -f "$logfile" ]] || { printf 'log must be an existing absolute file path\n' >&2; exit 2; }
+    mkdir "$root/$job"
+    printf '%s\n' "$logfile" > "$root/$job/log-path"
+    save_topic "$root/$job" "$topic"
+    date -u +%FT%TZ > "$root/$job/started"
     ;;
   jobs)
     for dir in "$root"/*
@@ -69,7 +90,12 @@ RUN_JOB
           state=unknown
         fi
       fi
-      printf '%s\t%s\t%s\n' "${dir##*/}" "$state" "$(cat "$dir/started")"
+      topic=""
+      if [[ -f "$dir/topic" ]]
+      then
+        topic=$(cat "$dir/topic")
+      fi
+      printf '%s\t%s\t%s\t%s\n' "${dir##*/}" "$state" "$(cat "$dir/started")" "$topic"
     done
     ;;
   ps)

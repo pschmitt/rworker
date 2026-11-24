@@ -329,9 +329,13 @@ def prune(names: list[str] | None = None, all: bool = False,
 
 @mcp.tool()
 def exec(name: str, command: str, workdir: str | None = None,
-         timeout_seconds: int = 600) -> dict:
-    """Run a registered job and wait. On timeout the job continues; use logs()."""
-    job = start(name, command, workdir=workdir)
+         timeout_seconds: int = 600, topic: str | None = None) -> dict:
+    """Run a registered job and wait. On timeout the job continues; use logs().
+
+    topic: ALWAYS set it - a few words on what this job is for ("cargo test");
+    jobs, the TUI and the web console show it.
+    """
+    job = start(name, command, workdir=workdir, topic=topic)
     deadline = time.monotonic() + timeout_seconds
     while time.monotonic() < deadline:
         listing = run("jobs", name, timeout=60)
@@ -406,14 +410,18 @@ def exec_ephemeral(
 
 @mcp.tool()
 def start(name: str, command: str, session: str | None = None,
-          workdir: str | None = None) -> str:
+          workdir: str | None = None, topic: str | None = None) -> str:
     """Start a registered job. Returns its ID for jobs() and logs().
 
     session optionally names the job; omit it to generate a unique ID.
+    topic: ALWAYS set it - a few words on what this job is for ("cargo test");
+    jobs, the TUI and the web console show it.
     """
     argv = ["start", name]
     if session:
         argv += ["--name", session]
+    if topic:
+        argv += ["--topic", topic]
     if workdir:
         argv += ["--workdir", workdir]
     return run(*argv, "--", command, timeout=60).strip()
@@ -423,7 +431,8 @@ def start(name: str, command: str, session: str | None = None,
 def jobs(name: str | None = None, structured: bool = False,
          watch_seconds: int | None = None, interval_seconds: int | None = None,
          limit: int = 10) -> str | list:
-    """List registered jobs. structured returns JSON rows, or set watch_seconds
+    """List registered jobs: name, state, start time and topic columns (a
+    worker column first without name). structured returns JSON rows, or set watch_seconds
     to return up to limit structured snapshots over that period."""
     argv = ["jobs", *([name] if name else [])]
     if watch_seconds is not None:
@@ -529,9 +538,12 @@ def events(topic: str | None = None, agent: str | None = None,
 
 
 @mcp.tool()
-def setup_register_log_file(name: str, job: str, log_path: str) -> str:
-    """Register an existing absolute log-file path on a worker."""
-    run("setup", "register-log-file", name, job, "--log", log_path, timeout=60)
+def setup_register_log_file(name: str, job: str, log_path: str,
+                            topic: str | None = None) -> str:
+    """Register an existing absolute log-file path on a worker. topic: ALWAYS
+    set it - a few words on what the job is for."""
+    run("setup", "register-log-file", name, job, "--log", log_path,
+        *(["--topic", topic] if topic else []), timeout=60)
     return job
 
 

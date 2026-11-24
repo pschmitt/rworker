@@ -863,10 +863,11 @@ fn draw_jobs(f: &mut Frame, area: Rect, j: &mut Jobs) {
     }
     let all_workers = j.worker.is_none();
     let show_start = area.width >= 54;
+    let show_topic = area.width >= if all_workers { 80 } else { 64 };
     let rows: Vec<Row> = j
         .rows
         .iter()
-        .map(|[worker, name, state, started]| {
+        .map(|[worker, name, state, started, topic]| {
             let st = if state == "running" {
                 Style::new().fg(Color::Green)
             } else if state == "exit 0" {
@@ -880,10 +881,18 @@ fn draw_jobs(f: &mut Frame, area: Rect, j: &mut Jobs) {
             if all_workers {
                 cells.push(Cell::from(Span::styled(worker.clone(), dim())));
             }
-            cells.extend([
-                Cell::from(Span::styled(name.clone(), Style::new().fg(ACCENT))),
-                Cell::from(Span::styled(state.clone(), st)),
-            ]);
+            cells.push(Cell::from(Span::styled(
+                name.clone(),
+                Style::new().fg(ACCENT),
+            )));
+            if show_topic {
+                cells.push(Cell::from(if topic.is_empty() {
+                    Span::styled("-", dim())
+                } else {
+                    Span::raw(topic.clone())
+                }));
+            }
+            cells.push(Cell::from(Span::styled(state.clone(), st)));
             if show_start {
                 cells.push(Cell::from(Span::styled(started.clone(), dim())));
             }
@@ -896,8 +905,14 @@ fn draw_jobs(f: &mut Frame, area: Rect, j: &mut Jobs) {
         widths.push(Constraint::Length((area.width / 3).clamp(12, 22)));
         header.push("WORKER");
     }
-    widths.extend([Constraint::Fill(1), Constraint::Length(10)]);
-    header.extend(["JOB", "STATE"]);
+    widths.push(Constraint::Fill(1));
+    header.push("JOB");
+    if show_topic {
+        widths.push(Constraint::Fill(2));
+        header.push("TOPIC");
+    }
+    widths.push(Constraint::Length(10));
+    header.push("STATE");
     if show_start {
         widths.push(Constraint::Length(22));
         header.push("STARTED");

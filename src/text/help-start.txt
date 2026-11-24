@@ -1,1 +1,9 @@
-Usage: __ME__ start WORKER [--name JOB] [--workdir DIR] -- COMMAND
+Usage: __ME__ start WORKER [--name JOB] [--topic TEXT] [--workdir DIR] -- COMMAND
+
+Start COMMAND as a registered job and print its name. Agents should always
+pass --topic.
+
+  --name JOB     job name (default: a generated one)
+  --topic TEXT   what the job is for, in a few words (shown by jobs, the
+                 TUI and the web console; none unless given)
+  --workdir DIR  working directory on the worker (default: the home directory)

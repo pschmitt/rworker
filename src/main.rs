@@ -238,11 +238,12 @@ fn resolve_args(ctx: &Ctx, action: &str, args: &[String]) -> R<Vec<String>> {
 fn dispatch(ctx: &Ctx, action: &str, args: &[String]) -> R {
     match action {
         "jobs" => cmd::jobs::cmd_jobs(ctx, args),
-        "start" | "register" => {
+        "register" => {
             let mut all = vec![action.to_string()];
             all.extend(args.iter().cloned());
             cmd::jobs::jobs_remote(ctx, &all)
         }
+        "start" => cmd::jobs::cmd_start(ctx, args),
         "ps" => cmd::jobs::cmd_ps(ctx, args),
         "logs" => cmd::jobs::cmd_logs(ctx, args),
         "events" => cmd::events::run(ctx, args),

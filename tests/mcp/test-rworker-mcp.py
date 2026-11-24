@@ -98,6 +98,16 @@ class WorkerMcpTest(unittest.TestCase):
         self.assertIn("output", result["stdout"])
         self.assertEqual(run.call_args_list[0].args, ("start", "worker", "--", "exit 7"))
 
+    def test_job_topics(self):
+        with patch.object(self.module, "run", return_value="job-1\n") as run:
+            self.module.start("w", "make", topic="release build")
+            self.assertEqual(run.call_args.args, ("start", "w", "--topic", "release build", "--", "make"))
+            self.module.setup_register_log_file("w", "job", "/tmp/x.log", topic="log of x")
+            self.assertEqual(run.call_args.args[-2:], ("--topic", "log of x"))
+        with patch.object(self.module, "start", return_value="job-1") as start:
+            self.module.exec("w", "make", timeout_seconds=0, topic="release build")
+            start.assert_called_once_with("w", "make", workdir=None, topic="release build")
+
     def test_log_snapshot_flags(self):
         with patch.object(self.module, "run", return_value="output") as run:
             self.assertEqual(

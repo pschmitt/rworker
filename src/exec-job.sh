@@ -1,4 +1,5 @@
-# The SSH session runs this script with the original remote command as $1.
+# The SSH session runs this script with the original remote command as $1 and the
+# worker's topic, if any, as $2.
 set -u
 
 root="$HOME/.local/state/rworker/jobs"
@@ -12,6 +13,9 @@ trap 'rm -rf -- "$staging"' EXIT
 date -u +%FT%TZ > "$staging/started" || exit 1
 printf '%s\n' "$$" > "$staging/pid" || exit 1
 : > "$staging/log" || exit 1
+topic=${2:-}
+topic=${topic//[[:cntrl:]]/ }
+[[ -z "$topic" ]] || printf '%s\n' "${topic:0:255}" > "$staging/topic" || exit 1
 mv -T -- "$staging" "$job" || exit 1
 trap - EXIT
 umask "$previous_umask"

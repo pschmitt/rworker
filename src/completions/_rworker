@@ -254,7 +254,7 @@ _rworker() {
     if [[ "$action" == setup ]]
     then
       case "$setup_topic:$spec_flag" in
-        niks3-token:--force|register-log-file:--log=path) ;;
+        niks3-token:--force|register-log-file:--log=path|register-log-file:--topic=topic) ;;
         nix-cache:--dry-run|nix-cache:-n) ;;
         nix-builder:--profile=*|nix-builder:--arch=*|nix-builder:--pool=*) ;;
         nix-builder:--gateway=*|nix-builder:--identity=*|nix-builder:-i=*) ;;

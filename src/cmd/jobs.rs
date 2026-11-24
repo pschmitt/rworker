@@ -48,6 +48,21 @@ pub fn jobs_remote(ctx: &Ctx, args: &[String]) -> R {
     crate::ctx::status(proc::run_with_input(ctx, &mut cmd, JOBS_SH.as_bytes())?)
 }
 
+/// `start WORKER [OPTIONS] -- COMMAND`. An explicit `--topic ''` counts as
+/// a topic: no warning.
+pub fn cmd_start(ctx: &Ctx, args: &[String]) -> R {
+    if !args
+        .iter()
+        .take_while(|arg| *arg != "--")
+        .any(|arg| arg == "--topic")
+    {
+        ctx.err(&format!("{} no topic provided", paint::warn_mark(ctx)));
+    }
+    let mut remote = vec!["start".to_string()];
+    remote.extend_from_slice(args);
+    jobs_remote(ctx, &remote)
+}
+
 /// `$(cmd_jobs_remote ...)`.
 fn jobs_capture(ctx: &Ctx, args: &[String]) -> R<String> {
     let mut cmd = jobs_command(ctx, args)?;
@@ -377,7 +392,11 @@ fn collector_reaches(user: &str, worker: &Value) -> bool {
         && jq::raw(get(worker, "owner")).split('@').next() == Some(user)
 }
 
-pub(super) fn observed_jobs(ctx: &Ctx, inventory: &Value) -> crate::event_history::Jobs {
+/// The states and the topics of the jobs on the workers of INVENTORY.
+pub(super) fn observed_jobs(
+    ctx: &Ctx,
+    inventory: &Value,
+) -> (crate::event_history::Jobs, crate::event_history::Jobs) {
     let mut names = ready(inventory);
     names.retain(|name| !name.is_empty());
     names.sort_unstable();
@@ -429,27 +448,27 @@ pub(super) fn observed_jobs(ctx: &Ctx, inventory: &Value) -> crate::event_histor
         .zip(identities)
         .map(|(name, identity)| (s(&["jobs", name]), identity))
         .collect();
-    names
-        .into_iter()
-        .zip(poll_jobs_as(ctx, &requests))
-        .filter_map(|(worker, output)| {
-            let states = output
-                .ok()?
-                .lines()
-                .filter_map(|line| {
-                    let mut fields = line.split('\t');
-                    let job = fields.next()?;
-                    let state = fields.next()?;
-                    Some((job.to_owned(), state.to_owned()))
-                })
-                .collect();
-            Some((worker, states))
-        })
-        .collect()
+    let mut observed = (BTreeMap::new(), BTreeMap::new());
+    for (worker, output) in names.into_iter().zip(poll_jobs_as(ctx, &requests)) {
+        let Ok(output) = output else {
+            continue;
+        };
+        let (mut states, mut topics) = (BTreeMap::new(), BTreeMap::new());
+        for [job, state, _, topic] in output.lines().filter_map(JobSnapshot::fields) {
+            states.insert(job.to_owned(), state.to_owned());
+            if !topic.is_empty() {
+                topics.insert(job.to_owned(), topic.to_owned());
+            }
+        }
+        observed.0.insert(worker.clone(), states);
+        observed.1.insert(worker, topics);
+    }
+    observed
 }
 
 pub(super) fn registered_jobs(ctx: &Ctx, inventory: &Value) -> Vec<(String, String)> {
     observed_jobs(ctx, inventory)
+        .0
         .into_iter()
         .flat_map(|(worker, jobs)| jobs.into_keys().map(move |job| (worker.clone(), job)))
         .collect()
@@ -499,10 +518,15 @@ impl JobSnapshot {
         })
     }
 
-    fn fields(line: &str) -> Option<(&str, &str, &str)> {
-        let (job, fields) = line.split_once('\t')?;
-        let (state, started) = fields.split_once('\t')?;
-        Some((job, state, started))
+    /// Job, state, start time and topic (empty when none was given).
+    fn fields(line: &str) -> Option<[&str; 4]> {
+        let mut fields = line.splitn(4, '\t');
+        Some([
+            fields.next()?,
+            fields.next()?,
+            fields.next()?,
+            fields.next().unwrap_or_default(),
+        ])
     }
 
     fn json(&self) -> String {
@@ -510,9 +534,10 @@ impl JobSnapshot {
             .rows
             .iter()
             .filter_map(|(worker, line)| {
-                let (job, state, started) = Self::fields(line)?;
+                let [job, state, started, topic] = Self::fields(line)?;
                 Some(serde_json::json!({
-                    "worker": worker, "job": job, "state": state, "started_at": started,
+                    "worker": worker, "job": job, "topic": topic, "state": state,
+                    "started_at": started,
                 }))
             })
             .collect();
@@ -531,13 +556,14 @@ impl JobSnapshot {
 
     fn table(&self, ctx: &Ctx, all: bool) -> String {
         let mut rows = vec![if all {
-            vec!["WORKER", "JOB", "STATE", "STARTED"]
+            vec!["WORKER", "JOB", "TOPIC", "STATE", "STARTED"]
         } else {
-            vec!["JOB", "STATE", "STARTED"]
+            vec!["JOB", "TOPIC", "STATE", "STARTED"]
         }];
         rows.extend(self.rows.iter().filter_map(|(worker, line)| {
-            let (job, state, started) = Self::fields(line)?;
-            let mut cells = vec![job, state, started];
+            let [job, state, started, topic] = Self::fields(line)?;
+            let topic = if topic.is_empty() { "-" } else { topic };
+            let mut cells = vec![job, topic, state, started];
             if all {
                 cells.insert(0, worker);
             }
@@ -546,8 +572,9 @@ impl JobSnapshot {
         if rows.len() == 1 {
             return "No jobs found.".to_string();
         }
-        let state_col = if all { 2 } else { 1 };
+        let state_col = if all { 3 } else { 2 };
         crate::table::styled_columns(ctx, &rows, |col, text| match col.cmp(&state_col) {
+            std::cmp::Ordering::Less if col + 1 == state_col => text.to_owned(),
             std::cmp::Ordering::Less => paint::vm(ctx, text),
             std::cmp::Ordering::Equal if text == "exit 0" => paint::paint(ctx, "2", text),
             std::cmp::Ordering::Equal => paint::value(ctx, text),
@@ -976,6 +1003,49 @@ mod tests {
         assert!(!collector_reaches("pschmitt", &other));
         assert!(!collector_reaches("pschmitt", &pool));
         assert!(!collector_reaches("circus", &pool));
+    }
+
+    #[test]
+    fn job_lines_carry_an_optional_topic() {
+        assert_eq!(
+            JobSnapshot::fields("build\trunning\ttoday\trelease build"),
+            Some(["build", "running", "today", "release build"])
+        );
+        assert_eq!(
+            JobSnapshot::fields("build\trunning\ttoday\t").unwrap()[3],
+            ""
+        );
+        assert_eq!(JobSnapshot::fields("build\trunning\ttoday").unwrap()[3], "");
+    }
+
+    #[test]
+    fn job_manager_records_topics() {
+        let home = std::env::temp_dir().join(format!("rworker-jobs-{}", std::process::id()));
+        std::fs::create_dir_all(&home).unwrap();
+        let manager = |args: &[&str]| {
+            let out = Command::new("bash")
+                .args(["-c", JOBS_SH, "--"])
+                .args(args)
+                .env("HOME", &home)
+                .output()
+                .unwrap();
+            assert!(out.status.success(), "{args:?}");
+            String::from_utf8(out.stdout).unwrap()
+        };
+        let log = home.join("x.log");
+        std::fs::write(&log, "").unwrap();
+        let log = log.to_str().unwrap();
+        manager(&["start", "--name", "a", "--topic", "one\ttwo", "--", "true"]);
+        manager(&["start", "--name", "b", "--topic", "", "--", "true"]);
+        manager(&["register", "c", "--log", log, "--topic", "a log"]);
+        manager(&["register", "d", "--log", log]);
+        let listing = manager(&["jobs"]);
+        let topics: Vec<_> = listing
+            .lines()
+            .map(|line| JobSnapshot::fields(line).unwrap()[3])
+            .collect();
+        assert_eq!(topics, ["one two", "", "a log", ""]);
+        std::fs::remove_dir_all(home).unwrap();
     }
 
     #[test]

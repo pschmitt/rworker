@@ -1,9 +1,11 @@
 Usage: __ME__ jobs [WORKER] [--json] [-w | --watch] [-n SECONDS | --interval SECONDS]
 
-List registered jobs. With a worker name, print its usual job, state and
-start time columns. Without a worker name, list jobs on reachable workers
-as worker, job, state and start time, separated by tabs. --json returns
-objects when listing all workers.
+List registered jobs. With a worker name, print its job, topic, state and
+start time columns. Without a worker name, list jobs on reachable workers,
+with a worker column in front. When the output is not a terminal, the columns
+are [worker,] job, state, start time and topic, separated by tabs. --json
+returns objects. The topic is what start --topic gave the job, or the
+worker's topic for the job of exec.
 
 Watch refreshes as soon as the controller reports a job event, and at least
 every 5 seconds by default. Press q to quit or another key to refresh

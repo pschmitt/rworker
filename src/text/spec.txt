@@ -28,6 +28,7 @@ action completions print the zsh or bash completion script
 action tui interactive terminal UI: workers, jobs, logs and actions
 action help show the help of an action
 flag start --name=job name the registered job
+flag start --topic=topic what the job is for (none unless given)
 flag start --workdir=path working directory on the worker
 flag ps --long show full process command lines
 flag logs --cached read a retained snapshot for WORKER [JOB]
@@ -52,6 +53,7 @@ flag events --topic=topic-re limit to workers whose topic matches this regex (pr
 flag events --agent=agent-re limit to workers whose creating agent matches this regex (prefix with ! to invert)
 flag setup --name=name Nix store name for a single uploaded file
 flag setup --log=path absolute path to an existing log file on the worker
+flag setup --topic=topic register-log-file: what the job is for
 flag setup --profile=profile nix-builder gateway: lease a worker of this profile
 flag setup --arch=arch nix-builder gateway: lease a worker for this architecture
 flag setup --pool=pool nix-builder gateway: lease an ad-hoc worker from this pool's profile
