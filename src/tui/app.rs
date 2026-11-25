@@ -1953,13 +1953,36 @@ pub(super) fn run(ctx: &Ctx, interval: Duration, start: Start) -> std::io::Resul
             }
         }
     })();
+    // `rworker logs -f` quit from its log: what it showed stays in the
+    // terminal, as the plain stream would have left it.
+    let leftover = match (app.logs_start, app.stack.first_mut()) {
+        (true, Some(Sub::Text(view))) => Some(std::mem::take(&mut view.lines)),
+        _ => None,
+    };
     drop(mouse);
     ratatui::restore();
     let _ = execute!(std::io::stdout(), Show);
     app.preview = None;
     // Stop the streams before the process ends.
     app.stack.clear();
+    if let Some(lines) = leftover {
+        print_lines(lines);
+    }
     result
+}
+
+/// Output lines to stdout and status lines to stderr, in order.
+fn print_lines(lines: VecDeque<(String, bool)>) {
+    use std::io::Write;
+    let (mut out, mut err) = (std::io::stdout().lock(), std::io::stderr().lock());
+    for (line, status) in lines {
+        let _ = if status {
+            out.flush().and_then(|()| writeln!(err, "{line}"))
+        } else {
+            err.flush().and_then(|()| writeln!(out, "{line}"))
+        };
+    }
+    let _ = out.flush();
 }
 
 #[cfg(test)]
