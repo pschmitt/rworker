@@ -588,10 +588,16 @@ details.advanced .grid2 { display: grid; grid-template-columns: repeat(2, minmax
   .app { grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(0, 1fr) auto; }
   .rail { display: none; }
   .mobile-brand, .mobile-only { display: inline-flex; }
-  .toolbar { gap: 10px; min-height: 0; padding: 10px 12px; padding-top: max(10px, env(safe-area-inset-top)); border-bottom: 0; }
+  .toolbar { gap: 8px 10px; min-height: 0; padding: 8px 12px; padding-top: max(8px, env(safe-area-inset-top)); border-bottom: 0; }
   .toolbar h1 { font-size: 21px; }
-  .toolbar-end { order: 3; flex: 1 1 100%; }
-  .chips { order: 4; flex: 1 1 100%; gap: 6px; }
+  .toolbar-end { flex: 1 1 0; min-width: 0; }
+  .chips { order: 4; flex: 1 1 100%; flex-wrap: nowrap; gap: 6px; margin: 0 -12px; padding: 0 12px; overflow-x: auto; scrollbar-width: none; }
+  .chips::-webkit-scrollbar { display: none; }
+  .chips > * { flex: none; }
+  .chips .dropdown { order: -1; min-width: 0; height: 34px; padding: 0 8px; gap: 4px; }
+  .chips .dropdown .dd-text { display: none; }
+  .search kbd { display: none; }
+  .search input { padding-right: 10px; }
   .chip { height: 34px; padding: 0 10px; }
   .chips select { height: 34px; }
   .detail-open .toolbar-end, .detail-open .chips, .detail-open .mobile-brand { display: none; }
