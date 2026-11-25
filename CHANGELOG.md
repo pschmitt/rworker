@@ -9,6 +9,7 @@ The Rust client and controller replace the original Bash client.
 - The pool autoscaler no longer deletes a draining worker that has new work: it asks Circus for the worker's assigned jobs right before the deletion, and returns the worker to the pool when it is busy or builds are queued. When Circus does not answer, the worker stays.
 - The builder gateway names the topic of the workers it leases after the client host and profile ("Nix builder for fnuc (standard)") instead of a fixed "On-demand Nix builder".
 - The web console's phone layout takes two header rows instead of three: the search box sits next to the view title with settings at the right edge (also in views without search), and the filter chips scroll sideways in one row behind a compact sort button.
+- The web console's sidebar button for the command palette is labeled "Palette" instead of "Jump to…".
 - Fix scrolling in the web console's Logs view: the log grew to its full length and was cut off instead of scrolling.
 - On phones, swiping up on the web console's tab bar opens the command palette, and pulling the palette down closes it. The palette is only as tall as its content; it used to fill most of the screen with an empty area below the list.
 - On phones, the web console's search is a magnifier button next to settings; tapping it opens the search box across the header, and it closes again when it is left empty.
