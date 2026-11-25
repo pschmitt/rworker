@@ -598,6 +598,10 @@ details.advanced .grid2 { display: grid; grid-template-columns: repeat(2, minmax
   .chips .dropdown { order: -1; min-width: 0; height: 34px; padding: 0 8px; gap: 4px; }
   .chips .dropdown .dd-text { display: none; }
   .search kbd { display: none; }
+  .toolbar:not(.search-open) .toolbar-end .search { flex: none; justify-content: center; width: 36px; height: 36px; border-radius: 8px; color: var(--mut); cursor: pointer; }
+  .toolbar:not(.search-open) .toolbar-end .search > .i { position: static; width: 18px; height: 18px; color: inherit; }
+  .toolbar:not(.search-open) .toolbar-end .search input { position: absolute; inset: 0; height: 100%; padding: 0; border: 0; opacity: 0; pointer-events: none; }
+  .toolbar.search-open h1 { display: none; }
   .search input { padding-right: 10px; }
   .chip { height: 34px; padding: 0 10px; }
   .chips select { height: 34px; }

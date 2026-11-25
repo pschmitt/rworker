@@ -202,6 +202,7 @@ function navigate() {
     state.limit = 200;
     $("search").value = "";
     state.logQuery = "";
+    syncSearchOpen();
   }
   state.view = view;
   document.querySelectorAll("[data-view]").forEach((link) => {
@@ -3029,6 +3030,14 @@ $("profile-close").addEventListener("click", () => $("profile-dialog").close());
 $("event-close").addEventListener("click", () => $("event-dialog").close());
 $("cancel").addEventListener("click", () => $("dialog").close());
 $("dismiss").addEventListener("click", () => $("dialog").close());
+// Phones show the search as an icon until it is used.
+function syncSearchOpen() {
+  const input = $("search");
+  $("toolbar").classList.toggle("search-open", document.activeElement === input || input.value !== "");
+}
+$("search").addEventListener("focus", syncSearchOpen);
+$("search").addEventListener("blur", syncSearchOpen);
+
 $("search").addEventListener("input", () => {
   if (state.view === "logs" && !state.selected) {
     state.logQuery = $("search").value;
