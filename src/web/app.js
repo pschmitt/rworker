@@ -1497,7 +1497,7 @@ function layoutWorkspace() {
   $("search-box").hidden = fullPage || state.view === "logs";
   if (fullPage) $("banner").hidden = true;
   $("create").hidden = !state.authenticated;
-  $("fab").hidden = !state.authenticated;
+  $("fab").hidden = !state.authenticated || state.view !== "workers";
   $("heading").textContent = views[state.view];
   $("banner").dataset.key = "";
   document.title = (row?.name || views[state.view]) + " · rworker";
