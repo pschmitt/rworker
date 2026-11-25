@@ -701,10 +701,16 @@ in
               "rworker-${provider}-reap" = {
                 description = "Reconcile ${provider} worker leases";
                 after = [ "${apiGroup}.service" ];
+                # A failed run leaves the unit "failed", which the timer's
+                # OnUnitInactiveSec never fires on again: retry instead (for
+                # example while the forge token is not there yet after a boot).
+                unitConfig.StartLimitIntervalSec = 0;
                 serviceConfig = {
                   Type = "oneshot";
                   User = cfg.user;
                   Group = cfg.group;
+                  Restart = "on-failure";
+                  RestartSec = "1m";
                   ExecStart = command [
                     "server"
                     cfg.settingsFile
