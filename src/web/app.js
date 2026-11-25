@@ -1248,6 +1248,14 @@ function renderLogsView() {
       location.hash = logsHash(worker, job.join("/"));
     }
   } });
+  const follow = button(state.follow ? "Following" : "Paused", () => setFollow(!state.follow), { cls: "btn sm follow" + (state.follow ? " on" : ""), ic: state.follow ? "pause" : "play", title: "Follow new output (F)" });
+  follow.setAttribute("aria-pressed", String(state.follow));
+  const toggle = (ic, title, on, change) => {
+    const node = iconButton(ic, title, () => { change(); node.classList.toggle("on"); node.setAttribute("aria-pressed", String(node.classList.contains("on"))); }, "btn sm icon" + (on ? " on" : ""));
+    node.setAttribute("aria-pressed", String(on));
+    return node;
+  };
+  const frame = el("div", "log-frame" + (state.wrap ? " wrap" : ""));
   const search = el("label", "search", icon("search"));
   const input = el("input");
   input.type = "search";
@@ -1257,15 +1265,7 @@ function renderLogsView() {
   input.setAttribute("aria-label", "Filter log lines");
   input.addEventListener("input", () => { state.logQuery = input.value; setLog(state.logText, { keepEnd: false }); });
   search.append(input);
-  const follow = button(state.follow ? "Following" : "Paused", () => setFollow(!state.follow), { cls: "btn sm follow" + (state.follow ? " on" : ""), ic: state.follow ? "pause" : "play", title: "Follow new output (F)" });
-  follow.setAttribute("aria-pressed", String(state.follow));
-  const toggle = (ic, title, on, change) => {
-    const node = iconButton(ic, title, () => { change(); node.classList.toggle("on"); node.setAttribute("aria-pressed", String(node.classList.contains("on"))); }, "btn sm icon" + (on ? " on" : ""));
-    node.setAttribute("aria-pressed", String(on));
-    return node;
-  };
-  const frame = el("div", "log-frame" + (state.wrap ? " wrap" : ""));
-  tools.append(workerSelect, jobSelect, el("span", "live", "Connecting…"), el("span", "spacer"), search, follow,
+  tools.append(workerSelect, jobSelect, el("span", "spacer"), search, follow,
     toggle("wrap", "Wrap long lines (W)", state.wrap, () => { state.wrap = !state.wrap; frame.classList.toggle("wrap", state.wrap); }),
     toggle("shield", "Redact secrets", state.redact, () => { state.redact = !state.redact; render(); }),
     iconButton("copy", "Copy log", () => copy(stripAnsi(state.logText)), "btn sm icon"),
@@ -1276,7 +1276,7 @@ function renderLogsView() {
   const jump = button("Jump to latest", () => { pre.scrollTop = pre.scrollHeight; if (!state.follow) setFollow(true); }, { cls: "btn sm jump", ic: "down" });
   jump.hidden = true;
   pre.addEventListener("scroll", () => { jump.hidden = pre.scrollHeight - pre.clientHeight - pre.scrollTop < 12; }, { passive: true });
-  frame.append(pre, jump);
+  frame.append(el("span", "live", "Connecting…"), pre, jump);
   container.append(tools, frame);
   results.replaceChildren(container);
   fillLogsPickers(container);
@@ -1499,7 +1499,6 @@ function layoutWorkspace() {
   $("create").hidden = !state.authenticated;
   $("fab").hidden = !state.authenticated || state.view !== "workers";
   $("heading").textContent = views[state.view];
-  syncHeaderLive();
   $("banner").dataset.key = "";
   document.title = (row?.name || views[state.view]) + " · rworker";
 }
@@ -1841,27 +1840,6 @@ function logRoot() {
   return state.view === "logs" && !state.selected ? $("results") : $("detail-output");
 }
 
-// Phones show the log's live state in the header instead of the log tools.
-function syncHeaderLive() {
-  const root = logRoot();
-  const source = root.closest("[hidden]") ? null : root.querySelector(".live");
-  const node = $("header-live");
-  node.hidden = !source;
-  if (!source) return;
-  if (node.textContent !== source.textContent) node.textContent = source.textContent;
-  node.className = source.className + " header-live";
-}
-
-let headerLivePending = false;
-const headerLiveObserver = new MutationObserver(() => {
-  if (headerLivePending) return;
-  headerLivePending = true;
-  requestAnimationFrame(() => { headerLivePending = false; syncHeaderLive(); });
-});
-for (const id of ["results", "detail-output"]) {
-  headerLiveObserver.observe($(id), { childList: true, subtree: true, characterData: true, attributes: true, attributeFilter: ["class"] });
-}
-
 function liveIndicator(text, tone = "") {
   const node = logRoot().querySelector(".live");
   if (!node) return;
@@ -2045,7 +2023,7 @@ function buildLogPane(row) {
     node.setAttribute("aria-pressed", String(on));
     return node;
   };
-  tools.append(jobSelect, live, el("span", "spacer"), search);
+  tools.append(jobSelect, el("span", "spacer"), search);
   if (!row.retired) {
     const follow = button(state.follow ? "Following" : "Paused", () => setFollow(!state.follow), { cls: "btn sm follow" + (state.follow ? " on" : ""), ic: state.follow ? "pause" : "play", title: "Follow new output (F)" });
     follow.setAttribute("aria-pressed", String(state.follow));
@@ -2063,7 +2041,7 @@ function buildLogPane(row) {
   const jump = button("Jump to latest", () => { pre.scrollTop = pre.scrollHeight; if (!state.follow && !row.retired) setFollow(true); }, { cls: "btn sm jump", ic: "down" });
   jump.hidden = true;
   pre.addEventListener("scroll", () => { jump.hidden = pre.scrollHeight - pre.clientHeight - pre.scrollTop < 12; }, { passive: true });
-  frame.append(pre, jump);
+  frame.append(live, pre, jump);
   output.replaceChildren(tools, frame);
   renderLogTools();
 }
