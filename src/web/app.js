@@ -1499,6 +1499,7 @@ function layoutWorkspace() {
   $("create").hidden = !state.authenticated;
   $("fab").hidden = !state.authenticated || state.view !== "workers";
   $("heading").textContent = views[state.view];
+  syncHeaderLive();
   $("banner").dataset.key = "";
   document.title = (row?.name || views[state.view]) + " · rworker";
 }
@@ -1838,6 +1839,27 @@ function closeLogStream() {
 // Log viewer
 function logRoot() {
   return state.view === "logs" && !state.selected ? $("results") : $("detail-output");
+}
+
+// Phones show the log's live state in the header instead of the log tools.
+function syncHeaderLive() {
+  const root = logRoot();
+  const source = root.closest("[hidden]") ? null : root.querySelector(".live");
+  const node = $("header-live");
+  node.hidden = !source;
+  if (!source) return;
+  if (node.textContent !== source.textContent) node.textContent = source.textContent;
+  node.className = source.className + " header-live";
+}
+
+let headerLivePending = false;
+const headerLiveObserver = new MutationObserver(() => {
+  if (headerLivePending) return;
+  headerLivePending = true;
+  requestAnimationFrame(() => { headerLivePending = false; syncHeaderLive(); });
+});
+for (const id of ["results", "detail-output"]) {
+  headerLiveObserver.observe($(id), { childList: true, subtree: true, characterData: true, attributes: true, attributeFilter: ["class"] });
 }
 
 function liveIndicator(text, tone = "") {
