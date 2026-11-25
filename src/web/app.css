@@ -712,6 +712,7 @@ a.ctr[aria-current] .mark::before { content: "›"; color: #ff8b0f; font-weight:
 
 /* Logs view: one viewer for all jobs on all workers, or one worker's. */
 .inventory.fill { display: flex; flex-direction: column; padding: 0; overflow: hidden; }
+.inventory.fill > #results { display: flex; flex-direction: column; flex: 1; min-height: 0; }
 .logs-view { display: flex; flex-direction: column; flex: 1; min-height: 0; }
 .logs-view .log-tools { padding: 12px 20px; }
 .logs-view .log-frame { margin: 0 20px 20px; }
