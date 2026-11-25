@@ -10,7 +10,7 @@ The Rust client and controller replace the original Bash client.
 - The builder gateway names the topic of the workers it leases after the client host and profile ("Nix builder for fnuc (standard)") instead of a fixed "On-demand Nix builder".
 - The web console's phone layout takes two header rows instead of three: the search box sits next to the view title with settings at the right edge (also in views without search), and the filter chips scroll sideways in one row behind a compact sort button.
 - Fix scrolling in the web console's Logs view: the log grew to its full length and was cut off instead of scrolling.
-- On phones, swiping up on the web console's tab bar opens the command palette.
+- On phones, swiping up on the web console's tab bar opens the command palette, and pulling the palette down closes it. The palette is only as tall as its content; it used to fill most of the screen with an empty area below the list.
 - On phones, the web console's search is a magnifier button next to settings; tapping it opens the search box across the header, and it closes again when it is left empty.
 - The web console's Logs view filters lines with the search box in the header, like the other views, instead of a separate box in the log tools (which phones did not show).
 - The web console's log viewers show the live state (Live, Snapshot, Archived) as a pill floating in the log's top right corner instead of in the log tools.

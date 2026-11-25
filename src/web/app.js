@@ -2826,6 +2826,33 @@ function openPalette() {
   $("palette-input").focus();
 }
 
+// Phones: pull the palette down to close it (from the list only when it
+// is scrolled to the top).
+{
+  const sheet = $("palette");
+  let start = null;
+  let dy = 0;
+  sheet.addEventListener("touchstart", (event) => {
+    const list = $("palette-list");
+    start = event.touches.length === 1 && (!list.contains(event.target) || list.scrollTop <= 0) ? event.touches[0].clientY : null;
+    dy = 0;
+  }, { passive: true });
+  sheet.addEventListener("touchmove", (event) => {
+    if (start === null) return;
+    dy = event.touches[0].clientY - start;
+    if (dy <= 0) { sheet.style.transform = ""; return; }
+    sheet.style.transform = `translateY(${dy}px)`;
+  }, { passive: true });
+  const finish = () => {
+    if (start === null) return;
+    start = null;
+    sheet.style.transform = "";
+    if (dy > 80) sheet.close();
+  };
+  sheet.addEventListener("touchend", finish, { passive: true });
+  sheet.addEventListener("touchcancel", () => { dy = 0; finish(); }, { passive: true });
+}
+
 // Phones: swipe up on the tab bar opens the palette.
 {
   let start = null;
