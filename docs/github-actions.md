@@ -116,6 +116,11 @@ Disk in `rworker profiles` shows total filesystem size in GiB for the most
 recent worker on each GitHub profile. The field is blank until the first
 measurement.
 
+The runner's sshd allows SSH agent forwarding (`ssh -A`, also through the
+controller relay), so a build can fetch private `git+ssh` inputs with the
+client's key without copying it to the runner. TCP, Unix socket and X11
+forwarding and tunnels are off.
+
 ## Nix cache and tokens
 
 `rworker up`, `exec` and `ssh --create` with a GitHub profile (and with a

@@ -4,6 +4,7 @@
 
 The Rust client and controller replace the original Bash client.
 
+- CI leases (GitHub Actions and GitLab) accept SSH agent forwarding (`ssh -A`), so a build there can use the client's key without the key being copied to the runner. TCP, Unix socket and X11 forwarding and tunnels stay off.
 - The pool autoscaler no longer deletes a draining worker that has new work: it asks Circus for the worker's assigned jobs right before the deletion, and returns the worker to the pool when it is busy or builds are queued. When Circus does not answer, the worker stays.
 - The builder gateway names the topic of the workers it leases after the client host and profile ("Nix builder for fnuc (standard)") instead of a fixed "On-demand Nix builder".
 - The web console no longer underlines worker names in the cards and in the expiry banner.

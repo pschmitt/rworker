@@ -320,7 +320,13 @@ PubkeyAuthentication yes
 PasswordAuthentication no
 KbdInteractiveAuthentication no
 AuthenticationMethods publickey
-DisableForwarding yes
+# Agent forwarding only: builds fetch private inputs with the client's key
+# without the key ever being copied here. Nothing else is forwarded.
+AllowAgentForwarding yes
+AllowTcpForwarding no
+AllowStreamLocalForwarding no
+X11Forwarding no
+PermitTunnel no
 PermitUserEnvironment no
 SetEnv XDG_CONFIG_HOME={home}/.config PATH={home}/.local/bin:/nix/var/nix/profiles/default/bin:/usr/local/bin:/usr/bin:/bin{session}{trust}{proxies}
 AcceptEnv LANG LC_*
