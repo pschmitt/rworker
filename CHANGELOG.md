@@ -9,6 +9,7 @@ The Rust client and controller replace the original Bash client.
 - The pool autoscaler no longer deletes a draining worker that has new work: it asks Circus for the worker's assigned jobs right before the deletion, and returns the worker to the pool when it is busy or builds are queued. When Circus does not answer, the worker stays.
 - The builder gateway names the topic of the workers it leases after the client host and profile ("Nix builder for fnuc (standard)") instead of a fixed "On-demand Nix builder".
 - The web console's phone layout takes two header rows instead of three: the search box sits next to the view title with settings at the right edge (also in views without search), and the filter chips scroll sideways in one row behind a compact sort button.
+- The web console shows new events (workers created or deleted, jobs started, failed or finished) as toasts in the bottom right corner, with a button to open the worker or job.
 - The login of `ssh --create` and `up --ssh` shows up as an `ssh` job with the worker's topic, like `exec`'s job, and the session is recorded in the job's log where the worker has script(1).
 - `ssh --create` and `--rm` work anywhere among the options (`ssh --profile gh-aarch64 --create --rm`); `--create` had to come first.
 - The web console's compact density also tightens the cards and console layouts, events, profiles, pools, worker facts and the phone list; it only changed the split list and jobs list before.

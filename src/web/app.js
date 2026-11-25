@@ -1046,20 +1046,59 @@ function eventDetails(details) {
   return field ? [" · ", eventValue(field[2])] : [" · ", eventValue(details)];
 }
 
+const eventKinds = {
+  "worker-added": ["add", "plus", "Created"], "worker-deleted": ["del", "minus", "Deleted"],
+  "worker-state": ["chg", "swap", "Worker"], "job-added": ["job", "play", "Job started"], "job-state": ["job", "jobs", "Job"],
+};
+function eventKind(row) {
+  return eventKinds[row.kind] || ["chg", "info", row.kind.replaceAll("-", " ")];
+}
+
+// Event toasts: new events since the last look, in the bottom right corner.
+// The first fetch only sets the cursor, so a reload shows nothing old.
+let eventCursor = null;
+let eventPoll;
+function pollEvents() {
+  clearTimeout(eventPoll);
+  eventPoll = setTimeout(async () => {
+    if (!state.authenticated) return;
+    let rows;
+    try { rows = await request("events"); } catch { return; }
+    if (!Array.isArray(rows)) return;
+    if (state.view === "events") { state.rows.events = rows; render(); }
+    const latest = rows.reduce((max, row) => Math.max(max, row.id || 0), 0);
+    if (eventCursor === null) { eventCursor = latest; return; }
+    const fresh = rows.filter((row) => row.id > eventCursor).sort((a, b) => a.id - b.id);
+    eventCursor = Math.max(eventCursor, latest);
+    for (const row of fresh.slice(-3)) toastEvent(row);
+    if (fresh.length > 3) toast((fresh.length - 3) + " more events", { tone: "info", actions: [{ label: "Events", run: () => { location.hash = "events"; } }] });
+  }, 1500);
+}
+
+function toastEvent(row) {
+  const [, , verb] = eventKind(row);
+  const details = eventDetails(row.details).map((part) => (typeof part === "string" ? part : part.textContent)).join("").replace(/^ · /, "");
+  const meta = [row.profile, row.topic].filter(Boolean).join(" · ");
+  const [worker, job] = String(row.target).split("/");
+  const failed = /^exit [1-9]/.test(details) || / → exit [1-9]/.test(details);
+  toast(verb + " " + row.target + (details ? " · " + details : ""), {
+    tone: failed ? "error" : "info",
+    detail: meta || undefined,
+    timeout: failed ? 9000 : 6000,
+    actions: row.kind === "worker-deleted" ? [] : [{ label: "Open", run: () => select(workerFor(worker), job) }],
+  });
+}
+
 function renderEvents(visible, now) {
   const container = el("div");
   let day = "";
-  const kinds = {
-    "worker-added": ["add", "plus", "Created"], "worker-deleted": ["del", "minus", "Deleted"],
-    "worker-state": ["chg", "swap", "Worker"], "job-added": ["job", "play", "Job started"], "job-state": ["job", "jobs", "Job"],
-  };
   for (const row of visible.slice(0, state.limit)) {
     const label = dayLabel(row.timestamp);
     if (label !== day) {
       day = label;
       container.append(el("div", "day", label));
     }
-    const [dot, ic, verb] = kinds[row.kind] || ["chg", "info", row.kind.replaceAll("-", " ")];
+    const [dot, ic, verb] = eventKind(row);
     const [worker, job] = String(row.target).split("/");
     const target = button(row.target, () => select(workerFor(worker), job), { cls: "target" });
     const meta = [row.profile, row.topic, row.agent, row.owner].filter(Boolean).join(" · ");
@@ -1322,6 +1361,7 @@ async function refresh(manual = false) {
 }
 
 async function loadBackground() {
+  pollEvents();
   try { state.rows.profiles = await request("profiles"); } catch { /* Shown when the view is opened. */ }
   try { state.rows.jobs = await request("jobs"); } catch { /* Shown when the view is opened. */ }
   lastRenderKey = "";
@@ -3011,6 +3051,7 @@ function followInventory() {
   socket.onmessage = ({data}) => {
     if (data === "updated" && state.view === "workers") refresh();
     if (data === "jobs") refreshJobs();
+    if (data === "updated" || data === "jobs") pollEvents();
   };
   socket.onclose = () => {
     if (stream !== socket) return;
