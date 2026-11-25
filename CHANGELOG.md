@@ -15,7 +15,7 @@ The Rust client and controller replace the original Bash client.
 - The web console's compact density also tightens the cards and console layouts, events, profiles, pools, worker facts and the phone list; it only changed the split list and jobs list before.
 - The web console's sidebar button for the command palette is labeled "Palette" instead of "Jump to…".
 - Fix scrolling in the web console's Logs view: the log grew to its full length and was cut off instead of scrolling.
-- On phones, swiping up on the web console's tab bar opens the command palette, and pulling the palette down closes it. The palette is only as tall as its content; it used to fill most of the screen with an empty area below the list.
+- On phones, swiping up on the web console's tab bar opens the command palette, and pulling the palette down closes it. The palette grows with its content up to almost the full screen height (its list stopped at 460px) and no longer shows an empty area below a short list.
 - On phones, the web console's search is a magnifier button next to settings; tapping it opens the search box across the header, and it closes again when it is left empty.
 - The web console's Logs view filters lines with the search box in the header, like the other views, instead of a separate box in the log tools (which phones did not show).
 - The web console's log viewers show the live state (Live, Snapshot, Archived) as a pill floating in the log's top right corner instead of in the log tools.

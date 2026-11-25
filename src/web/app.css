@@ -659,7 +659,7 @@ details.advanced .grid2 { display: grid; grid-template-columns: repeat(2, minmax
   dialog footer .btn.primary { flex: 1; height: 46px; }
   .palette { height: fit-content; margin-top: auto; touch-action: pan-x; }
   .palette::before { content: ""; align-self: center; flex: none; width: 36px; height: 4px; margin-top: 8px; border-radius: 2px; background: var(--line2); }
-  .palette-list { touch-action: pan-y; overscroll-behavior: contain; }
+  .palette-list { max-height: calc(92dvh - 72px); touch-action: pan-y; overscroll-behavior: contain; }
   .palette footer { display: none; }
   .menu { left: 0 !important; right: 0; top: auto !important; bottom: 0; min-width: 0; padding: 8px 8px max(14px, env(safe-area-inset-bottom)); border-radius: 18px 18px 0 0; }
   .menu button { height: 48px; font-size: 15px; }
