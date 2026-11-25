@@ -715,7 +715,7 @@ fn up_attempt(
             } else {
                 login_user
             };
-            connect(ctx, &name, &user)?;
+            connect(ctx, &name, &user, &topic)?;
         }
         return Ok(None);
     }
@@ -855,7 +855,7 @@ fn up_attempt(
         } else {
             &login_user
         };
-        connect(ctx, &name, user)?;
+        connect(ctx, &name, user, &topic)?;
     }
     Ok(None)
 }
@@ -927,7 +927,19 @@ pub fn connect_created(ctx: &Ctx, name: &str, user: &str, remove: bool) -> R {
         super::exec::Cleanup::new(ctx, name.to_owned(), false)
     });
     let (opts, login) = ssh_target(ctx, name, user)?;
-    crate::ctx::status(proc::run(ctx, &mut state::worker_ssh(&opts, &login))?)
+    crate::ctx::status(proc::run(ctx, &mut session_ssh(&opts, &login, ""))?)
+}
+
+/// The interactive login on a worker this command created: the session
+/// shows up as an `ssh` job (with the worker's topic), like `exec`'s.
+fn session_ssh(opts: &[String], login: &str, topic: &str) -> std::process::Command {
+    let mut ssh = std::process::Command::new("ssh");
+    ssh.args(opts).arg("-t").arg(login).arg(format!(
+        "bash -c {} -- {}",
+        proc::shell_quote(include_str!("../ssh-job.sh")),
+        proc::shell_quote(topic)
+    ));
+    ssh
 }
 
 fn ssh_target(ctx: &Ctx, name: &str, user: &str) -> R<(Vec<String>, String)> {
@@ -937,10 +949,10 @@ fn ssh_target(ctx: &Ctx, name: &str, user: &str) -> R<(Vec<String>, String)> {
 
 /// Log in right after `up`: NetBird may still be setting up the route to
 /// the fresh peer, so retry the connection for a little while.
-pub fn connect(ctx: &Ctx, name: &str, user: &str) -> R {
+pub fn connect(ctx: &Ctx, name: &str, user: &str, topic: &str) -> R {
     let (opts, login) = ssh_target(ctx, name, user)?;
     wait_for_ssh(ctx, name, &opts, &login)?;
-    crate::ctx::status(proc::run(ctx, &mut state::worker_ssh(&opts, &login))?)
+    crate::ctx::status(proc::run(ctx, &mut session_ssh(&opts, &login, topic))?)
 }
 
 fn wait_for_ssh(ctx: &Ctx, name: &str, opts: &[String], login: &str) -> R<bool> {
