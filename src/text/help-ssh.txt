@@ -12,7 +12,7 @@ this host does not know yet are looked up on the control host.
 IdentitiesOnly does; it applies to existing workers, not to --create.
 
 --create makes a new worker and logs in, like `up --ssh`; up's options
-(--ttl, --flavor, --disk, --profile, --arch, --queue-timeout, --scratch, --topic) follow it. -l USER picks the
+(--ttl, --flavor, --disk, --profile, --arch, --queue-timeout, --scratch, --topic) go with it, in any order. -l USER picks the
 login user, as with ssh (agent by default on a new worker). --rm deletes the
 new worker when SSH exits, including after an unsuccessful login.
 

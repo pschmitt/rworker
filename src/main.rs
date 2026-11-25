@@ -291,10 +291,31 @@ struct Options {
     json: bool,
     help: bool,
     remove_after_ssh: bool,
+    create: bool,
+}
+
+/// Whether `ssh` arguments ask for a new worker: `--create` anywhere among
+/// the options before the worker name or `--`, not inside a remote command.
+fn ssh_creates(args: &[String]) -> bool {
+    let flags: std::collections::HashMap<_, _> =
+        help::flags("ssh").chain(help::flags("up")).collect();
+    let mut remaining = args.iter();
+    while let Some(arg) = remaining.next() {
+        if arg == "--create" {
+            return true;
+        }
+        if arg == "--" || !arg.starts_with('-') {
+            return false;
+        }
+        if flags.get(arg.as_str()) == Some(&true) {
+            remaining.next();
+        }
+    }
+    false
 }
 
 fn normalize_options(action: &str, args: &[String]) -> Options {
-    let create = action == "ssh" && args.first().is_some_and(|arg| arg == "--create");
+    let create = action == "ssh" && ssh_creates(args);
     let flags: std::collections::HashMap<_, _> = help::flags(action)
         .chain(help::flags("up").filter(|_| create))
         .chain([("-h", false), ("--help", false)])
@@ -309,6 +330,7 @@ fn normalize_options(action: &str, args: &[String]) -> Options {
         json: false,
         help: false,
         remove_after_ssh: false,
+        create,
     };
     let mut remaining = args.iter();
     while let Some(arg) = remaining.next() {
@@ -358,6 +380,7 @@ fn normalize_options(action: &str, args: &[String]) -> Options {
                 "-h" | "--help" => options.help = true,
                 "-j" | "--json" => options.json = true,
                 "--rm" if action == "ssh" => options.remove_after_ssh = true,
+                "--create" if create => {}
                 _ => options.args.push(name),
             }
             if takes_value {
@@ -474,6 +497,7 @@ fn run(ctx: &Ctx, argv: &[String]) -> R {
         json,
         help: show_help,
         remove_after_ssh,
+        create,
     } = normalize_options(action, &argv[1..]);
     if json {
         ctx.json.set(true);
@@ -482,12 +506,12 @@ fn run(ctx: &Ctx, argv: &[String]) -> R {
         ctx::out(&help::painted(ctx, action));
         return Ok(());
     }
-    if action == "ssh" && args.first().is_some_and(|arg| arg == "--create") {
+    if create {
         if args.iter().any(|arg| arg == "-i" || arg == "--identity") {
             ctx.err("-i applies to existing workers, not to ssh --create");
             return Err(Fail(2));
         }
-        return cmd::up::ssh_create(ctx, &args[1..], remove_after_ssh);
+        return cmd::up::ssh_create(ctx, &args, remove_after_ssh);
     }
     if remove_after_ssh {
         ctx.err("--rm requires ssh --create");
@@ -629,21 +653,31 @@ mod tests {
             .args,
             ["-i", "key", "--identity", "other", "worker", "-i", "x"],
         );
-        assert_eq!(
-            options("ssh", &["--create", "--profile=standard", "-lagent"]).args,
-            ["--create", "--profile", "standard", "-l", "agent"],
-        );
+        let create = options("ssh", &["--create", "--profile=standard", "-lagent"]);
+        assert!(create.create);
+        assert_eq!(create.args, ["--profile", "standard", "-l", "agent"]);
         let create = options(
             "ssh",
             &["--create", "--rm", "--topic=--rm", "--profile=gh-aarch64"],
         );
         assert!(create.remove_after_ssh);
-        assert_eq!(
-            create.args,
-            ["--create", "--topic", "--rm", "--profile", "gh-aarch64"]
-        );
+        assert_eq!(create.args, ["--topic", "--rm", "--profile", "gh-aarch64"]);
         assert!(!options("ssh", &["--create", "--topic=--rm"]).remove_after_ssh);
         assert!(!options("ssh", &["worker", "echo", "--rm"]).remove_after_ssh);
+        // --create and --rm work in any order among the options.
+        for args in [
+            &["--profile", "gh-aarch64", "--create", "--rm"][..],
+            &["--rm", "--create", "--profile", "gh-aarch64"],
+            &["-l", "agent", "--create", "--rm", "--profile=gh-aarch64"],
+        ] {
+            let create = options("ssh", args);
+            assert!(create.create && create.remove_after_ssh, "{args:?}");
+            assert!(!create.args.iter().any(|arg| arg == "--create"), "{args:?}");
+        }
+        // Not a --create: a flag's value, or part of the remote command.
+        assert!(!options("ssh", &["--topic", "--create"]).create);
+        assert!(!options("ssh", &["worker", "cmd", "--create"]).create);
+        assert!(!options("ssh", &["--", "--create"]).create);
         assert_eq!(
             options("exec", &["command", "--json", "-h"]).args,
             ["command", "--json", "-h"],
