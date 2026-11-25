@@ -590,7 +590,7 @@ details.advanced .grid2 { display: grid; grid-template-columns: repeat(2, minmax
   .mobile-brand, .mobile-only { display: inline-flex; }
   .toolbar { gap: 8px 10px; min-height: 0; padding: 8px 12px; padding-top: max(8px, env(safe-area-inset-top)); border-bottom: 0; }
   .toolbar h1 { font-size: 21px; }
-  .toolbar-end { flex: 1 1 0; min-width: 0; }
+  .toolbar-end { flex: 1 1 0; min-width: 0; justify-content: flex-end; }
   .chips { order: 4; flex: 1 1 100%; flex-wrap: nowrap; gap: 6px; margin: 0 -12px; padding: 0 12px; overflow-x: auto; scrollbar-width: none; }
   .chips::-webkit-scrollbar { display: none; }
   .chips > * { flex: none; }
