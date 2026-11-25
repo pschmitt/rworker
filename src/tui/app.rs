@@ -491,6 +491,15 @@ impl App {
         self.stack.push(Sub::Text(view));
     }
 
+    /// Back to the worker list, with the chrome on after `rworker logs -f`.
+    fn show_workers(&mut self) {
+        self.stack.clear();
+        if self.logs_start {
+            self.logs_start = false;
+            self.plain = false;
+        }
+    }
+
     fn open_jobs(&mut self, worker: Option<String>) {
         self.stack.push(Sub::Jobs(Jobs {
             worker,
@@ -1358,7 +1367,7 @@ impl App {
         let job = row.map(|row| row[1].clone());
         let worker = row.map(|row| row[0].clone()).or_else(|| j.worker.clone());
         match k.code {
-            KeyCode::Char('J') => self.stack.clear(),
+            KeyCode::Char('J' | 'W') => self.show_workers(),
             KeyCode::Char('d') => {
                 j.show_finished = !j.show_finished;
                 if j.show_finished {
@@ -1501,9 +1510,8 @@ impl App {
                     v.follow = true;
                 } else {
                     self.stack.pop();
-                    if self.logs_start && self.stack.is_empty() {
-                        self.logs_start = false;
-                        self.plain = false;
+                    if self.stack.is_empty() {
+                        self.show_workers();
                     }
                 }
             }
@@ -1520,6 +1528,7 @@ impl App {
                 let worker = v.worker.clone();
                 self.open_jobs(worker);
             }
+            KeyCode::Char('W') => self.show_workers(),
             KeyCode::Char('w') => v.wrap = !v.wrap,
             KeyCode::Char('c') => {
                 v.lines.clear();

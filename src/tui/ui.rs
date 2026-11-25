@@ -678,7 +678,7 @@ impl App {
                         ("Enter / l", "Selected log / all logs for this worker"),
                         ("c / p / s", "Start job / job processes / SSH"),
                         ("d / r", "Toggle finished jobs / reload"),
-                        ("J", "Return to workers"),
+                        ("J / W", "Return to workers"),
                         ("Esc / q / Backspace / h", "Back"),
                         ("Click / wheel", "Select jobs"),
                     ],
@@ -713,6 +713,7 @@ impl App {
                     } else {
                         ("J", "All jobs")
                     });
+                    keys.push(("W", "Worker list"));
                     ("Logs and output", keys)
                 }
             }

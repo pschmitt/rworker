@@ -3,10 +3,11 @@ Usage: __ME__ logs [WORKER [JOB]] [--lines N] [--redact] [--redact-regex REGEX] 
        __ME__ logs WORKER [JOB] --cached [--lines N] [--redact] [--redact-regex REGEX]
 
 With --follow in a terminal, logs opens the TUI with just this log, without
-its chrome: the same output; q quits, Esc leaves it for the worker list, J
-shows the jobs (of this worker, or all of them), / filters, w toggles
-wrapping and n toggles the chrome. --plain prints the plain stream instead,
-as logs always does into a pipe. Snapshots (without --follow) print and exit.
+its chrome: the same output; q quits, W or Esc leaves it for the worker
+list, J shows the jobs (of this worker, or all of them), / filters, w
+toggles wrapping and n toggles the chrome. --plain prints the plain stream
+instead, as logs always does into a pipe. Snapshots (without --follow)
+print and exit.
 
 For WORKER [JOB] snapshots, fall back to the archive when live logs are unavailable.
 Use --cached to read only the archive.
