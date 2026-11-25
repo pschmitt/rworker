@@ -408,10 +408,15 @@ fn collector_reaches(user: &str, worker: &Value) -> bool {
 }
 
 /// The states and the topics of the jobs on the workers of INVENTORY.
-pub(super) fn observed_jobs(
-    ctx: &Ctx,
-    inventory: &Value,
-) -> (crate::event_history::Jobs, crate::event_history::Jobs) {
+/// The polled workers' job states and topics, and each worker's raw job
+/// lines (for the job cache).
+pub(super) type Observed = (
+    crate::event_history::Jobs,
+    crate::event_history::Jobs,
+    BTreeMap<String, Vec<String>>,
+);
+
+pub(super) fn observed_jobs(ctx: &Ctx, inventory: &Value) -> Observed {
     let mut names = ready(inventory);
     names.retain(|name| !name.is_empty());
     names.sort_unstable();
@@ -463,7 +468,7 @@ pub(super) fn observed_jobs(
         .zip(identities)
         .map(|(name, identity)| (s(&["jobs", name]), identity))
         .collect();
-    let mut observed = (BTreeMap::new(), BTreeMap::new());
+    let mut observed = (BTreeMap::new(), BTreeMap::new(), BTreeMap::new());
     for (worker, output) in names.into_iter().zip(poll_jobs_as(ctx, &requests)) {
         let Ok(output) = output else {
             continue;
@@ -476,9 +481,155 @@ pub(super) fn observed_jobs(
             }
         }
         observed.0.insert(worker.clone(), states);
-        observed.1.insert(worker, topics);
+        observed.1.insert(worker.clone(), topics);
+        observed.2.insert(
+            worker,
+            output
+                .lines()
+                .filter(|line| !line.is_empty())
+                .map(str::to_owned)
+                .collect(),
+        );
     }
     observed
+}
+
+/// The job collector's last poll of every worker it reaches, on the control
+/// host: `jobs` reads it instead of polling each worker over SSH.
+#[derive(serde::Deserialize, serde::Serialize)]
+struct JobCache {
+    polled_at: i64,
+    /// Whose workers were polled: the cache answers only that user.
+    operator: String,
+    /// Each worker's job lines (job, state, start time, topic).
+    rows: BTreeMap<String, Vec<String>>,
+}
+
+const JOB_CACHE_FILE: &str = "jobs.json";
+/// Older than this, the collector has stalled and `jobs` polls itself.
+const JOB_CACHE_MAX_AGE: i64 = 30;
+
+fn job_cache_dir() -> std::path::PathBuf {
+    crate::event_history::directory()
+        .unwrap_or_else(|| std::path::PathBuf::from("/var/lib/rworker-events"))
+}
+
+fn login_name() -> String {
+    std::env::var("USER")
+        .or_else(|_| std::env::var("LOGNAME"))
+        .unwrap_or_default()
+}
+
+/// Store the collector's poll. A worker that did not answer this time keeps
+/// its rows from the last poll while it is still in the inventory.
+pub(super) fn write_job_cache(
+    inventory: &Value,
+    mut rows: BTreeMap<String, Vec<String>>,
+) -> std::io::Result<()> {
+    use std::io::Write;
+    use std::os::unix::fs::PermissionsExt;
+    let dir = job_cache_dir();
+    if let Some(previous) = read_job_cache_file(&dir) {
+        keep_unanswered(&mut rows, &previous.rows, &ready(inventory));
+    }
+    let cache = JobCache {
+        polled_at: jiff::Timestamp::now().as_second(),
+        operator: login_name(),
+        rows,
+    };
+    let temporary = dir.join(format!(".{JOB_CACHE_FILE}.{}", std::process::id()));
+    let mut file = std::fs::File::create(&temporary)?;
+    // The web console reads it as the controller's group.
+    file.set_permissions(std::fs::Permissions::from_mode(0o640))?;
+    file.write_all(&serde_json::to_vec(&cache).map_err(std::io::Error::other)?)?;
+    file.sync_all()?;
+    std::fs::rename(&temporary, dir.join(JOB_CACHE_FILE))
+}
+
+/// Keep the last rows of live workers that this poll did not answer.
+fn keep_unanswered(
+    rows: &mut BTreeMap<String, Vec<String>>,
+    previous: &BTreeMap<String, Vec<String>>,
+    live: &[String],
+) {
+    for name in live {
+        if !rows.contains_key(name)
+            && let Some(kept) = previous.get(name)
+        {
+            rows.insert(name.clone(), kept.clone());
+        }
+    }
+}
+
+fn read_job_cache_file(dir: &std::path::Path) -> Option<JobCache> {
+    let file = std::fs::File::open(dir.join(JOB_CACHE_FILE)).ok()?;
+    serde_json::from_reader(std::io::BufReader::new(file)).ok()
+}
+
+/// The cache when it is fresh.
+fn fresh_job_cache() -> Option<JobCache> {
+    let cache = read_job_cache_file(&job_cache_dir())?;
+    (jiff::Timestamp::now().as_second() - cache.polled_at <= JOB_CACHE_MAX_AGE).then_some(cache)
+}
+
+/// The cached jobs as `jobs --json` rows, for the web console.
+#[cfg(feature = "web")]
+pub(crate) fn cached_job_records() -> Option<Vec<Value>> {
+    let cache = fresh_job_cache()?;
+    let snapshot = JobSnapshot::from_cache(&cache);
+    serde_json::from_str(&snapshot.json()).ok()
+}
+
+/// `__cached-jobs` on the control host: `WORKER<TAB>job line` for every
+/// cached job; it fails when the cache is stale or another user's.
+pub fn cached_jobs_command() -> R {
+    let cache = fresh_job_cache().ok_or(Fail(1))?;
+    if cache.operator != login_name() {
+        return Err(Fail(1));
+    }
+    let mut out = String::new();
+    for (worker, lines) in &cache.rows {
+        for line in lines {
+            out.push_str(worker);
+            out.push('\t');
+            out.push_str(line);
+            out.push('\n');
+        }
+    }
+    crate::ctx::out(&out);
+    Ok(())
+}
+
+/// The control host's job cache, read over SSH (a few milliseconds instead
+/// of a poll of every worker, which waits for the slowest one).
+fn cached_snapshot(ctx: &Ctx) -> Option<JobSnapshot> {
+    // On the control host itself, read the file instead of SSH to it.
+    if std::env::var_os("RWORKER_CONTROL_SOCKET").is_some() {
+        let cache = fresh_job_cache()?;
+        return Some(JobSnapshot::from_cache(&cache));
+    }
+    let output = state::control_ssh_cmd(ctx, &["__cached-jobs"])
+        .stdin(Stdio::null())
+        .stderr(Stdio::null())
+        .output()
+        .ok()
+        .filter(|output| output.status.success())?;
+    let text = String::from_utf8(output.stdout).ok()?;
+    let rows: Vec<(String, String)> = text
+        .lines()
+        .filter_map(|line| line.split_once('\t'))
+        .map(|(worker, line)| (worker.to_owned(), line.to_owned()))
+        .collect();
+    let workers = rows
+        .iter()
+        .map(|(worker, _)| worker)
+        .collect::<BTreeSet<_>>()
+        .len();
+    Some(JobSnapshot {
+        rows,
+        failed: 0,
+        workers,
+    })
 }
 
 pub(super) fn registered_jobs(ctx: &Ctx, inventory: &Value) -> Vec<(String, String)> {
@@ -495,7 +646,13 @@ struct JobSnapshot {
     workers: usize,
 }
 
-fn job_snapshot(ctx: &Ctx, worker: Option<&str>) -> R<JobSnapshot> {
+fn job_snapshot(ctx: &Ctx, worker: Option<&str>, fresh: bool) -> R<JobSnapshot> {
+    if worker.is_none()
+        && !fresh
+        && let Some(snapshot) = cached_snapshot(ctx)
+    {
+        return Ok(snapshot);
+    }
     let mut names = match worker {
         Some(name) => vec![name.to_owned()],
         None => ready(&workers(ctx, "", "")?),
@@ -524,6 +681,19 @@ fn job_snapshot(ctx: &Ctx, worker: Option<&str>) -> R<JobSnapshot> {
 }
 
 impl JobSnapshot {
+    fn from_cache(cache: &JobCache) -> Self {
+        let rows = cache
+            .rows
+            .iter()
+            .flat_map(|(worker, lines)| lines.iter().map(|line| (worker.clone(), line.clone())))
+            .collect();
+        Self {
+            rows,
+            failed: 0,
+            workers: cache.rows.len(),
+        }
+    }
+
     fn failure(&self) -> Option<String> {
         (self.failed > 0).then(|| {
             format!(
@@ -601,11 +771,13 @@ impl JobSnapshot {
 pub fn cmd_jobs(ctx: &Ctx, args: &[String]) -> R {
     let mut worker = None;
     let mut watching = false;
+    let mut fresh = false;
     let mut seconds = 5;
     let mut args = args.iter().map(String::as_str);
     while let Some(arg) = args.next() {
         match arg {
             "-w" | "--watch" => watching = true,
+            "--fresh" => fresh = true,
             "-n" | "--interval" => {
                 let Some(n) = args.next().and_then(super::watch::interval) else {
                     ctx.err("Interval must be a whole number of seconds");
@@ -622,7 +794,7 @@ pub fn cmd_jobs(ctx: &Ctx, args: &[String]) -> R {
     }
     let terminal = std::io::stdout().is_terminal();
     if watching {
-        return watch_jobs(ctx, worker, seconds, terminal && !ctx.json.get());
+        return watch_jobs(ctx, worker, seconds, terminal && !ctx.json.get(), fresh);
     }
     if let Some(worker) = worker
         && !terminal
@@ -630,7 +802,7 @@ pub fn cmd_jobs(ctx: &Ctx, args: &[String]) -> R {
     {
         return jobs_remote(ctx, &s(&["jobs", worker]));
     }
-    let snapshot = job_snapshot(ctx, worker)?;
+    let snapshot = job_snapshot(ctx, worker, fresh)?;
     if ctx.json.get() {
         crate::ctx::json_out(ctx, &snapshot.json());
     } else if terminal {
@@ -647,7 +819,7 @@ pub fn cmd_jobs(ctx: &Ctx, args: &[String]) -> R {
     Ok(())
 }
 
-fn watch_jobs(ctx: &Ctx, worker: Option<&str>, seconds: u64, interactive: bool) -> R {
+fn watch_jobs(ctx: &Ctx, worker: Option<&str>, seconds: u64, interactive: bool, fresh: bool) -> R {
     crate::signals::trap();
     let jobs_changed = super::events::job_signal();
     let mut screen = interactive.then(super::watch::Screen::enter);
@@ -657,7 +829,7 @@ fn watch_jobs(ctx: &Ctx, worker: Option<&str>, seconds: u64, interactive: bool) 
         workers: 0,
     };
     while crate::signals::pending().is_none() {
-        let error = match ctx.muted(|| job_snapshot(ctx, worker)) {
+        let error = match ctx.muted(|| job_snapshot(ctx, worker, fresh)) {
             Ok(snapshot) => {
                 let error = snapshot.failure();
                 if snapshot.failed == 0 || snapshot.failed < snapshot.workers {
@@ -1008,6 +1180,46 @@ pub fn cmd_ps(ctx: &Ctx, args: &[String]) -> R {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn job_cache_keeps_rows_of_live_workers_that_did_not_answer() {
+        let rows = |pairs: &[(&str, &str)]| -> BTreeMap<String, Vec<String>> {
+            pairs
+                .iter()
+                .map(|(worker, line)| ((*worker).to_owned(), vec![(*line).to_owned()]))
+                .collect()
+        };
+        let previous = rows(&[("a", "old-a"), ("b", "old-b"), ("gone", "old-gone")]);
+        let mut polled = rows(&[("a", "new-a")]);
+        keep_unanswered(
+            &mut polled,
+            &previous,
+            &["a".into(), "b".into(), "c".into()],
+        );
+        // a answered, b kept from the last poll, gone left the inventory.
+        assert_eq!(polled, rows(&[("a", "new-a"), ("b", "old-b")]));
+    }
+
+    #[test]
+    fn job_cache_rows_become_a_snapshot() {
+        let cache = JobCache {
+            polled_at: 0,
+            operator: "op".into(),
+            rows: [(
+                "w1".to_owned(),
+                vec!["job-1\trunning\t2026-11-25T12:00:00Z\tbuild".to_owned()],
+            )]
+            .into_iter()
+            .collect(),
+        };
+        let snapshot = JobSnapshot::from_cache(&cache);
+        assert_eq!(snapshot.workers, 1);
+        assert_eq!(snapshot.failed, 0);
+        let records: Vec<Value> = serde_json::from_str(&snapshot.json()).unwrap();
+        assert_eq!(records[0]["worker"], "w1");
+        assert_eq!(records[0]["state"], "running");
+        assert_eq!(records[0]["topic"], "build");
+    }
 
     #[test]
     fn collector_polls_only_its_operators_ad_hoc_workers() {

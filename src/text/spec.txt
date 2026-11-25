@@ -129,6 +129,7 @@ flag ssh -i=file log in with this private key file (like ssh -i)
 flag ssh --identity=file long form of -i
 flag machines --fresh wait for a fresh inventory snapshot
 flag jobs --watch redraw the jobs list in place
+flag jobs --fresh poll every worker instead of reading the control host's job cache
 flag jobs -w short for --watch
 flag jobs --interval=seconds refresh interval in seconds (with --watch)
 flag jobs -n=interval short for --interval

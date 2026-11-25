@@ -91,7 +91,10 @@ pub fn collect_jobs(ctx: &Ctx) -> R {
                 ctx.err(&format!("Record worker lifecycle events: {error}"));
                 Fail(1)
             })?;
-            let (jobs, topics) = super::jobs::observed_jobs(ctx, &inventory);
+            let (jobs, topics, rows) = super::jobs::observed_jobs(ctx, &inventory);
+            if let Err(error) = super::jobs::write_job_cache(&inventory, rows) {
+                ctx.err(&format!("Write the job cache: {error}"));
+            }
             crate::event_history::observe_jobs(&directory, &jobs, topics).map_err(|error| {
                 ctx.err(&format!("Record job lifecycle events: {error}"));
                 Fail(1)

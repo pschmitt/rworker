@@ -467,6 +467,7 @@ fn run(ctx: &Ctx, argv: &[String]) -> R {
         "__cached-worker-history" => return cmd::history::show(ctx),
         "__cached-archive-exec" => return cmd::log_cache::receive_exec(ctx, &argv[1..]),
         "__collect-job-events" => return cmd::events::collect_jobs(ctx),
+        "__cached-jobs" => return cmd::jobs::cached_jobs_command(),
         "__collect-logs" => return cmd::log_cache::collect(ctx, &argv[1..]),
         "__cached-logs" => return cmd::log_cache::read(ctx, &argv[1..], false),
         "__cached-preview" => return cmd::log_cache::preview(ctx, &argv[1..]),

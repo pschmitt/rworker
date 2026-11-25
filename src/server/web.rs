@@ -539,6 +539,11 @@ static LIVE_JOBS: std::sync::Mutex<Option<(std::time::Instant, Vec<Value>)>> =
     std::sync::Mutex::new(None);
 
 async fn live_jobs() -> Vec<Value> {
+    // The job collector's snapshot: no wait for the slowest worker.
+    if let Ok(Some(rows)) = tokio::task::spawn_blocking(crate::cmd::jobs::cached_job_records).await
+    {
+        return rows;
+    }
     let cached = LIVE_JOBS.lock().ok().and_then(|guard| guard.clone());
     if let Some((at, rows)) = &cached
         && at.elapsed() < std::time::Duration::from_secs(15)
