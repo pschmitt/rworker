@@ -201,6 +201,7 @@ function navigate() {
     if (state.logFullscreen) setLogFullscreen(false);
     state.limit = 200;
     $("search").value = "";
+    state.logQuery = "";
   }
   state.view = view;
   document.querySelectorAll("[data-view]").forEach((link) => {
@@ -1256,16 +1257,7 @@ function renderLogsView() {
     return node;
   };
   const frame = el("div", "log-frame" + (state.wrap ? " wrap" : ""));
-  const search = el("label", "search", icon("search"));
-  const input = el("input");
-  input.type = "search";
-  input.id = "logs-filter";
-  input.placeholder = "Filter lines";
-  input.value = state.logQuery;
-  input.setAttribute("aria-label", "Filter log lines");
-  input.addEventListener("input", () => { state.logQuery = input.value; setLog(state.logText, { keepEnd: false }); });
-  search.append(input);
-  tools.append(workerSelect, jobSelect, el("span", "spacer"), search, follow,
+  tools.append(workerSelect, jobSelect, el("span", "spacer"), follow,
     toggle("wrap", "Wrap long lines (W)", state.wrap, () => { state.wrap = !state.wrap; frame.classList.toggle("wrap", state.wrap); }),
     toggle("shield", "Redact secrets", state.redact, () => { state.redact = !state.redact; render(); }),
     iconButton("copy", "Copy log", () => copy(stripAnsi(state.logText)), "btn sm icon"),
@@ -1494,7 +1486,7 @@ function layoutWorkspace() {
   $("app").classList.toggle("detail-open", fullPage);
   $("back").hidden = !fullPage;
   $("filters").hidden = fullPage;
-  $("search-box").hidden = fullPage || state.view === "logs";
+  $("search-box").hidden = fullPage;
   if (fullPage) $("banner").hidden = true;
   $("create").hidden = !state.authenticated;
   $("fab").hidden = !state.authenticated || state.view !== "workers";
@@ -2914,7 +2906,7 @@ document.addEventListener("keydown", (event) => {
   const row = state.selected;
   const live = row && !row.retired;
   const keys = {
-    "/": () => state.view === "logs" && !row ? $("logs-filter")?.focus() : $("search-box").hidden || $("search").focus(),
+    "/": () => $("search-box").hidden || $("search").focus(),
     "?": showKeys,
     "[": toggleRail,
     "1": () => { location.hash = "workers"; }, "2": () => { location.hash = "jobs"; },
@@ -3037,7 +3029,15 @@ $("profile-close").addEventListener("click", () => $("profile-dialog").close());
 $("event-close").addEventListener("click", () => $("event-dialog").close());
 $("cancel").addEventListener("click", () => $("dialog").close());
 $("dismiss").addEventListener("click", () => $("dialog").close());
-$("search").addEventListener("input", () => { state.limit = 200; render(); });
+$("search").addEventListener("input", () => {
+  if (state.view === "logs" && !state.selected) {
+    state.logQuery = $("search").value;
+    setLog(state.logText, { keepEnd: false });
+    return;
+  }
+  state.limit = 200;
+  render();
+});
 for (const dialog of document.querySelectorAll("dialog:not(#terminal-dialog)")) {
   dialog.addEventListener("click", (event) => { if (event.target === dialog) dialog.close(); });
 }
