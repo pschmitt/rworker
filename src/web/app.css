@@ -633,7 +633,7 @@ details.advanced .grid2 { display: grid; grid-template-columns: repeat(2, minmax
   .job-row .worker, .job-row .topic, .job-row .agent { display: none; }
   .event { grid-template-columns: 30px minmax(0, 1fr); }
   .event-when { grid-column: 2; text-align: left; }
-  .tabbar { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); padding: 4px 8px max(10px, env(safe-area-inset-bottom)); background: var(--rail); border-top: 1px solid var(--line); }
+  .tabbar { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); padding: 4px 8px max(10px, env(safe-area-inset-bottom)); background: var(--rail); border-top: 1px solid var(--line); touch-action: none; }
   .tabbar a { display: grid; justify-items: center; gap: 3px; padding: 7px 0 5px; color: var(--dim); font-size: 11.5px; font-weight: 600; text-decoration: none; }
   .tabbar a .i { width: 22px; height: 22px; }
   .tabbar a[aria-current] { color: var(--acc); }

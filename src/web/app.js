@@ -2826,6 +2826,24 @@ function openPalette() {
   $("palette-input").focus();
 }
 
+// Phones: swipe up on the tab bar opens the palette.
+{
+  let start = null;
+  $("tabbar").addEventListener("touchstart", (event) => {
+    const touch = event.touches[0];
+    start = event.touches.length === 1 ? { x: touch.clientX, y: touch.clientY } : null;
+  }, { passive: true });
+  $("tabbar").addEventListener("touchend", (event) => {
+    const touch = event.changedTouches[0];
+    if (!start || !touch) return;
+    const dx = touch.clientX - start.x;
+    const dy = touch.clientY - start.y;
+    start = null;
+    if (dy < -40 && Math.abs(dy) > 2 * Math.abs(dx)) openPalette();
+  }, { passive: true });
+  $("tabbar").addEventListener("touchcancel", () => { start = null; }, { passive: true });
+}
+
 $("palette-input").addEventListener("input", () => { palette.active = 0; renderPalette(); });
 $("palette-input").addEventListener("keydown", (event) => {
   if (event.key === "ArrowDown") { event.preventDefault(); palette.active = Math.min(palette.items.length - 1, palette.active + 1); highlightPalette(); }
