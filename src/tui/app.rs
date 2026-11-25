@@ -2,9 +2,9 @@
 //! text views (logs, events, inspect, ps, command output) stack on it and
 //! Esc goes back.
 
-use super::View;
 use super::create::{self, After, CreateWorker};
 use super::proc::{self, Msg, Stream};
+use super::{Start, View};
 use crate::ctx::Ctx;
 use crate::jq::{self, get};
 use ratatui::crossterm::cursor::Show;
@@ -291,6 +291,9 @@ pub struct App {
     pub help: bool,
     pub(super) help_top: u16,
     pub plain: bool,
+    /// Started as `rworker logs`: the chrome comes on once the user leaves
+    /// that log.
+    logs_start: bool,
     pub flash: Option<Flash>,
     pub tick: u64,
     pending: HashMap<u64, Pending>,
@@ -465,6 +468,24 @@ impl App {
             View::Events => self.open_text("events", s(&["events", "--watch"])),
             View::Logs => self.open_text("logs · all workers", s(&["logs", "--follow"])),
         }
+    }
+
+    /// `rworker logs ARGS`: the same output, chrome-less. The worker (and
+    /// job) go first so the view knows whose log it is.
+    fn open_logs(&mut self, args: &[String]) {
+        let (positional, options) = split_log_args(args);
+        let title = match positional.as_slice() {
+            [] => "logs · all workers".to_owned(),
+            names => format!("logs · {}", names.join("/")),
+        };
+        let words = std::iter::once("logs".to_owned())
+            .chain(positional)
+            .chain(options)
+            .chain(std::iter::once("--plain".to_owned()))
+            .collect();
+        self.plain = true;
+        self.logs_start = true;
+        self.open_text(title, words);
     }
 
     fn open_jobs(&mut self, worker: Option<String>) {
@@ -1471,6 +1492,10 @@ impl App {
                     v.follow = true;
                 } else {
                     self.stack.pop();
+                    if self.logs_start && self.stack.is_empty() {
+                        self.logs_start = false;
+                        self.plain = false;
+                    }
                 }
             }
             KeyCode::Down | KeyCode::Char('j') => down(v, 1),
@@ -1646,6 +1671,30 @@ fn log_prefix(args: &[String]) -> Option<(regex::Regex, &'static str)> {
     regex::Regex::new(&pattern).ok().map(|re| (re, rep))
 }
 
+/// `logs` arguments split into WORKER [JOB] and the options (with their
+/// values), in order.
+fn split_log_args(args: &[String]) -> (Vec<String>, Vec<String>) {
+    let valued: Vec<&str> = crate::help::flags("logs")
+        .filter_map(|(name, takes_value)| takes_value.then_some(name))
+        .collect();
+    let (mut positional, mut options) = (Vec::new(), Vec::new());
+    let mut rest = args.iter();
+    while let Some(arg) = rest.next() {
+        if arg == "--plain" {
+            continue;
+        }
+        if arg.starts_with('-') {
+            options.push(arg.clone());
+            if valued.contains(&arg.as_str()) {
+                options.extend(rest.next().cloned());
+            }
+        } else {
+            positional.push(arg.clone());
+        }
+    }
+    (positional, options)
+}
+
 fn s(words: &[&str]) -> Vec<String> {
     words.iter().map(|w| (*w).to_string()).collect()
 }
@@ -1740,7 +1789,7 @@ fn cached(ctx: &Ctx) -> Option<Vec<Value>> {
     }
 }
 
-pub(super) fn run(ctx: &Ctx, interval: Duration, view: View) -> std::io::Result<()> {
+pub(super) fn run(ctx: &Ctx, interval: Duration, start: Start) -> std::io::Result<()> {
     let (tx, rx): (Sender<Msg>, Receiver<Msg>) = mpsc::channel();
     let (refresh_tx, refresh_rx) = mpsc::channel();
     let paused = Arc::new(AtomicBool::new(false));
@@ -1778,6 +1827,7 @@ pub(super) fn run(ctx: &Ctx, interval: Duration, view: View) -> std::io::Result<
         help: false,
         help_top: 0,
         plain: false,
+        logs_start: false,
         flash: None,
         tick: 0,
         pending: HashMap::new(),
@@ -1793,7 +1843,10 @@ pub(super) fn run(ctx: &Ctx, interval: Duration, view: View) -> std::io::Result<
         app.stale = true;
     }
     proc::refresher(tx.clone(), interval, refresh_rx);
-    app.open_view(view);
+    match start {
+        Start::View(view) => app.open_view(view),
+        Start::Logs(args) => app.open_logs(&args),
+    }
     proc::input(tx, paused.clone(), parked.clone());
 
     // A closed terminal or a kill ends the TUI cleanly, stopping its
@@ -1894,6 +1947,19 @@ pub(super) fn run(ctx: &Ctx, interval: Duration, view: View) -> std::io::Result<
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn splits_log_arguments() {
+        let words = |list: &[&str]| list.iter().map(|w| (*w).to_owned()).collect::<Vec<_>>();
+        assert_eq!(
+            split_log_args(&words(&["-f", "--topic", "x", "w1", "--plain", "job"])),
+            (words(&["w1", "job"]), words(&["-f", "--topic", "x"]))
+        );
+        assert_eq!(
+            split_log_args(&words(&["-g", "error", "-f"])),
+            (Vec::new(), words(&["-g", "error", "-f"]))
+        );
+    }
 
     #[test]
     fn log_prefixes() {

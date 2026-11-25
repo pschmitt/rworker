@@ -32,6 +32,7 @@ flag start --topic=topic what the job is for (none unless given)
 flag start --workdir=path working directory on the worker
 flag ps --long show full process command lines
 flag logs --cached read a retained snapshot for WORKER [JOB]
+flag logs --plain print the log without the TUI (always so when output is not a terminal)
 flag logs --redact mask common secrets in displayed logs
 flag logs --redact-regex=regex also mask matches of this expression
 flag logs --filter=regex only show lines matching this case-insensitive regex, highlighted (repeat for any of several)

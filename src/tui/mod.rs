@@ -24,6 +24,14 @@ enum View {
     Logs,
 }
 
+/// What the TUI shows first.
+enum Start {
+    View(View),
+    /// `rworker logs` in a terminal: its log, without chrome, until the
+    /// user leaves it for the rest of the TUI.
+    Logs(Vec<String>),
+}
+
 impl View {
     fn from_prefix(prefix: &str) -> Option<Self> {
         if prefix.is_empty() {
@@ -82,9 +90,23 @@ pub fn cmd_tui(ctx: &Ctx, args: &[String]) -> R {
     app::run(
         ctx,
         Duration::from_secs(interval),
-        view.unwrap_or(View::Workers),
+        Start::View(view.unwrap_or(View::Workers)),
     )
     .map_err(|e| {
+        ctx.err(&format!("{}: tui: {e}", ctx.me));
+        Fail(1)
+    })
+}
+
+/// Whether `logs` should open in the TUI: both ends are a terminal.
+pub fn logs_interactive() -> bool {
+    std::io::stdout().is_terminal() && std::io::stdin().is_terminal()
+}
+
+/// `rworker logs ARGS` in a terminal: the TUI with the plain log (from
+/// `rworker logs ARGS --plain`) as its only view, chrome off.
+pub fn cmd_logs(ctx: &Ctx, args: &[String]) -> R {
+    app::run(ctx, Duration::from_secs(5), Start::Logs(args.to_vec())).map_err(|e| {
         ctx.err(&format!("{}: tui: {e}", ctx.me));
         Fail(1)
     })

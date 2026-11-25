@@ -145,6 +145,18 @@ fn s(v: &[&str]) -> Vec<String> {
 }
 
 pub fn cmd_logs(ctx: &Ctx, args: &[String]) -> R {
+    // In a terminal, the TUI shows the same log without chrome and lets the
+    // user switch views; --plain (and any pipe or --json) keeps the stream.
+    let plain = args.iter().any(|arg| arg == "--plain");
+    if !plain && !ctx.json.get() && crate::tui::logs_interactive() {
+        return crate::tui::cmd_logs(ctx, args);
+    }
+    let args: Vec<String> = args
+        .iter()
+        .filter(|arg| *arg != "--plain")
+        .cloned()
+        .collect();
+    let args = args.as_slice();
     let cached = args.iter().any(|arg| arg == "--cached");
     let mut redact = false;
     let mut redact_regex = None;

@@ -1,6 +1,11 @@
-Usage: __ME__ logs [WORKER [JOB]] [--lines N] [--redact] [--redact-regex REGEX] [-g|--filter|--grep REGEX]... [--follow] [--no-events] [--quiet] [--topic REGEX] [--agent REGEX] [--agent-id REGEX]
+Usage: __ME__ logs [WORKER [JOB]] [--lines N] [--redact] [--redact-regex REGEX] [-g|--filter|--grep REGEX]... [--follow] [--no-events] [--quiet] [--topic REGEX] [--agent REGEX] [--agent-id REGEX] [--plain]
        __ME__ logs [-f] [--topic REGEX] [--agent REGEX] [--agent-id REGEX]  # follow jobs and events on all (or matching) workers
        __ME__ logs WORKER [JOB] --cached [--lines N] [--redact] [--redact-regex REGEX]
+
+In a terminal, logs opens the TUI with just this log, without its chrome:
+the same output, but q or Esc leaves it for the worker list, J shows the jobs
+(of this worker, or all of them), / filters and n toggles the chrome. --plain
+prints the log as a plain stream instead, as it always does into a pipe.
 
 For WORKER [JOB] snapshots, fall back to the archive when live logs are unavailable.
 Use --cached to read only the archive.
