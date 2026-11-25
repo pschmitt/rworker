@@ -4,6 +4,7 @@
 
 The Rust client and controller replace the original Bash client.
 
+- The pool autoscaler no longer deletes a draining worker that has new work: it asks Circus for the worker's assigned jobs right before the deletion, and returns the worker to the pool when it is busy or builds are queued. When Circus does not answer, the worker stays.
 - The builder gateway names the topic of the workers it leases after the client host and profile ("Nix builder for fnuc (standard)") instead of a fixed "On-demand Nix builder".
 - The web console no longer underlines worker names in the cards and in the expiry banner.
 - NetBird is optional: leave `netbirdApi` unset to run without it. When its API fails, a lease enrolls the worker with Tailscale alone (it fails only if no overlay can enroll it) and waits for it to join, CI leases join the overlay that works, `ls` keeps the last known addresses, the reaper keeps workers whose activity it cannot determine, and one unreachable worker no longer stops a reaper or autoscaler pass. Deleting a worker no longer fails because its NetBird peer cannot be removed.

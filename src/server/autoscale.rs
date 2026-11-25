@@ -86,43 +86,77 @@ impl Demand {
     }
 
     /// Runnable builds Circus has not dispatched yet, from its operator
-    /// queue. The API key goes to curl on stdin, never in argv.
+    /// queue.
     fn read_circus(demand: &Value) -> Result<Self, String> {
-        let url = circus_queue_url(demand)?;
-        let key = fs::read_to_string(setting(demand, "apiKeyFile")?)
-            .map_err(|error| format!("Read Circus API key: {error}"))?;
-        let mut child = Command::new("curl")
-            .args([
-                "--fail",
-                "--silent",
-                "--show-error",
-                "--max-time",
-                "20",
-                "--header",
-                "@-",
-                &url,
-            ])
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::null())
-            .spawn()
-            .map_err(|error| format!("Read Circus demand: {error}"))?;
-        if let Some(mut stdin) = child.stdin.take() {
-            writeln!(stdin, "Authorization: Bearer {}", key.trim())
-                .map_err(|error| format!("Read Circus demand: {error}"))?;
-        }
-        let output = child
-            .wait_with_output()
-            .map_err(|error| format!("Read Circus demand: {error}"))?;
-        if !output.status.success() {
-            return Err(format!("Read Circus demand: curl {}", output.status));
-        }
+        let body = circus_get(demand, &circus_queue_url(demand)?, "demand")?;
         parse_circus_queue(
-            &output.stdout,
+            &body,
             demand["system"].as_str().unwrap_or("x86_64-linux"),
             demand["qemuOverflow"].as_bool().unwrap_or(false),
         )
     }
+}
+
+/// An authenticated Circus API request. The API key goes to curl on stdin,
+/// never in argv.
+fn circus_get(demand: &Value, url: &str, what: &str) -> Result<Vec<u8>, String> {
+    let failed = |error: &dyn std::fmt::Display| format!("Read Circus {what}: {error}");
+    let key = fs::read_to_string(setting(demand, "apiKeyFile")?)
+        .map_err(|error| format!("Read Circus API key: {error}"))?;
+    let mut child = Command::new("curl")
+        .args([
+            "--fail",
+            "--silent",
+            "--show-error",
+            "--max-time",
+            "20",
+            "--header",
+            "@-",
+            url,
+        ])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .map_err(|error| failed(&error))?;
+    if let Some(mut stdin) = child.stdin.take() {
+        writeln!(stdin, "Authorization: Bearer {}", key.trim()).map_err(|error| failed(&error))?;
+    }
+    let output = child.wait_with_output().map_err(|error| failed(&error))?;
+    if !output.status.success() {
+        return Err(failed(&format!("curl {}", output.status)));
+    }
+    Ok(output.stdout)
+}
+
+/// Whether the demand source has assigned jobs to a worker, which its build
+/// directory does not show yet while inputs are copied. Only Circus assigns
+/// jobs to the workers itself.
+fn has_assigned_jobs(cfg: &Value, name: &str) -> Result<bool, String> {
+    let demand = &cfg["demand"];
+    if demand["source"] != "circus" {
+        return Ok(false);
+    }
+    let url = format!(
+        "{}/api/v1/operator/workers",
+        setting(demand, "url")?.trim_end_matches('/')
+    );
+    parse_assigned_jobs(&circus_get(demand, &url, "workers")?, name)
+}
+
+/// A worker Circus does not list has no agent, so it has no jobs.
+fn parse_assigned_jobs(body: &[u8], name: &str) -> Result<bool, String> {
+    let workers: Vec<Value> =
+        serde_json::from_slice(body).map_err(|_| "Invalid Circus workers response")?;
+    for worker in workers.iter().filter(|worker| worker["name"] == name) {
+        let jobs = worker["current_jobs"]
+            .as_u64()
+            .ok_or("Invalid Circus workers response")?;
+        if jobs > 0 && worker["status_text"] != "offline" {
+            return Ok(true);
+        }
+    }
+    Ok(false)
 }
 
 /// The operator queue, limited to builds needing only the pool's `features`
@@ -535,7 +569,13 @@ impl Pool<'_> {
         let names: Vec<_> = self.workers.keys().cloned().collect();
         for name in names {
             let mut worker = self.workers[&name].clone();
-            if self.reconcile_worker(&name, &mut worker, now, queued == 0 && active > minimum)? {
+            if self.reconcile_worker(
+                &name,
+                &mut worker,
+                now,
+                queued == 0 && active > minimum,
+                queued > 0 || active < minimum,
+            )? {
                 self.workers.insert(name, worker);
             } else {
                 self.workers.remove(&name);
@@ -610,6 +650,7 @@ impl Pool<'_> {
         worker: &mut Value,
         now: f64,
         may_drain: bool,
+        needed: bool,
     ) -> Result<bool, String> {
         let cfg = self.cfg;
         let id = setting(worker, "id")?.to_owned();
@@ -710,13 +751,36 @@ impl Pool<'_> {
             !output.status.success() || !String::from_utf8_lossy(&output.stdout).trim().is_empty()
         });
         if worker["draining"] == true {
-            if busy || !worker["drainQuietSince"].is_number() {
-                worker["drainQuietSince"] = json!(now);
-            } else if now - worker["drainQuietSince"].as_f64().unwrap_or(now) >= 120.0 {
-                self.remove(name, &id, worker, "drained")?;
-                return Ok(false);
+            // The source keeps assigning jobs to a draining worker.
+            match drain(
+                busy,
+                needed,
+                now - worker["drainQuietSince"].as_f64().unwrap_or(now),
+                || has_assigned_jobs(cfg, name),
+            ) {
+                Ok(Drain::Wait) => {
+                    if !worker["drainQuietSince"].is_number() {
+                        worker["drainQuietSince"] = json!(now);
+                    }
+                    return Ok(true);
+                }
+                Ok(Drain::Remove) => {
+                    self.remove(name, &id, worker, "drained")?;
+                    return Ok(false);
+                }
+                Ok(Drain::Cancel) => {
+                    eprintln!("{name} is needed again");
+                    if let Some(fields) = worker.as_object_mut() {
+                        fields.remove("draining");
+                        fields.remove("drainQuietSince");
+                    }
+                    worker["lastBusy"] = json!(now);
+                }
+                Err(error) => {
+                    eprintln!("not removing {name}: {error}");
+                    return Ok(true);
+                }
             }
-            return Ok(true);
         }
         let state = if busy {
             worker["lastBusy"] = json!(now);
@@ -768,6 +832,34 @@ impl Pool<'_> {
         }
         Ok(())
     }
+}
+
+enum Drain {
+    Wait,
+    Cancel,
+    Remove,
+}
+
+/// What to do with a draining worker. `needed`: builds are queued or the pool
+/// is below its minimum. `assigned` is asked last, right
+/// before the removal.
+fn drain(
+    busy: bool,
+    needed: bool,
+    quiet_seconds: f64,
+    assigned: impl FnOnce() -> Result<bool, String>,
+) -> Result<Drain, String> {
+    if busy || needed {
+        return Ok(Drain::Cancel);
+    }
+    if quiet_seconds < 120.0 {
+        return Ok(Drain::Wait);
+    }
+    Ok(if assigned()? {
+        Drain::Cancel
+    } else {
+        Drain::Remove
+    })
 }
 
 /// Retain other pools' more specific prefixes when classifying legacy workers.
@@ -886,6 +978,37 @@ mod tests {
         let demand = parse_circus_queue(b"[]", "x86_64-linux", false).unwrap();
         assert_eq!(demand.pending, 0);
         assert!(parse_circus_queue(b"{}", "x86_64-linux", false).is_err());
+    }
+
+    #[test]
+    fn draining_stops_for_new_work() {
+        let idle = || Ok(false);
+        assert!(matches!(drain(true, false, 300.0, idle), Ok(Drain::Cancel)));
+        assert!(matches!(drain(false, true, 300.0, idle), Ok(Drain::Cancel)));
+        assert!(matches!(drain(false, false, 60.0, idle), Ok(Drain::Wait)));
+        assert!(matches!(
+            drain(false, false, 120.0, idle),
+            Ok(Drain::Remove)
+        ));
+        assert!(matches!(
+            drain(false, false, 120.0, || Ok(true)),
+            Ok(Drain::Cancel)
+        ));
+        assert!(drain(false, false, 120.0, || Err("down".into())).is_err());
+    }
+
+    #[test]
+    fn assigned_jobs_are_read_per_worker() {
+        let body = br#"[{"name":"circus-1","status_text":"busy","current_jobs":2},
+            {"name":"circus-2","status_text":"idle","current_jobs":0},
+            {"name":"circus-3","status_text":"offline","current_jobs":1}]"#;
+        assert!(parse_assigned_jobs(body, "circus-1").unwrap());
+        assert!(!parse_assigned_jobs(body, "circus-2").unwrap());
+        assert!(!parse_assigned_jobs(body, "circus-3").unwrap());
+        assert!(!parse_assigned_jobs(body, "circus-4").unwrap());
+        assert!(parse_assigned_jobs(br#"[{"name":"circus-1"}]"#, "circus-1").is_err());
+        assert!(parse_assigned_jobs(b"{}", "circus-1").is_err());
+        assert!(!has_assigned_jobs(&json!({}), "circus-1").unwrap());
     }
 
     #[test]
