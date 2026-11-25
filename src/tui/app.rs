@@ -1483,9 +1483,8 @@ impl App {
             KeyCode::End | KeyCode::Char('G') => v.follow = true,
             KeyCode::Char('f' | ' ') => v.follow = !v.follow,
             KeyCode::Char('J') => {
-                if let Some(worker) = v.worker.clone() {
-                    self.open_jobs(Some(worker));
-                }
+                let worker = v.worker.clone();
+                self.open_jobs(worker);
             }
             KeyCode::Char('w') => v.wrap = !v.wrap,
             KeyCode::Char('c') => {

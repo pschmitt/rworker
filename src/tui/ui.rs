@@ -708,9 +708,11 @@ impl App {
                         ("Esc", "Clear the filter or go back"),
                         ("q / Backspace / h", "Back"),
                     ];
-                    if view.worker.is_some() {
-                        keys.push(("J", "Jobs for this worker"));
-                    }
+                    keys.push(if view.worker.is_some() {
+                        ("J", "Jobs for this worker")
+                    } else {
+                        ("J", "All jobs")
+                    });
                     ("Logs and output", keys)
                 }
             }
