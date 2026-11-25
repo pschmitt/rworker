@@ -101,6 +101,17 @@
   }
 }
 :root[data-density="compact"] { --row-y: 6px; font-size: 13.5px; }
+/* Compact density for the layouts that do not use --row-y. */
+:root[data-density="compact"] .cards, :root[data-density="compact"] .pools, :root[data-density="compact"] .profiles { gap: 8px; }
+:root[data-density="compact"] .card, :root[data-density="compact"] .profile-card { gap: 8px; padding: 10px 12px; border-radius: 10px; }
+:root[data-density="compact"] .card .tile { width: 32px; height: 32px; font-size: 16px; }
+:root[data-density="compact"] .card-actions { padding-top: 8px; }
+:root[data-density="compact"] .pool-member { height: 26px; }
+:root[data-density="compact"] .ctr:not(.head) { padding-block: 2px; }
+:root[data-density="compact"] .event { gap: 10px; padding-block: 5px; }
+:root[data-density="compact"] .group { padding-top: 10px; padding-bottom: 4px; }
+:root[data-density="compact"] .facts { gap: 8px 14px; padding: 9px 12px; }
+:root[data-density="compact"] .kv { padding: 6px 10px; }
 
 * { box-sizing: border-box; }
 [hidden] { display: none !important; }
@@ -607,7 +618,7 @@ details.advanced .grid2 { display: grid; grid-template-columns: repeat(2, minmax
   .chips select { height: 34px; }
   .detail-open .toolbar-end, .detail-open .chips, .detail-open .mobile-brand { display: none; }
   .inventory { padding: 4px 12px 96px; }
-  .row { grid-template-columns: 40px minmax(0, 1fr); padding: 12px; border: 1px solid var(--line); background: var(--s1); margin-bottom: 8px; }
+  .row { grid-template-columns: 40px minmax(0, 1fr); padding: calc(var(--row-y) + 2px) 12px; border: 1px solid var(--line); background: var(--s1); margin-bottom: 8px; }
   .row .tile { width: 40px; height: 40px; }
   .row .lease { grid-column: 2; justify-items: start; grid-template-columns: auto 1fr; align-items: center; gap: 10px; }
   .row .lease .bar { width: 100%; }
