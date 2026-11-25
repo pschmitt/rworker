@@ -485,7 +485,10 @@ impl App {
             .collect();
         self.plain = true;
         self.logs_start = true;
-        self.open_text(title, words);
+        let mut view = self.text_stream(title, words);
+        // Like the plain stream in a terminal, which wraps long lines.
+        view.wrap = true;
+        self.stack.push(Sub::Text(view));
     }
 
     fn open_jobs(&mut self, worker: Option<String>) {
