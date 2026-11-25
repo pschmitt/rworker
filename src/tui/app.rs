@@ -1475,6 +1475,12 @@ impl App {
     }
 
     fn text_key(&mut self, k: KeyEvent) {
+        // `rworker logs -f`: q quits, like leaving any log stream; Esc and
+        // the other back keys lead to the rest of the TUI.
+        if k.code == KeyCode::Char('q') && self.logs_start && self.stack.len() == 1 {
+            self.quit = true;
+            return;
+        }
         let Some(Sub::Text(v)) = self.stack.last_mut() else {
             return;
         };
