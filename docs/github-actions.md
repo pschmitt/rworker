@@ -47,9 +47,60 @@ Add `githubActions` to the controller runtime JSON:
 }
 ```
 
-The GitHub credential needs Actions write access in the configured
-repository. The controller service user needs read access to the
-credential file. The workflow currently dispatches from `main`.
+The controller service user needs read access to the credential file. The
+workflow currently dispatches from `main`. See [Authentication](#authentication)
+for the credential.
+
+## Authentication
+
+The controller dispatches the workflow and cancels runs through the GitHub
+API. Its credential needs only Actions write access (and Metadata read) on
+the workflow repository, and the controller re-reads `tokenFile` on every
+request, so the file may change while the controller runs.
+
+Recommended: a dedicated GitHub App.
+
+1. Create an App with the repository permissions Actions: read and write and
+   Metadata: read, no webhook and no events, and install it only on the
+   workflow repository. Generate a private key.
+2. Put the numeric App ID and the PEM key into runtime secret files that
+   root can read (never the Nix store).
+3. Configure the module:
+
+   ```nix
+   services.rworker.githubActions = {
+     enable = true;
+     # serverName, authorizedKeysFile as above
+     app = {
+       idFile = "/run/secrets/rworker-github-app-id";
+       privateKeyFile = "/run/secrets/rworker-github-app-key";
+       repository = "owner/project";
+     };
+   };
+   ```
+
+4. Use the minted file in the runtime JSON, with the same repository:
+   `"tokenFile": "/run/rworker-github-token/token"` (the module exposes it
+   as `services.rworker.githubActions.app.tokenFile`). The runtime JSON is
+   a file you provide, so the module cannot set it for you.
+
+The module installs `rworker-github-token.service` and a timer. The service
+signs a short-lived App JWT with the private key (the key stays on the
+controller), looks up the App's installation on the repository and asks
+GitHub for an installation token limited to that repository and to
+`actions: write`. It writes the token atomically to
+`/run/rworker-github-token/token` (group `rworker`, mode 0440). Installation
+tokens last one hour, so the timer refreshes them every 20 minutes
+(`app.refreshInterval`, first run 30 s after boot). A failed run is retried
+every 30 s without limit: a failed oneshot unit would otherwise never be
+started again by the timer. The GitHub API and reaper units want the token
+unit but do not wait for it; a request before the first token fails and the
+next one succeeds.
+
+Alternative: a static fine-grained personal access token with Actions
+write access on that one repository, stored in a runtime file that
+`tokenFile` names. Prefer the App: its tokens are short-lived and scoped by
+the installation.
 
 ## Runner registration
 

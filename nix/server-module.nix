@@ -184,6 +184,44 @@ in
         example = "/run/secrets/rworker-github-relay-keys";
         description = "Runtime authorized_keys file readable by the GitHub relay account.";
       };
+      app = {
+        idFile = lib.mkOption {
+          type = lib.types.nullOr lib.types.str;
+          default = null;
+          example = "/run/secrets/rworker-github-app-id";
+          description = ''
+            Runtime file with the numeric ID of a GitHub App installed on the
+            workflow repository. With `privateKeyFile` and `repository`, the
+            module mints and refreshes a repository-scoped installation token
+            (`actions: write`, valid for one hour) at {option}`app.tokenFile`.
+            Point `githubActions.tokenFile` of the runtime JSON there. Keys
+            never enter the Nix store.
+          '';
+        };
+        privateKeyFile = lib.mkOption {
+          type = lib.types.nullOr lib.types.str;
+          default = null;
+          example = "/run/secrets/rworker-github-app-key";
+          description = "Runtime file with the PEM private key of the GitHub App.";
+        };
+        repository = lib.mkOption {
+          type = lib.types.nullOr lib.types.str;
+          default = null;
+          example = "owner/project";
+          description = "Workflow repository (OWNER/NAME), the same as `githubActions.repository` in the runtime JSON. The token is limited to it.";
+        };
+        refreshInterval = lib.mkOption {
+          type = lib.types.str;
+          default = "20m";
+          description = "Time between token refreshes (systemd time span). Installation tokens expire after one hour.";
+        };
+        tokenFile = lib.mkOption {
+          type = lib.types.str;
+          default = "/run/rworker-github-token/token";
+          readOnly = true;
+          description = "Runtime file holding the current installation token, readable by the rworker group. Use it as `githubActions.tokenFile` in the runtime JSON; the controller reads it on every request.";
+        };
+      };
     };
     gitlabCi = {
       enable = lib.mkEnableOption "GitLab CI workers and their SSH relay";
@@ -733,6 +771,80 @@ in
           gitlab = cfg.gitlabCi;
         }
     ))
+    (lib.mkIf (cfg.githubActions.enable && cfg.githubActions.app.idFile != null) (
+      let
+        app = cfg.githubActions.app;
+        tokenDirectory = dirOf app.tokenFile;
+        absolute = path: path != null && lib.hasPrefix "/" path && !lib.hasPrefix builtins.storeDir path;
+        refreshScript = pkgs.writeShellScript "rworker-github-token" ''
+          set -euo pipefail
+          pending="$(mktemp "${tokenDirectory}/.token.XXXXXXXX")"
+          trap 'rm -f -- "$pending"' EXIT
+          ${lib.getExe pkgs.python3} ${../scripts/github-app-token.py} \
+            "$CREDENTIALS_DIRECTORY/app-id" "$CREDENTIALS_DIRECTORY/private-key" \
+            ${lib.escapeShellArg app.repository} > "$pending"
+          read -r token < "$pending"
+          [[ "$token" =~ ^ghs_[[:graph:]]+$ ]]
+          chmod 0440 "$pending"
+          mv -f -- "$pending" ${lib.escapeShellArg app.tokenFile}
+        '';
+      in
+      {
+        assertions = [
+          {
+            assertion = absolute app.idFile && absolute app.privateKeyFile;
+            message = "services.rworker.githubActions.app needs idFile and privateKeyFile as absolute runtime paths outside the Nix store.";
+          }
+          {
+            assertion =
+              app.repository != null && builtins.match "[^/[:space:]]+/[^/[:space:]]+" app.repository != null;
+            message = "services.rworker.githubActions.app.repository must be set as OWNER/NAME.";
+          }
+        ];
+        systemd = {
+          services.rworker-github-token = {
+            description = "Refresh the repository-scoped rworker GitHub token";
+            after = [ "network-online.target" ];
+            wants = [ "network-online.target" ];
+            path = [
+              pkgs.coreutils
+              pkgs.openssl
+            ];
+            serviceConfig = {
+              Type = "oneshot";
+              Group = cfg.group;
+              ExecStart = refreshScript;
+              LoadCredential = [
+                "app-id:${app.idFile}"
+                "private-key:${app.privateKeyFile}"
+              ];
+              RuntimeDirectory = baseNameOf tokenDirectory;
+              RuntimeDirectoryMode = "0750";
+              RuntimeDirectoryPreserve = "yes";
+              TimeoutStartSec = "1min";
+              UMask = "0077";
+              # A failed run leaves the unit "failed", which OnUnitInactiveSec
+              # never fires on again: retry until GitHub answers.
+              Restart = "on-failure";
+              RestartSec = "30s";
+            };
+            unitConfig.StartLimitIntervalSec = 0;
+          };
+          timers.rworker-github-token = {
+            wantedBy = [ "timers.target" ];
+            timerConfig = {
+              OnBootSec = "30s";
+              OnUnitInactiveSec = app.refreshInterval;
+            };
+          };
+          # Start the first mint together with the API, without waiting for
+          # it: the controller reads the file per request and a request
+          # before the first token fails and is retried by the caller.
+          services.rworker-github-api.wants = [ "rworker-github-token.service" ];
+          services.rworker-github-reap.wants = [ "rworker-github-token.service" ];
+        };
+      }
+    ))
     (lib.mkIf cfg.builderGateway.enable {
       assertions = [
         {
@@ -840,8 +952,7 @@ in
               sshUser = builderAccount;
               sshKey = cfg.builderClient.identityFile;
               hostName =
-                cfg.builderClient.hostName
-                + lib.optionalString (selector != null) "?remote-program=${selector}";
+                cfg.builderClient.hostName + lib.optionalString (selector != null) "?remote-program=${selector}";
               inherit (cfg.builderClient) publicHostKey;
               inherit (machine)
                 systems

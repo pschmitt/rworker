@@ -73,6 +73,12 @@
                   python3 ${./tests/server-parity/github-leases.py} ${rworker.unwrapped}/bin/rworker
                   touch "$out"
                 '';
+            github-app-token =
+              pkgs.runCommand "rworker-github-app-token-test" { nativeBuildInputs = [ pkgs.python3 ]; }
+                ''
+                  python3 ${./tests/github-app-token.py} ${./scripts/github-app-token.py}
+                  touch "$out"
+                '';
             # The Home Manager module, evaluated against stand-ins for the two
             # Home Manager options it sets, and its configured wrapper built
             # and asked for its settings.

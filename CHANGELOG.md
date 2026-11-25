@@ -2,6 +2,7 @@
 
 ## 0.1.0 (unreleased)
 
+- The NixOS server module can mint the GitHub Actions credential itself: with `services.rworker.githubActions.app` (`idFile`, `privateKeyFile`, `repository`) it installs `rworker-github-token.service` and its timer, which exchange a GitHub App key for a repository-scoped `actions: write` installation token every 20 minutes and retry failures every 30 s. Set the runtime JSON's `githubActions.tokenFile` to `app.tokenFile`. See [GitHub Actions workers](docs/github-actions.md#authentication).
 The Rust client and controller replace the original Bash client.
 
 - CI leases (GitHub Actions and GitLab) accept SSH agent forwarding (`ssh -A`), so a build there can use the client's key without the key being copied to the runner. TCP, Unix socket and X11 forwarding and tunnels stay off.
