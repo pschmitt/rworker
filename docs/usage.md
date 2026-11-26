@@ -213,7 +213,8 @@ working directory.
 
 - `Alt+Shift+Q` quits from any view.
 - `J` toggles Jobs and Workers. Jobs shows running and registered jobs by
-  default. Press `d` in Jobs to include completed and inactive jobs.
+  default; a single worker's jobs (`⏎` on a worker) include its finished ones.
+  `d` toggles completed and inactive jobs in either list.
 - `h` shows or hides retired workers inline. Press Enter on a retired worker
   to view its retained logs.
 - `⏎` opens the worker's jobs, `⏎` on a job follows its log; `l` follows

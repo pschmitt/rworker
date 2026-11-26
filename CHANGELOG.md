@@ -2,6 +2,8 @@
 
 ## 0.1.0 (unreleased)
 
+- The TUI's list of one worker's jobs includes finished jobs by default; the list of all workers' jobs still shows only active ones. `d` toggles both.
+
 - Every worker has one login account, `rworker` (with a group of the same name), instead of `agent` on OpenStack workers and `rworker-build` on GitHub and GitLab leases. NixOS worker images get it from `nixosModules.workerImage` (`nix/worker/account.nix`, which also sets `rworker.worker.jobMembers`) and publish it as the Glance property `rworker_login_user`; a lease's agent reports it with its endpoint. The controller records each worker's `login_user`, and the client, log collector, builder gateway and `setup nix` use it; workers that report none keep their old account. Jobs move to the shared `/var/lib/rworker/jobs` (`RWORKER_JOBS_DIR`, setgid, group `rworker`), falling back to `~/.local/state/rworker/jobs` on older workers.
 
 - Workers leased by one of the operator's devices (owner `OPERATOR@DEVICE`, for example a phone's `nixpp` build) also accept the operator's client keys from the server module's `services.rworker.operatorKeys` (`owner`, `publicKeys`), restricted like the console key. `jobs`, `logs` and `ssh` from any of the operator's workstations then reach them; they failed with "Could not list jobs" before.

@@ -501,10 +501,13 @@ impl App {
     }
 
     fn open_jobs(&mut self, worker: Option<String>) {
+        // One worker's list shows its whole history; the list of all workers
+        // only what is active.
+        let show_finished = worker.is_some();
         self.stack.push(Sub::Jobs(Jobs {
             worker,
             open_single: false,
-            show_finished: false,
+            show_finished,
             rows: Vec::new(),
             state: TableState::default(),
             loading: None,
