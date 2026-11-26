@@ -37,7 +37,7 @@ print it as JSON (name, ip, host_key, user, expires_at, builder).
                    and niks3 token as OpenStack workers by default; the
                    runners are shared infrastructure, so use this (or one of
                    the narrower flags) for work that should not hold them.
-  --ssh            log in (as agent) as soon as it is ready
+  --ssh            log in (as rworker) as soon as it is ready
   -l USER          with --ssh: log in as USER (pschmitt, nix-remote-builder)
   --topic TEXT     what it is for (shown by ls and inspect; none unless
                    given)

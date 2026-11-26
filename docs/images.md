@@ -26,8 +26,8 @@ Both image commands support `--json`.
 ## Boot the standalone image over a floating IP
 
 The standalone image uses the OpenStack cloud-init datasource. It reads
-the instance key pair from metadata and authorizes it for the `agent`
-user. The image ships with no baked-in public keys. The SSH service
+the instance key pair from metadata and authorizes it for the `rworker`
+user, the login account of every rworker worker. The image ships with no baked-in public keys. The SSH service
 accepts key authentication.
 
 Use a security group that allows TCP port 22 from your client network
@@ -44,7 +44,7 @@ openstack server add floating ip my-worker "$ip"
 ```
 
 Verify the SSH host key with the server console or a trusted management
-path before connecting as `agent`. OpenStack keeps a boot volume created
+path before connecting as `rworker`. OpenStack keeps a boot volume created
 with `--boot-from-volume` after server deletion. Release the floating IP
 and delete the volume when you are done with them. [OpenStack floating IP guide](https://docs.openstack.org/install-guide/launch-instance-selfservice.html)
 

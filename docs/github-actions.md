@@ -138,8 +138,9 @@ The agent authenticates the assignment over HTTPS, starts a loopback-only
 SSH server with a freshly generated host key, and establishes an outbound
 reverse forwarding session to a dedicated gateway account. The gateway
 allocates a loopback port for that lease and accepts only remote forwarding
-on the runner credential. The agent reports the pinned host key and the
-assigned endpoint through the authenticated lease. The client connects to that port through the authenticated controller SSH
+on the runner credential. The agent reports the pinned host key, the
+assigned endpoint and its login account (`rworker`) through the
+authenticated lease. The client connects to that port through the authenticated controller SSH
 connection. The gateway must run on the controller host and the operator
 SSH account must allow local forwarding. Operator SSH stays
 end-to-end encrypted to the runner. The build account accepts the requesting

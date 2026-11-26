@@ -107,6 +107,16 @@ impl Images {
         }
         Ok(newest)
     }
+
+    /// The account workers of a selected image log into: its Glance property
+    /// `rworker_login_user`, or the legacy account for images without it.
+    pub(super) fn login_user(&self, id: &str) -> String {
+        let reported = self
+            .details
+            .get(id)
+            .and_then(|detail| detail["properties"]["rworker_login_user"].as_str());
+        crate::worker_user::login_user(reported, false).to_owned()
+    }
 }
 
 pub(super) fn create(
@@ -196,6 +206,10 @@ pub(super) fn create(
         let mut metadata = request.metadata;
         metadata.insert("image_name".into(), Value::String(image_name.clone()));
         metadata.insert("image_id".into(), Value::String(image_id.clone()));
+        metadata.insert(
+            "login_user".into(),
+            Value::String(images.login_user(&image_id)),
+        );
         if let Ok((key_id, key)) = &netbird_key {
             data.insert("netbird_setup_key".into(), Value::String(key.clone()));
             metadata.insert("setup_key_id".into(), Value::String(key_id.clone()));

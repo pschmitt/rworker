@@ -238,6 +238,11 @@ fn info(
         "flavor": detail.get("Flavor"),
         "profile": meta.get("worker_profile").cloned().unwrap_or_else(|| json!("standard")),
         "owner": meta.get("owner"),
+        // The account to log in as; absent on workers from older images.
+        "login_user": crate::worker_user::login_user(
+            meta.get("login_user").and_then(Value::as_str),
+            false,
+        ),
         "last_active": number("last_active").map(|value| value as i64),
         "pool_state": meta.get("pool_state"),
         "last_busy": number("last_busy").map(|value| value as i64),

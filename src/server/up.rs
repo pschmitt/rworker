@@ -131,7 +131,7 @@ pub(super) fn up(cfg: &Value, args: Args<'_>) -> Result<Value, String> {
         ));
     }
     if args.keys.is_empty() {
-        return Err("--ssh-key is required (the agent user's key)".into());
+        return Err("--ssh-key is required (the worker login's key)".into());
     }
     let suffix = super::niks3::token_id().map_err(|err| err.to_string())?;
     let name = format!("{prefix}{}", &suffix[..8]);
@@ -213,10 +213,15 @@ pub(super) fn up(cfg: &Value, args: Args<'_>) -> Result<Value, String> {
             &mut metadata,
             &host_key,
         )?;
+        let user = crate::worker_user::login_user(
+            metadata.get("login_user").and_then(Value::as_str),
+            false,
+        )
+        .to_owned();
         let mut response = json!({
-            "name": name, "ip": ip, "ips": ips, "host_key": host_key, "user": "agent",
+            "name": name, "ip": ip, "ips": ips, "host_key": host_key, "user": user,
             "expires_at": expires, "flavor": flavor, "profile": profile,
-            "builder": format!("ssh-ng://agent@{ip}"),
+            "builder": format!("ssh-ng://{user}@{ip}"),
         });
         if archive_logs {
             response["archive_logs"] = json!(true);

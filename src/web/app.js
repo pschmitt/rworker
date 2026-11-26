@@ -2631,7 +2631,7 @@ async function form(action, worker, options = {}) {
   if (action === "register") {
     fields.append(field("Job name", "job"),
       field("Topic", "topic", { required: false, placeholder: "What is this job for?", attrs: { maxlength: "255" } }),
-      field("Absolute log path on the worker", "path", { placeholder: "/home/agent/build.log" }));
+      field("Absolute log path on the worker", "path", { placeholder: "/home/rworker/build.log" }));
   }
   if (action === "delete") {
     const running = state.selected?.name === worker.name ? (state.detailJobs || []).filter((job) => filterTests.jobs.active(job)) : [];

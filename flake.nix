@@ -197,6 +197,7 @@
       nixosModules = {
         workerImage = {
           imports = [
+            ./nix/worker/account.nix
             ./nix/worker/disk.nix
             ./nix/worker/image.nix
           ];

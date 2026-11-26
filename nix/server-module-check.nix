@@ -56,7 +56,7 @@ let
               enable = true;
               tokenFile = "/run/secrets/web-token";
             };
-            logCache.workerUser = "agent";
+            logCache.workerUser = "rworker";
             api.https = {
               serverName = "control.example.com";
               listenAddress = "127.0.0.1";
@@ -97,7 +97,7 @@ assert services.rworker-log-cache.serviceConfig.User == "operator";
 assert services.rworker-job-events.serviceConfig.User == "operator";
 assert services.rworker-job-events.serviceConfig.SupplementaryGroups == [ "rworker" ];
 assert services."rworker-control@".environment.RWORKER_EVENT_DIRECTORY == "/var/lib/rworker-events";
-assert services.rworker-log-cache.environment.RWORKER_USER == "agent";
+assert services.rworker-log-cache.environment.RWORKER_USER == "rworker";
 assert timers.rworker-log-cache.timerConfig.OnUnitInactiveSec == "30s";
 assert sockets.rworker-builder.socketConfig.Accept;
 assert sockets.rworker-builder.socketConfig.SocketMode == "0660";

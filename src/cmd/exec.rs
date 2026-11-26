@@ -174,7 +174,7 @@ pub fn cmd_exec(ctx: &Ctx, args: &[String]) -> R {
         ctx.err(&format!("{} synced {item}", paint(ctx, "32", "✔")));
     }
 
-    let user = info["user"].as_str().unwrap_or("agent");
+    let user = crate::worker_user::login_user(info["user"].as_str(), false);
     let login = format!("{user}@{ip}");
     let mut ssh = Command::new("ssh");
     // OpenSSH joins command words with spaces before the remote shell parses

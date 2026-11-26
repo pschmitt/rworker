@@ -1,7 +1,14 @@
 set -eu
 [[ ${1:-} == log-cache-tail ]] || exit 2
 shift
-root="$HOME/.local/state/rworker/jobs"
+# The worker's job directory: $RWORKER_JOBS_DIR (set by current images), the
+# shared /var/lib/rworker/jobs, or the login account's own on older workers.
+# The shared one is group-readable for the rworker group (the operator).
+if [[ -n "${RWORKER_JOBS_DIR:-}" ]]; then root=$RWORKER_JOBS_DIR
+elif [[ -d /var/lib/rworker/jobs && -w /var/lib/rworker/jobs ]]; then root=/var/lib/rworker/jobs
+else root="$HOME/.local/state/rworker/jobs"
+fi
+if [[ "$root" == "$HOME/.local/state/rworker/jobs" ]]; then job_umask=077; else job_umask=007; fi
 [[ $# -eq 4 && "$2" =~ ^[0-9]+$ && "$4" =~ ^[0-9]+$ && "$1" =~ ^[a-zA-Z0-9][a-zA-Z0-9_.-]*$ ]] || exit 2
 dir="$root/$1"
 logfile="$dir/log"

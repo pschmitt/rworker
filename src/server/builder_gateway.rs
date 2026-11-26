@@ -28,9 +28,13 @@ fn topic(owner: &str, profile: &str) -> String {
 }
 const LEGACY_OWNER: &str = "rworker-builder@controller";
 /// Hosted leases serve Nix from an isolated store through the controller's
-/// local relay port, as the runner's build account.
-const HOSTED_USER: &str = "rworker-build";
-const HOSTED_DAEMON: &str = "/home/rworker-build/.local/bin/rworker-nix-daemon --stdio";
+/// local relay port, as the runner's login account (`hosted_daemon`).
+fn hosted_daemon(user: &str) -> String {
+    format!(
+        "{}/.local/bin/rworker-nix-daemon --stdio",
+        crate::worker_user::home(user)
+    )
+}
 const HOSTED_MAX_SECONDS: u64 = 2 * 3600;
 const HOSTED_START_SECONDS: u64 = 15 * 60;
 
@@ -464,9 +468,11 @@ fn hosted_up(
                         status["endpoint"]["host_key"].as_str(),
                     )
                 {
+                    let user =
+                        crate::worker_user::login_user(status["endpoint"]["user"].as_str(), true);
                     return Ok(json!({
                         "kind": "github", "id": id, "name": name,
-                        "ip": "127.0.0.1", "port": port, "host_key": host_key,
+                        "ip": "127.0.0.1", "port": port, "host_key": host_key, "user": user,
                         "expires_at": status["expires_at"], "owner": owner,
                         "profile": profile.name, "created_at": jiff::Timestamp::now().to_string(),
                     }));
@@ -568,14 +574,17 @@ fn session(
 
     let (ip, key) = connection(&lease)?;
     let result = match lease["port"].as_u64() {
-        Some(port) if hosted(&lease) => worker_ssh::daemon_stdio_at(
-            settings,
-            ip,
-            u16::try_from(port)?,
-            HOSTED_USER,
-            key,
-            HOSTED_DAEMON,
-        ),
+        Some(port) if hosted(&lease) => {
+            let user = crate::worker_user::login_user(lease["user"].as_str(), true);
+            worker_ssh::daemon_stdio_at(
+                settings,
+                ip,
+                u16::try_from(port)?,
+                user,
+                key,
+                &hosted_daemon(user),
+            )
+        }
         _ => worker_ssh::daemon_stdio(settings, ip, key),
     };
 

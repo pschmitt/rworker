@@ -133,7 +133,8 @@ nix build --max-jobs 0 --builders "$(rworker setup nix-builder --arch aarch64 -i
 ```
 
 A GitHub runner lease ends after at most two hours. The gateway reaches it
-through the controller's local relay port and connects as `rworker-build` to
+through the controller's local relay port and connects as the lease's login
+account (`rworker`; `rworker-build` on leases from before it was reported) to
 the runner's isolated Nix store (`rworker-nix-daemon`). Build logs of hosted
 leases are not archived.
 

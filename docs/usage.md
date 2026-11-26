@@ -114,6 +114,24 @@ the kind, pool and label, never the glyph.
 `instances`. Unique prefixes work too, for example `rworker lo` for `logs`
 and `rworker no` for `nodes`. `rworker info` is an alias for `inspect`, and `flavors` is an alias for `profiles`.
 
+## Worker account and job directory
+
+Every worker has one login account, `rworker`, with a group of the same
+name: OpenStack workers from images built on `nixosModules.workerImage`
+(its `nix/worker/account.nix`) and GitHub and GitLab leases alike. An image
+publishes the account as the Glance property `rworker_login_user`, and a
+lease's agent reports it with its endpoint; the controller records it as the
+worker's `login_user`, and the client, the log collector, the builder
+gateway and `setup nix` log in with it. Workers from older images or leases
+report none and keep their old account (`agent`, or `rworker-build` on
+leases).
+
+Jobs live in `/var/lib/rworker/jobs`, exported as `RWORKER_JOBS_DIR`: owned
+by `rworker`, setgid and writable for the `rworker` group, so other
+accounts in the group (the operator's own, `rworker.worker.jobMembers` on
+NixOS images) read and write them too. The job tools fall back to
+`~/.local/state/rworker/jobs` of the login account on workers without it.
+
 ## Jobs
 
 `start NAME --name JOB -- 'COMMAND'` runs a command in the background on the
@@ -129,9 +147,9 @@ on its own line.
 
 A control host can collect the operator’s registered logs every 30 seconds.
 Set `services.rworker.logCache.operator` to the Unix account that already
-has noninteractive SSH access to the workers. Set
-`services.rworker.logCache.workerUser = "agent"` when collecting jobs run
-as `agent` by clients on other hosts. The service keeps the files
+has noninteractive SSH access to the workers. The collector logs into each
+worker with its own account (see [Worker account and job directory](#worker-account-and-job-directory));
+`services.rworker.logCache.workerUser` overrides that for every worker. The service keeps the files
 in that account’s rworker state directory with private permissions. The
 default limits are seven days from modification, 2 GiB total, and 32 MiB
 per job. When space runs out it removes the oldest snapshots first.

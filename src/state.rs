@@ -195,7 +195,8 @@ fn write_state(ctx: &Ctx, name: &str, v: &Value) -> R {
 
 /// Remember a worker `up` just created.
 pub fn remember_created(ctx: &Ctx, name: &str, info: &Value) -> R {
-    let state = jq::merge(info, &[("user", json!("agent")), ("kind", json!("adhoc"))]);
+    let user = crate::worker_user::login_user(jq::get(info, "user").as_str(), false);
+    let state = jq::merge(info, &[("user", json!(user)), ("kind", json!("adhoc"))]);
     write_state(ctx, name, &state)?;
     let ip = jq::raw(jq::get(info, "ip"));
     let key = jq::raw(jq::get(info, "host_key"));
@@ -239,15 +240,23 @@ pub fn adopt(ctx: &Ctx, name: &str) -> R {
     if hosted_id(name).is_some() {
         return remember_hosted(ctx, name, info);
     }
-    // On ad-hoc workers agent's keys are the creator's, so other owners log
-    // in as themselves. Pool workers carry the operator's keys for agent in
-    // their image: log in as agent there, as the web console does, so both
-    // see the same jobs.
+    // Pool workers carry the operator's keys for their login account in
+    // their image, and the controller authorizes the operator's keys on the
+    // workers of the operator's devices (`OPERATOR@DEVICE`): log in with the
+    // worker's account there, as the web console does, so both see the same
+    // jobs. Other owners' ad-hoc workers only know their creator's keys, so
+    // other users log in as themselves.
     let kind = jq::get(info, "kind").as_str();
     let pool = !matches!(kind, None | Some("adhoc" | "unknown"));
+    let owner = jq::raw(jq::get(info, "owner"));
+    let operators = owner
+        .split_once('@')
+        .is_some_and(|(user, _)| user == ctx.user);
     let mut user = ctx.user.clone();
-    if pool || (kind == Some("adhoc") && jq::raw(jq::get(info, "owner")) == ctx.owner()) {
-        user = "agent".to_string();
+    if pool || (kind == Some("adhoc") && (owner == ctx.owner() || operators)) {
+        let lease = hosted_id(name).is_some();
+        user =
+            crate::worker_user::login_user(jq::get(info, "login_user").as_str(), lease).to_string();
     }
     fs::create_dir_all(&ctx.state_dir).map_err(|_| Fail(1))?;
     let state = json!({
@@ -333,6 +342,13 @@ fn ssh_port_open(ip: &str, timeout: Duration) -> bool {
 /// one overlay can be down while the other works, so probe SSH on each
 /// known address (the recorded one first) and use the first that answers.
 /// Falls back to the recorded address, so ssh reports its own error.
+/// The account to log into a worker with: what this host remembered of it,
+/// else the legacy account of its kind.
+pub fn login_user(ctx: &Ctx, name: &str) -> String {
+    let remembered = worker_field(ctx, name, "user").ok();
+    crate::worker_user::login_user(remembered.as_deref(), hosted_id(name).is_some()).to_owned()
+}
+
 pub fn worker_ip(ctx: &Ctx, name: &str) -> R<String> {
     worker_field(ctx, name, "ip").map_err(|_| Fail(1))?;
     let mut state = read_state(ctx, name).map_err(|_| Fail(1))?;

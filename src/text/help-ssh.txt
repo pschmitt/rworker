@@ -8,16 +8,17 @@ name goes to ssh, so options and a command both work.
 Without a timeout, interrupt it with Ctrl-C.
 It also works immediately after NAME. The remote command runs only once.
 
-Default user: agent on ad-hoc workers this host created and on pool workers,
-yourself on other owners' ad-hoc workers (RWORKER_USER overrides). Workers
-this host does not know yet are looked up on the control host.
+Default user: the worker's account (rworker; agent or rworker-build on older
+workers) on ad-hoc workers of your own devices and on pool workers, yourself
+on other owners' ad-hoc workers (RWORKER_USER overrides). Workers this host
+does not know yet are looked up on the control host.
 
 -i FILE (--identity FILE) logs in with that private key only, as ssh -i with
 IdentitiesOnly does; it applies to existing workers, not to --create.
 
 --create makes a new worker and logs in, like `up --ssh`; up's options
 (--ttl, --flavor, --disk, --profile, --arch, --queue-timeout, --scratch, --topic) go with it, in any order. -l USER picks the
-login user, as with ssh (agent by default on a new worker). --rm deletes the
+login user, as with ssh (the worker's account, rworker, by default). --rm deletes the
 new worker when SSH exits, including after an unsuccessful login.
 The session shows up as an `ssh` job with the worker's topic, like exec's
 job, and is recorded in the job's log where the worker has script(1).

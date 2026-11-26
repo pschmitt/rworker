@@ -27,7 +27,12 @@ ARCHITECTURES = {"linux-arm64": "aarch64", "linux-x64": "x86_64"}
 ARCHITECTURES.update(dict.fromkeys(GITLAB_PROFILES, "x86_64"))
 LEASE_IMAGE = Path("/etc/rworker/lease-image").is_file()
 AUDIENCE = "rworker-job"
-BUILD_USER = "rworker-build"
+# The lease's login account, the same as on every rworker worker. The
+# controller learns it from the endpoint the agent reports.
+BUILD_USER = "rworker"
+# Shared job directory of the rworker job tools (src/jobs.sh), group-owned by
+# the login account's group.
+JOBS_DIR = "/var/lib/rworker/jobs"
 NIX_BUILDER_PATH = ".local/bin/rworker-nix-daemon"
 # Where `rworker setup nix` and `setup niks3-token` put the client's Nix
 # settings and the lease's niks3 token, relative to the build user's home.
@@ -130,6 +135,11 @@ def prepare_build_user():
             privileged("useradd", "--user-group", "--create-home", "--shell", "/bin/bash", BUILD_USER),
             check=True,
         )
+    # setgid, so jobs created in it belong to the group too.
+    subprocess.run(
+        privileged("install", "-d", "-m", "2770", "-o", BUILD_USER, "-g", BUILD_USER, JOBS_DIR),
+        check=True,
+    )
     device = Path("/dev/kvm")
     if not device.is_char_device():
         return []
@@ -293,7 +303,7 @@ def prepare_sshd(paths, public_key, proxy_environment=()):
         limits = paths / "limits"
         limits.write_text(f"{BUILD_USER} - stack 65536\n")
         subprocess.run(
-            privileged("install", "-m", "0644", limits, "/etc/security/limits.d/99-rworker-build.conf"),
+            privileged("install", "-m", "0644", limits, "/etc/security/limits.d/99-rworker.conf"),
             check=True,
         )
     # The runner image may mark newly created passwordless accounts locked.
@@ -328,7 +338,7 @@ AllowStreamLocalForwarding no
 X11Forwarding no
 PermitTunnel no
 PermitUserEnvironment no
-SetEnv XDG_CONFIG_HOME={home}/.config PATH={home}/.local/bin:/nix/var/nix/profiles/default/bin:/usr/local/bin:/usr/bin:/bin{session}{trust}{proxies}
+SetEnv XDG_CONFIG_HOME={home}/.config RWORKER_JOBS_DIR={JOBS_DIR} PATH={home}/.local/bin:/nix/var/nix/profiles/default/bin:/usr/local/bin:/usr/bin:/bin{session}{trust}{proxies}
 AcceptEnv LANG LC_*
 Subsystem sftp internal-sftp
 """
@@ -370,6 +380,7 @@ def start_ssh_worker(url, token, assignment, mesh):
                 endpoint = {
                     "port": int(port),
                     "host_key": " ".join(host_key.with_suffix(".pub").read_text().split()[:2]),
+                    "user": BUILD_USER,
                 }
                 if update_lease(f"{url}/ready", token, endpoint, expires_at) is None:
                     return

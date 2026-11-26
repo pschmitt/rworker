@@ -20,6 +20,7 @@ mod state;
 mod table;
 mod time;
 mod tui;
+mod worker_user;
 
 use ctx::{Ctx, Fail, R};
 

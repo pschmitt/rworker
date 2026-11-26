@@ -207,10 +207,6 @@ fn render_conf(
     conf
 }
 
-/// The account of a CI lease and where it keeps what `setup nix` pushes
-/// (under its home, 0700 directory, 0600 files).
-const LEASE_USER: &str = "rworker-build";
-
 /// Shell for a lease: write stdin plus `tail` to `$HOME/.config/rworker-nix/FILE`.
 fn lease_write(file: &str, tail: &str) -> String {
     format!(
@@ -219,7 +215,7 @@ fn lease_write(file: &str, tail: &str) -> String {
 }
 
 /// What a GitHub lease adds to the pushed nix.conf for the cache: sessions
-/// use the lease's own store (in the build user's home, see
+/// use the lease's own store (in the login account's home, see
 /// scripts/github-job-agent.py) so the S3 substituters are trusted and read
 /// the AWS credentials of the session. The system daemon would ignore the
 /// substituters of an untrusted user.
@@ -248,7 +244,7 @@ fn push_lease(
         ctx.err(&format!("No pinned host key or relay known for {name}"));
         return Err(Fail(1));
     }
-    let login = format!("{LEASE_USER}@{name}");
+    let login = format!("{}@{name}", state::login_user(ctx, name));
     for _ in 1..=3 {
         if super::up::probe(&opts_ssh, &login) {
             break;
@@ -326,7 +322,7 @@ pub fn install_niks3_token(ctx: &Ctx, name: &str, token: &str, server_url: &str)
     if opts_ssh.is_empty() {
         return Err(Fail(1));
     }
-    let login = format!("{LEASE_USER}@{name}");
+    let login = format!("{}@{name}", state::login_user(ctx, name));
     let url = proc::shell_quote(server_url);
     let remote = format!(
         "umask 077; d=\"$HOME/.config/rworker-niks3\"; mkdir -p \"$d\" && chmod 0700 \"$d\" && printf '%s\\n' {url} > \"$d/server-url\" && cat > \"$d/token.new\" && mv -f \"$d/token.new\" \"$d/token\""
@@ -467,7 +463,7 @@ pub fn push(ctx: &Ctx, name: &str, dry: bool, opts: &Opts) -> R<String> {
     }
     let ip = state::worker_ip(ctx, name)?;
     let opts_ssh = state::ssh_opts(ctx, name);
-    let login = format!("agent@{ip}");
+    let login = format!("{}@{ip}", state::login_user(ctx, name));
     // NetBird may still be setting up the route to a fresh worker.
     for _ in 1..=10 {
         if super::up::probe(&opts_ssh, &login) {

@@ -1139,7 +1139,12 @@ pub fn cmd_ps(ctx: &Ctx, args: &[String]) -> R {
             let login = if target.contains('@') {
                 target.clone()
             } else if kind == "adhoc" {
-                format!("agent@{worker}")
+                // The worker's account, from what this host remembered of it.
+                let user = crate::state::worker_field(ctx, worker, "user")
+                    .ok()
+                    .filter(|user| !user.is_empty())
+                    .unwrap_or_else(|| crate::worker_user::LEGACY_OPENSTACK_USER.to_owned());
+                format!("{user}@{worker}")
             } else {
                 worker.clone()
             };

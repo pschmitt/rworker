@@ -657,15 +657,18 @@ pub fn cmd_builder(ctx: &Ctx, args: &[String]) -> R {
         };
         (
             format!(
-                "ssh-ng://rworker-build@{name}?remote-program=/home/rworker-build/.local/bin/rworker-nix-daemon {} {identity} 1 1 {features} - {key}",
+                "ssh-ng://{user}@{name}?remote-program={home}/.local/bin/rworker-nix-daemon {} {identity} 1 1 {features} - {key}",
                 profile.system,
+                user = state::login_user(ctx, name),
+                home = crate::worker_user::home(&state::login_user(ctx, name)),
             ),
             Some(format!("Host {name}\n  ProxyCommand {proxy}\n")),
         )
     } else {
         (
             format!(
-                "ssh-ng://agent@{ip} x86_64-linux {identity} 16 1 nixos-test,benchmark,big-parallel,kvm - {key}"
+                "ssh-ng://{user}@{ip} x86_64-linux {identity} 16 1 nixos-test,benchmark,big-parallel,kvm - {key}",
+                user = state::login_user(ctx, name),
             ),
             None,
         )

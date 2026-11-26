@@ -100,7 +100,7 @@ def verify(binary, root, web_enabled):
     (archive / "archive-only").write_text("fixture cached log\n")
     (root / "rworker" / "example-worker.json").write_text(json.dumps({
         "ip": "127.0.0.1", "ips": {"netbird": "127.0.0.1"},
-        "host_key": "fixture-host-key", "user": "agent",
+        "host_key": "fixture-host-key", "user": "rworker",
     }))
     env.update(RWORKER_WEB_TOKEN_FILE=str(web_token), RWORKER_WEB_ORIGIN=origin,
                RWORKER_WEB_PROXY_USER="operator", XDG_STATE_HOME=str(root),

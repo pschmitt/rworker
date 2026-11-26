@@ -351,7 +351,7 @@ fn hosted_up(
                     let output = json!({
                         "name": name,
                         "ip": name,
-                        "user": "rworker-build",
+                        "user": crate::worker_user::login_user(lease["endpoint"]["user"].as_str(), true),
                         "kind": "adhoc",
                         "provider": forge.key(),
                         "profile": profile.name,
@@ -826,7 +826,10 @@ fn up_attempt(
             "IP",
             format!("{} {}", paint(ctx, "36", &ip), paint(ctx, "2", "(NetBird)")),
         ),
-        ("User", "agent".to_string()),
+        (
+            "User",
+            crate::worker_user::login_user(get(&info, "user").as_str(), false).to_string(),
+        ),
         ("Profile", jq::or(get(&info, "profile"), "standard")),
         (
             "Flavor",
@@ -851,7 +854,7 @@ fn up_attempt(
     print_summary(ctx, &name, started, &rows);
     if login {
         let user = if login_user.is_empty() {
-            "agent"
+            crate::worker_user::login_user(get(&info, "user").as_str(), false)
         } else {
             &login_user
         };
@@ -902,7 +905,7 @@ pub fn provision_for_ssh(ctx: &Ctx, args: &[String], remove: bool) -> R {
     let user = metadata["ssh_user"]
         .as_str()
         .or(metadata["user"].as_str())
-        .unwrap_or("agent");
+        .unwrap_or(crate::worker_user::LEGACY_OPENSTACK_USER);
     if remove {
         crate::signals::trap();
     }

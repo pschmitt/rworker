@@ -2,14 +2,14 @@ Usage: __ME__ exec [UP_OPTIONS] [--sync SRC[:DEST]]... [--fetch REMOTE[:LOCAL]].
           [--keep|--keep-on-failure] [--] CMD...
 
 One-shot build: create an ad-hoc worker, optionally copy directories to it,
-run CMD there as agent (live output; its exit code becomes ours), copy
+run CMD there as rworker (live output; its exit code becomes ours), copy
 results back and delete the worker again - also on errors and Ctrl-C.
 Status messages go to stderr, the command's output to stdout.
 
   --ttl, --flavor, --disk, --profile, --arch, --queue-timeout, --scratch, --topic, --agent-id, --nix-cache, --no-nix-cache, --nix-auth, --no-nix-auth, --no-niks3-token, --no-credentials   as for up
   --sync SRC[:DEST]      rsync SRC to the worker before running (DEST
                          defaults to SRC's basename); repeatable
-  --fetch REMOTE[:LOCAL] rsync REMOTE (relative to agent's home) back
+  --fetch REMOTE[:LOCAL] rsync REMOTE (relative to rworker's home) back
                          afterwards, even if CMD failed; repeatable
   --keep                 do not delete the worker
   --keep-on-failure      keep it only when CMD fails (for debugging)

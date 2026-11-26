@@ -390,7 +390,7 @@ in
       workerUser = lib.mkOption {
         type = lib.types.nullOr lib.types.str;
         default = null;
-        example = "agent";
+        example = "rworker";
         description = "Override the remote worker login for collection when jobs run under a separate account.";
       };
       retentionDays = lib.mkOption {

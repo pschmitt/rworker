@@ -84,6 +84,26 @@ pub(super) struct Disk {
 pub(super) struct Endpoint {
     port: u16,
     host_key: String,
+    /// The account the runner set up for the lease; agents before it was
+    /// reported use `rworker-build`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    user: Option<String>,
+}
+
+impl Endpoint {
+    fn login_user(&self) -> &str {
+        crate::worker_user::login_user(self.user.as_deref(), true)
+    }
+}
+
+/// A POSIX account name a runner may report.
+fn valid_user(user: &str) -> bool {
+    let mut chars = user.chars();
+    user.len() <= 32
+        && chars
+            .next()
+            .is_some_and(|c| c.is_ascii_lowercase() || c == '_')
+        && chars.all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || matches!(c, '_' | '-'))
 }
 
 #[derive(Clone, Copy, PartialEq, Serialize, Deserialize)]
@@ -584,7 +604,8 @@ fn provider_inventory(settings: &Value, forge: Forge) -> Result<Vec<Value>, Stri
                     LeaseState::Cancelling => "DELETING",
                     _ => "BUILD",
                 },
-                "user": "rworker-build",
+                "user": lease.endpoint.as_ref().map_or(crate::worker_user::WORKER_USER, Endpoint::login_user),
+                "login_user": lease.endpoint.as_ref().map_or(crate::worker_user::WORKER_USER, Endpoint::login_user),
                 "owner": lease.owner,
                 "topic": lease.topic,
                 "host_key": lease.endpoint.as_ref().map(|endpoint| &endpoint.host_key),
@@ -699,6 +720,10 @@ pub(super) fn agent_update(
         if endpoint.port < 1024
             || !super::worker_ssh::valid_public_key(&endpoint.host_key)
             || !endpoint.host_key.starts_with("ssh-ed25519 ")
+            || endpoint
+                .user
+                .as_deref()
+                .is_some_and(|user| !valid_user(user))
         {
             return Err("Invalid SSH endpoint".into());
         }

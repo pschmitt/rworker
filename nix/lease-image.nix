@@ -39,9 +39,9 @@ dockerTools.buildLayeredImage {
     rsync
   ];
   extraCommands = ''
-    mkdir -p etc/nix etc/ssh etc/ssl/certs etc/rworker home/rworker-build root tmp var/empty usr/sbin
+    mkdir -p etc/nix etc/ssh etc/ssl/certs etc/rworker home/rworker root tmp var/empty usr/sbin
     touch etc/rworker/lease-image
-    chmod 0700 root home/rworker-build
+    chmod 0700 root home/rworker
     chmod 1777 tmp
     chmod 0555 var/empty
     ln -s ${openssh}/bin/sshd usr/sbin/sshd
@@ -50,7 +50,7 @@ dockerTools.buildLayeredImage {
     ln -s ca-bundle.crt etc/ssl/certs/ca-certificates.crt
     cat > etc/passwd <<'USERS'
     root:x:0:0:root:/root:/bin/bash
-    rworker-build:x:1000:1000:Worker:/home/rworker-build:/bin/bash
+    rworker:x:1000:1000:Worker:/home/rworker:/bin/bash
     sshd:x:1001:1001:SSH privilege separation:/var/empty:/bin/sh
     nixbld1:x:1101:1100:Nix build user:/var/empty:/bin/sh
     nixbld2:x:1102:1100:Nix build user:/var/empty:/bin/sh
@@ -59,13 +59,13 @@ dockerTools.buildLayeredImage {
     USERS
     cat > etc/group <<'GROUPS'
     root:x:0:
-    rworker-build:x:1000:
+    rworker:x:1000:
     sshd:x:1001:
     nixbld:x:1100:nixbld1,nixbld2,nixbld3,nixbld4
     GROUPS
     cat > etc/shadow <<'SHADOW'
     root:!:1:0:99999:7:::
-    rworker-build:*:1:0:99999:7:::
+    rworker:*:1:0:99999:7:::
     sshd:!:1:0:99999:7:::
     SHADOW
     chmod 0600 etc/shadow
@@ -79,12 +79,16 @@ dockerTools.buildLayeredImage {
     experimental-features = nix-command flakes
     build-users-group = nixbld
     sandbox = false
-    allowed-users = root rworker-build
+    allowed-users = root rworker
     ssl-cert-file = /etc/ssl/certs/ca-bundle.crt
     NIX
   '';
   fakeRootCommands = ''
-    chown 1000:1000 home/rworker-build
+    chown 1000:1000 home/rworker
+    # The shared job directory of the rworker job tools, setgid for the group.
+    mkdir -p var/lib/rworker/jobs
+    chown 1000:1000 var/lib/rworker var/lib/rworker/jobs
+    chmod 2770 var/lib/rworker/jobs
   '';
   config = {
     Cmd = [ "/bin/bash" ];
@@ -92,6 +96,7 @@ dockerTools.buildLayeredImage {
       "HOME=/root"
       "PATH=/bin"
       "SSL_CERT_FILE=/etc/ssl/certs/ca-bundle.crt"
+      "RWORKER_JOBS_DIR=/var/lib/rworker/jobs"
     ];
     Labels = {
       "org.opencontainers.image.source" = "https://github.com/pschmitt/rworker";

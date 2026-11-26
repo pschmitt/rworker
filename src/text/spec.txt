@@ -94,7 +94,7 @@ flag setup --no-auth leave out the access-tokens
 flag setup --auth-host=host only the token of this host (repeatable)
 flag setup --dry-run only show what would be pushed
 flag setup -n short for --dry-run
-flag up -l=user log in as this user (with --ssh; default agent)
+flag up -l=user log in as this user (with --ssh; default the worker's account, rworker)
 flag up --topic=topic what the worker is for (none unless given)
 flag up --profile=profile worker profile (including gh-aarch64, gh-x86_64, gl-x86_64 and gl-x86_64-lease)
 flag up --arch=arch try profiles matching an architecture
@@ -179,7 +179,7 @@ values id
 values id-re
 values agent claude codex agy opencode gemini copilot shell nixbot
 values agent-re claude codex agy opencode gemini copilot shell nixbot
-values user agent pschmitt nix-remote-builder
+values user rworker pschmitt nix-remote-builder
 values interval 2 5 10 30
 dynamic profile topic topic-re agent agent-re id id-re
 worker down extend topic claim ssh sync prune inspect start jobs ps logs

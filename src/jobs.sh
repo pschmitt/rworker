@@ -1,6 +1,13 @@
 set -eu
-umask 077
-root="$HOME/.local/state/rworker/jobs"
+# The worker's job directory: $RWORKER_JOBS_DIR (set by current images), the
+# shared /var/lib/rworker/jobs, or the login account's own on older workers.
+# The shared one is group-readable for the rworker group (the operator).
+if [[ -n "${RWORKER_JOBS_DIR:-}" ]]; then root=$RWORKER_JOBS_DIR
+elif [[ -d /var/lib/rworker/jobs && -w /var/lib/rworker/jobs ]]; then root=/var/lib/rworker/jobs
+else root="$HOME/.local/state/rworker/jobs"
+fi
+if [[ "$root" == "$HOME/.local/state/rworker/jobs" ]]; then job_umask=077; else job_umask=007; fi
+umask "$job_umask"
 mkdir -p "$root"
 action=$1
 shift

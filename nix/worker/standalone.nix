@@ -1,4 +1,4 @@
-{ pkgs, ... }:
+{ config, pkgs, ... }:
 {
   boot.kernelParams = [
     "console=tty0"
@@ -6,11 +6,6 @@
   ];
 
   networking.useNetworkd = true;
-
-  users.users.agent = {
-    isNormalUser = true;
-    shell = pkgs.bash;
-  };
 
   services = {
     cloud-init = {
@@ -32,7 +27,7 @@
           distro = "nixos";
           network.renderers = [ "networkd" ];
           default_user = {
-            name = "agent";
+            name = config.rworker.worker.user;
             lock_passwd = true;
           };
         };
@@ -45,7 +40,7 @@
         PasswordAuthentication = false;
         KbdInteractiveAuthentication = false;
         PermitRootLogin = "no";
-        AllowUsers = [ "agent" ];
+        AllowUsers = [ config.rworker.worker.user ];
       };
     };
   };
@@ -55,7 +50,6 @@
       "nix-command"
       "flakes"
     ];
-    trusted-users = [ "agent" ];
   };
 
   environment.systemPackages = [
