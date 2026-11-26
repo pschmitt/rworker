@@ -256,6 +256,9 @@ pub(super) struct LogDivider {
     pub direction: Direction,
 }
 
+/// How close two clicks on a row must be to count as a double-click.
+const DOUBLE_CLICK: Duration = Duration::from_millis(400);
+
 pub struct App {
     pub control_host: String,
     pub owner: String,
@@ -266,6 +269,8 @@ pub struct App {
     history_loading: bool,
     pub table: TableState,
     pub mouse_table: Option<Rect>,
+    /// View depth, row and time of the last click on a table row.
+    last_click: Option<(usize, usize, Instant)>,
     pub(super) mouse_profile_create: Option<Rect>,
     pub mouse_text: Option<Rect>,
     pub(super) log_divider: Option<LogDivider>,
@@ -750,7 +755,24 @@ impl App {
             };
             if index < count {
                 state.select(Some(index));
+                if delta == 0 {
+                    self.click_row(index);
+                }
             }
+        }
+    }
+
+    /// A second click on the same row acts like Enter.
+    fn click_row(&mut self, index: usize) {
+        let depth = self.stack.len();
+        let double = self
+            .last_click
+            .take()
+            .is_some_and(|(d, row, at)| d == depth && row == index && at.elapsed() <= DOUBLE_CLICK);
+        if double {
+            self.key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+        } else {
+            self.last_click = Some((depth, index, Instant::now()));
         }
     }
 
@@ -1026,6 +1048,7 @@ impl App {
     }
 
     fn key(&mut self, k: KeyEvent) {
+        self.last_click = None;
         let ctrl = k.modifiers.contains(KeyModifiers::CONTROL);
         // Legacy terminals encode Alt+Shift+Q as Escape followed by Q.
         let alt_shift_q = k.modifiers.contains(KeyModifiers::ALT)
@@ -1825,6 +1848,7 @@ pub(super) fn run(ctx: &Ctx, interval: Duration, start: Start) -> std::io::Resul
         history_loading: false,
         table: TableState::default(),
         mouse_table: None,
+        last_click: None,
         mouse_profile_create: None,
         mouse_text: None,
         log_divider: None,
