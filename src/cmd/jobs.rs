@@ -51,6 +51,11 @@ pub fn jobs_remote(ctx: &Ctx, args: &[String]) -> R {
 /// `start WORKER [OPTIONS] -- COMMAND`. An explicit `--topic ''` counts as
 /// a topic: no warning.
 pub fn cmd_start(ctx: &Ctx, args: &[String]) -> R {
+    let (args, wait) = super::files::take_wait(args);
+    if let Some(timeout) = wait {
+        let worker = args.first().cloned().unwrap_or_default();
+        super::files::wait_for_worker(ctx, &[worker], timeout)?;
+    }
     if !args
         .iter()
         .take_while(|arg| *arg != "--")
@@ -59,7 +64,7 @@ pub fn cmd_start(ctx: &Ctx, args: &[String]) -> R {
         ctx.err(&format!("{} no topic provided", paint::warn_mark(ctx)));
     }
     let mut remote = vec!["start".to_string()];
-    remote.extend_from_slice(args);
+    remote.extend_from_slice(&args);
     jobs_remote(ctx, &remote)
 }
 

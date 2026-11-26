@@ -1,4 +1,4 @@
-Usage: __ME__ cp [USER@]NAME:REMOTE LOCAL
+Usage: __ME__ cp [--wait [SECONDS]] [USER@]NAME:REMOTE LOCAL
        __ME__ cp LOCAL [USER@]NAME:REMOTE
 
 Copy a file or directory from a worker to this host, or the other way
@@ -9,3 +9,6 @@ Examples:
   __ME__ cp adhoc-1234abcd:rbw/target/release/rbw ./rbw
   __ME__ cp adhoc-1234abcd:build/logs/ ./logs/
   __ME__ cp ./patch.diff pschmitt@adhoc-1234abcd:/tmp/
+
+--wait retries until the worker accepts SSH; optional SECONDS sets a timeout.
+Without a timeout, interrupt it with Ctrl-C.

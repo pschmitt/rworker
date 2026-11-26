@@ -1,8 +1,12 @@
-Usage: __ME__ ssh [-l USER | USER@] [-i FILE]NAME [SSH_ARGS...]
+Usage: __ME__ ssh [--wait [SECONDS]] [-l USER | USER@] [-i FILE]NAME [SSH_ARGS...]
        __ME__ ssh --create [--rm] [-l USER] [UP_OPTIONS]
 
 SSH to a worker over NetBird with its pinned host key. Everything after the
 name goes to ssh, so options and a command both work.
+
+--wait keeps trying until the worker accepts SSH; optional SECONDS sets a timeout.
+Without a timeout, interrupt it with Ctrl-C.
+It also works immediately after NAME. The remote command runs only once.
 
 Default user: agent on ad-hoc workers this host created and on pool workers,
 yourself on other owners' ad-hoc workers (RWORKER_USER overrides). Workers

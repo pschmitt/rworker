@@ -190,6 +190,14 @@ fn resolve_args(ctx: &Ctx, action: &str, args: &[String]) -> R<Vec<String>> {
         if arg == "--" {
             break;
         }
+        if arg == "--wait"
+            && out
+                .get(i + 1)
+                .is_some_and(|value| value.parse::<u64>().is_ok())
+        {
+            skip_next = true;
+            continue;
+        }
         if arg == "--owner" || value_flags.contains(&arg.as_str()) {
             skip_next = true;
             continue;
@@ -526,6 +534,14 @@ fn main() {
     signals::default_sigpipe();
     let argv: Vec<String> = std::env::args().skip(1).collect();
     let ctx = Ctx::from_env();
+    if let [action, args @ ..] = argv.as_slice()
+        && action == "__wait-worker"
+    {
+        std::process::exit(match cmd::files::wait_for_worker(&ctx, args, None) {
+            Ok(()) => 0,
+            Err(Fail(code)) => code,
+        });
+    }
     #[cfg(feature = "web")]
     if let [action, worker] = argv.as_slice()
         && action == "__web-ssh"

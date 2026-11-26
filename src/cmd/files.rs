@@ -183,18 +183,134 @@ pub fn web_ssh(ctx: &Ctx, worker: &str) -> R {
     Err(Fail(1))
 }
 
+pub(super) fn take_wait(args: &[String]) -> (Vec<String>, Option<Option<u64>>) {
+    let mut args = args.to_vec();
+    let mut i = 0;
+    let mut wait = None;
+    let mut after_target = false;
+    while i < args.len() {
+        if args[i] == "--wait" {
+            args.remove(i);
+            let seconds = args.get(i).and_then(|arg| arg.parse::<u64>().ok());
+            if seconds.is_some() {
+                args.remove(i);
+            }
+            wait = Some(seconds);
+            if after_target {
+                break;
+            }
+        } else if matches!(args[i].as_str(), "-l" | "-i" | "--identity") {
+            i += 2;
+        } else {
+            // The flag may also appear immediately after the target.
+            i += 1;
+            after_target = true;
+            if args.get(i).is_none_or(|arg| arg != "--wait") {
+                break;
+            }
+        }
+    }
+    (args, wait)
+}
+
+pub(crate) fn wait_for_worker(ctx: &Ctx, args: &[String], timeout: Option<u64>) -> R {
+    if let Some(seconds) = timeout {
+        if seconds == 0 {
+            ctx.err("Timed out waiting for worker to accept SSH");
+            return Err(Fail(1));
+        }
+        let exe = std::env::current_exe().map_err(|error| {
+            ctx.err(&format!("Cannot locate rworker: {error}"));
+            Fail(1)
+        })?;
+        use std::os::unix::process::CommandExt;
+        crate::signals::trap();
+        let mut child = Command::new(exe)
+            .arg("__wait-worker")
+            .args(args)
+            .process_group(0)
+            .spawn()
+            .map_err(|error| {
+                ctx.err(&format!("Cannot start SSH wait: {error}"));
+                Fail(1)
+            })?;
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(seconds);
+        loop {
+            if let Some(status) = child.try_wait().map_err(|_| Fail(1))? {
+                return crate::ctx::status(proc::code_of(status));
+            }
+            let signal = crate::signals::pending();
+            if signal.is_some() || std::time::Instant::now() >= deadline {
+                // SAFETY: the child was started as the leader of this process group.
+                unsafe { libc::kill(-(child.id() as i32), libc::SIGKILL) };
+                let _ = child.wait();
+                if let Some(signal) = signal {
+                    return Err(Fail(128 + signal));
+                }
+                ctx.err("Timed out waiting for worker to accept SSH");
+                return Err(Fail(1));
+            }
+            std::thread::sleep(std::time::Duration::from_millis(50));
+        }
+    }
+    loop {
+        if let Some(signal) = crate::signals::pending() {
+            return Err(Fail(128 + signal));
+        }
+        match ssh_command(ctx, args) {
+            Ok(probe) => {
+                let mut check = Command::new(probe.get_program());
+                check
+                    .args(["-o", "ConnectTimeout=5"])
+                    .args(probe.get_args())
+                    .arg("true")
+                    .stdin(std::process::Stdio::null())
+                    .stdout(std::process::Stdio::null())
+                    .stderr(std::process::Stdio::null());
+                if check
+                    .status()
+                    .map_err(|error| {
+                        ctx.err(&format!("ssh: {error}"));
+                        Fail(127)
+                    })?
+                    .success()
+                {
+                    break;
+                }
+            }
+            Err(Fail(2)) => return Err(Fail(2)),
+            Err(_) => {}
+        }
+        ctx.err("Waiting for worker to accept SSH...");
+        crate::signals::sleep(3.0);
+    }
+    Ok(())
+}
+
 pub fn cmd_ssh(ctx: &Ctx, args: &[String]) -> R {
-    let mut cmd = ssh_command(ctx, args)?;
+    let (args, wait) = take_wait(args);
+    if let Some(timeout) = wait {
+        let mut end = 0;
+        while end < args.len() && matches!(args[end].as_str(), "-l" | "-i" | "--identity") {
+            end += 2;
+        }
+        wait_for_worker(ctx, &args[..(end + 1).min(args.len())], timeout)?;
+    }
+    let mut cmd = ssh_command(ctx, &args)?;
     crate::ctx::status(proc::run(ctx, &mut cmd)?)
 }
 
 pub fn cmd_sync(ctx: &Ctx, args: &[String]) -> R {
+    let (args, wait) = take_wait(args);
     let target = args.first().cloned().unwrap_or_default();
     let src = args.get(1).cloned().unwrap_or_default();
     let mut dest = args.get(2).cloned().unwrap_or_default();
     if target.is_empty() || src.is_empty() {
         crate::help::show(ctx, "sync");
         return Err(Fail(2));
+    }
+    if let Some(timeout) = wait {
+        wait_for_worker(ctx, std::slice::from_ref(&target), timeout)?;
     }
     let t = split_target(ctx, &target).map_err(|_| Fail(2))?;
     let ip = state::worker_ip(ctx, &t.name)?;
@@ -268,6 +384,7 @@ pub fn is_remote_spec(s: &str) -> bool {
 }
 
 pub fn cmd_cp(ctx: &Ctx, args: &[String]) -> R {
+    let (args, wait) = take_wait(args);
     let src = args.first().cloned().unwrap_or_default();
     let dst = args.get(1).cloned().unwrap_or_default();
     if src.is_empty() || dst.is_empty() || args.get(2).is_some_and(|a| !a.is_empty()) {
@@ -289,6 +406,9 @@ pub fn cmd_cp(ctx: &Ctx, args: &[String]) -> R {
         local = format!("./{local}");
     }
     let (target, path) = remote.split_once(':').unwrap_or((&remote, ""));
+    if let Some(timeout) = wait {
+        wait_for_worker(ctx, &[target.to_owned()], timeout)?;
+    }
     let t = split_target(ctx, target).map_err(|_| Fail(2))?;
     let ip = state::worker_ip(ctx, &t.name)?;
     let user = target_user(ctx, &t).map_err(|_| Fail(1))?;
@@ -315,4 +435,35 @@ pub fn cmd_cp(ctx: &Ctx, args: &[String]) -> R {
         paint::ok(ctx, &format!("copied {src} to {dst}"));
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod ssh_wait_tests {
+    use super::take_wait;
+
+    #[test]
+    fn wait_is_only_consumed_before_the_remote_command() {
+        let strings = |args: &[&str]| args.iter().map(|s| (*s).to_owned()).collect::<Vec<_>>();
+        for args in [
+            vec!["--wait", "-l", "agent", "worker", "echo", "--wait"],
+            vec!["-l", "agent", "worker", "--wait", "echo", "--wait"],
+        ] {
+            let (remaining, wait) = take_wait(&strings(&args));
+            assert_eq!(wait, Some(None));
+            assert_eq!(
+                remaining,
+                strings(&["-l", "agent", "worker", "echo", "--wait"])
+            );
+        }
+        assert_eq!(
+            take_wait(&strings(&["--wait", "60", "worker"])),
+            (strings(&["worker"]), Some(Some(60)))
+        );
+        assert_eq!(
+            take_wait(&strings(&["worker", "--wait", "60", "echo"])),
+            (strings(&["worker", "echo"]), Some(Some(60)))
+        );
+        let args = strings(&["worker", "echo", "--wait"]);
+        assert_eq!(take_wait(&args), (args, None));
+    }
 }

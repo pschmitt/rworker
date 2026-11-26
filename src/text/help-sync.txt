@@ -1,5 +1,8 @@
-Usage: __ME__ sync [USER@]NAME SRC [DEST]
+Usage: __ME__ sync [--wait [SECONDS]] [USER@]NAME SRC [DEST]
 
 rsync the directory SRC to the worker (DEST defaults to SRC's basename in
 the user's home). Mirrors with --delete and skips target/, .direnv/ and
 result.
+
+--wait retries until the worker accepts SSH; optional SECONDS sets a timeout.
+Without a timeout, interrupt it with Ctrl-C.

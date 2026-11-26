@@ -119,6 +119,7 @@ flag exec --sync=path copy a directory to the worker first (SRC[:DEST])
 flag exec --fetch=path copy a path back afterwards (REMOTE[:LOCAL])
 flag exec --keep keep the worker afterwards
 flag exec --keep-on-failure keep the worker if the command fails
+flag ssh --wait wait until the worker accepts SSH
 flag ssh --create create a worker first (same as up --ssh; up's options follow)
 flag ssh --rm delete the newly created worker after SSH exits
 flag ssh --profile=profile worker image profile when creating
@@ -190,3 +191,7 @@ flag image --name=name set the OpenStack image name
 flag image --tag=tag set an OpenStack image tag
 flag image --cloud=cloud select a clouds.yaml entry
 flag image --project=project set the OpenStack image owner project
+
+flag sync --wait wait until the worker accepts SSH
+flag cp --wait wait until the worker accepts SSH
+flag start --wait wait until the worker accepts SSH
