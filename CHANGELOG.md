@@ -2,6 +2,8 @@
 
 ## 0.1.0 (unreleased)
 
+- Workers leased by one of the operator's devices (owner `OPERATOR@DEVICE`, for example a phone's `nixpp` build) also accept the operator's client keys from the server module's `services.rworker.operatorKeys` (`owner`, `publicKeys`), restricted like the console key. `jobs`, `logs` and `ssh` from any of the operator's workstations then reach them; they failed with "Could not list jobs" before.
+
 - `ssh`, `sync`, `cp` and `start` accept `--wait` to wait for a booting worker and retry SSH until it is reachable, with an optional timeout in seconds.
 
 - The NixOS server module can mint the GitHub Actions credential itself: with `services.rworker.githubActions.app` (`idFile`, `privateKeyFile`, `repository`) it installs `rworker-github-token.service` and its timer, which exchange a GitHub App key for a repository-scoped `actions: write` installation token every 20 minutes and retry failures every 30 s. Set the runtime JSON's `githubActions.tokenFile` to `app.tokenFile`. See [GitHub Actions workers](docs/github-actions.md#authentication).

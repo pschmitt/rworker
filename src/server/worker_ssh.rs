@@ -60,6 +60,67 @@ pub(super) fn web_worker_key(owner: &str, existing: &[&str]) -> Result<Option<St
     restrict_web_key(&key, existing)
 }
 
+/// The operator's own client keys (`RWORKER_OPERATOR_KEYS_FILE`, one key per
+/// line) for workers owned by one of the operator's devices
+/// (`RWORKER_OPERATOR_KEYS_OWNER@DEVICE`), so `jobs`, `logs` and `ssh` from any
+/// of the operator's workstations reach a worker leased by, for example, a
+/// phone. Restricted like the console key; keys already present are skipped.
+pub(super) fn operator_keys(owner: &str, existing: &[&str]) -> Result<Vec<String>, String> {
+    let Ok(operator) = std::env::var("RWORKER_OPERATOR_KEYS_OWNER") else {
+        return Ok(Vec::new());
+    };
+    if !owned_by(owner, &operator) {
+        return Ok(Vec::new());
+    }
+    let path = std::env::var_os("RWORKER_OPERATOR_KEYS_FILE")
+        .ok_or("Missing RWORKER_OPERATOR_KEYS_FILE for the operator keys")?;
+    let text = fs::read_to_string(&path)
+        .map_err(|error| format!("Read operator SSH public keys: {error}"))?;
+    restricted_keys(&text, existing)
+}
+
+/// Whether `owner` is `OPERATOR@HOST` for this operator.
+fn owned_by(owner: &str, operator: &str) -> bool {
+    let mut parts = owner.split('@');
+    matches!(
+        (parts.next(), parts.next(), parts.next()),
+        (Some(user), Some(host), None) if user == operator && !user.is_empty() && !host.is_empty()
+    )
+}
+
+/// The keys of an authorized_keys-like text (blank lines and comments
+/// skipped), restricted and without those already in `existing`.
+fn restricted_keys(text: &str, existing: &[&str]) -> Result<Vec<String>, String> {
+    // Keys are compared by type and blob, also behind an options prefix.
+    let blob = |line: &str| -> Option<(String, String)> {
+        let fields: Vec<&str> = line.split_ascii_whitespace().collect();
+        fields
+            .iter()
+            .position(|field| matches!(*field, "ssh-ed25519" | "ssh-rsa"))
+            .and_then(|at| Some((fields[at].to_owned(), (*fields.get(at + 1)?).to_owned())))
+    };
+    let mut seen: Vec<(String, String)> = existing.iter().filter_map(|key| blob(key)).collect();
+    let mut keys = Vec::new();
+    for line in text.lines().map(str::trim) {
+        if line.is_empty() || line.starts_with('#') {
+            continue;
+        }
+        let key = restrict_web_key(line, &[]).map_err(|_| {
+            format!(
+                "Invalid operator SSH public key: {}",
+                line.split_ascii_whitespace().next().unwrap_or("")
+            )
+        })?;
+        let Some(key) = key else { continue };
+        let id = blob(&key).expect("a restricted key has a type and blob");
+        if !seen.contains(&id) {
+            seen.push(id);
+            keys.push(key);
+        }
+    }
+    Ok(keys)
+}
+
 /// The console identity for a pool's workers, when its autoscaler was given
 /// the key as a systemd credential.
 pub(super) fn web_pool_key() -> Result<Option<String>, String> {
@@ -375,5 +436,39 @@ mod route_tests {
         let (route, ips) = routes(&json!({}), "adhoc-1").unwrap();
         assert!(route.is_none() && ips.is_empty());
         assert_eq!(activity(&json!({}), "adhoc-1", "key", false), Ok(None));
+    }
+}
+
+#[cfg(test)]
+mod operator_key_tests {
+    use super::*;
+
+    const PHONE: &str = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEB pschmitt@p11";
+    const DESK: &str = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgIC pschmitt@fnuc";
+
+    #[test]
+    fn only_the_operators_devices_get_the_operator_keys() {
+        assert!(owned_by("pschmitt@zf10", "pschmitt"));
+        assert!(!owned_by("someone@zf10", "pschmitt"));
+        assert!(!owned_by("pschmitt", "pschmitt"));
+        assert!(!owned_by("pschmitt@", "pschmitt"));
+        assert!(!owned_by("pschmitt@a@b", "pschmitt"));
+        assert!(!owned_by("@host", ""));
+    }
+
+    #[test]
+    fn operator_keys_are_restricted_and_not_repeated() {
+        let text = format!("# workstations\n\n{DESK}\n{DESK}\n{PHONE}\n");
+        let keys = restricted_keys(&text, &[PHONE]).unwrap();
+        assert_eq!(keys.len(), 1, "{keys:?}");
+        assert!(keys[0].starts_with(
+            "no-agent-forwarding,no-port-forwarding,no-X11-forwarding,no-user-rc ssh-ed25519 "
+        ));
+        assert!(
+            keys[0]
+                .ends_with("AAAAC3NzaC1lZDI1NTE5AAAAIAICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgIC")
+        );
+        assert!(restricted_keys("not a key\n", &[]).is_err());
+        assert!(restricted_keys("", &[]).unwrap().is_empty());
     }
 }

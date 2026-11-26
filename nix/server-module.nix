@@ -35,6 +35,10 @@ let
     && cfg.web.operator != null
     && cfg.web.identityFile != null
     && cfg.web.publicKeyFile != null;
+  operatorKeyAccess = cfg.operatorKeys.owner != null && cfg.operatorKeys.publicKeys != [ ];
+  operatorKeysFile = pkgs.writeText "rworker-operator-keys" (
+    lib.concatMapStrings (key: "${key}\n") cfg.operatorKeys.publicKeys
+  );
   apiSocket = "/run/rworker-inventory-api/http.sock";
   apiGroup = if cfg.api.https == null then cfg.group else "rworker-inventory-api";
   runtimeTools = [
@@ -118,6 +122,20 @@ in
 {
   options.services.rworker = {
     enable = lib.mkEnableOption "the rworker control socket and local client";
+    operatorKeys = {
+      owner = lib.mkOption {
+        type = lib.types.nullOr lib.types.str;
+        default = null;
+        example = "alice";
+        description = "Operator whose devices' workers (owner `OPERATOR@DEVICE`, for example a phone's lease) also accept `publicKeys`.";
+      };
+      publicKeys = lib.mkOption {
+        type = lib.types.listOf lib.types.str;
+        default = [ ];
+        example = [ "ssh-ed25519 AAAA... alice@workstation" ];
+        description = "The operator's client SSH public keys, authorized (without agent, port or X11 forwarding) on every worker owned by one of the operator's devices, so `jobs`, `logs` and `ssh` work from any of the operator's workstations.";
+      };
+    };
     web = {
       enable = lib.mkEnableOption "the HTTPS rworker operator console";
       operator = lib.mkOption {
@@ -625,6 +643,10 @@ in
               }
               // lib.optionalAttrs webWorkerAccess {
                 RWORKER_WEB_WORKER_OWNER = cfg.web.operator;
+              }
+              // lib.optionalAttrs operatorKeyAccess {
+                RWORKER_OPERATOR_KEYS_OWNER = cfg.operatorKeys.owner;
+                RWORKER_OPERATOR_KEYS_FILE = "${operatorKeysFile}";
               }
               // lib.optionalAttrs cfg.builderGateway.enable {
                 RWORKER_BUILDER_ARCHIVE_DIRECTORY = builderState;

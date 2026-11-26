@@ -200,10 +200,16 @@ pub(super) fn run(
             }
             // The runner writes this string as authorized_keys. A second
             // line works with existing runner agents and stored leases.
-            let keys = match super::worker_ssh::web_worker_key(owner, &[public_key])? {
+            let mut keys = match super::worker_ssh::web_worker_key(owner, &[public_key])? {
                 Some(key) => format!("{public_key}\n{key}"),
                 None => public_key.clone(),
             };
+            // The operator's workstations reach leases of the operator's devices.
+            let present: Vec<&str> = keys.lines().collect();
+            for key in super::worker_ssh::operator_keys(owner, &present)? {
+                keys.push('\n');
+                keys.push_str(&key);
+            }
             let response = create(
                 root,
                 &backend,
