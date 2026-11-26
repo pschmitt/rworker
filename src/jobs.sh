@@ -41,7 +41,7 @@ case "$action" in
     else
       dir=$(mktemp -d "$root/job-XXXXXXXX")
       # mktemp -d ignores the umask: share the job with the group like the rest.
-      [[ "$job_umask" == 077 ]] || chmod 2770 "$dir"
+      [[ "$job_umask" == 077 ]] || chmod 2770 "$dir" 2>/dev/null || chmod 0770 "$dir"
     fi
     printf '%s\n' "$1" > "$dir/command"
     printf '%s\n' "$workdir" > "$dir/workdir"

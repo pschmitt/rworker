@@ -16,7 +16,7 @@ umask "$job_umask"
 mkdir -p -- "$root" || exit 1
 staging=$(mktemp -d "$root/.exec.XXXXXX") || exit 1
 # mktemp -d ignores the umask: share the job with the group like the rest.
-[[ "$job_umask" == 077 ]] || chmod 2770 "$staging"
+[[ "$job_umask" == 077 ]] || chmod 2770 "$staging" 2>/dev/null || chmod 0770 "$staging"
 trap 'rm -rf -- "$staging"' EXIT
 
 date -u +%FT%TZ > "$staging/started" || exit 1

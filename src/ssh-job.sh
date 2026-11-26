@@ -22,7 +22,7 @@ job="$root/ssh"
 [[ ! -e "$job" ]] || job="$root/ssh-$$"
 staging=$(mktemp -d "$root/.ssh.XXXXXX") || login_shell
 # mktemp -d ignores the umask: share the job with the group like the rest.
-[[ "$job_umask" == 077 ]] || chmod 2770 "$staging"
+[[ "$job_umask" == 077 ]] || chmod 2770 "$staging" 2>/dev/null || chmod 0770 "$staging"
 date -u +%FT%TZ > "$staging/started" &&
   printf '%s\n' "$$" > "$staging/pid" &&
   : > "$staging/log" || { rm -rf -- "$staging"; login_shell; }
