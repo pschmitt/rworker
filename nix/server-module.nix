@@ -802,33 +802,40 @@ in
           }
         ];
         systemd = {
-          services.rworker-github-token = {
-            description = "Refresh the repository-scoped rworker GitHub token";
-            after = [ "network-online.target" ];
-            wants = [ "network-online.target" ];
-            path = [
-              pkgs.coreutils
-              pkgs.openssl
-            ];
-            serviceConfig = {
-              Type = "oneshot";
-              Group = cfg.group;
-              ExecStart = refreshScript;
-              LoadCredential = [
-                "app-id:${app.idFile}"
-                "private-key:${app.privateKeyFile}"
+          services = {
+            rworker-github-token = {
+              description = "Refresh the repository-scoped rworker GitHub token";
+              after = [ "network-online.target" ];
+              wants = [ "network-online.target" ];
+              path = [
+                pkgs.coreutils
+                pkgs.openssl
               ];
-              RuntimeDirectory = baseNameOf tokenDirectory;
-              RuntimeDirectoryMode = "0750";
-              RuntimeDirectoryPreserve = "yes";
-              TimeoutStartSec = "1min";
-              UMask = "0077";
-              # A failed run leaves the unit "failed", which OnUnitInactiveSec
-              # never fires on again: retry until GitHub answers.
-              Restart = "on-failure";
-              RestartSec = "30s";
+              serviceConfig = {
+                Type = "oneshot";
+                Group = cfg.group;
+                ExecStart = refreshScript;
+                LoadCredential = [
+                  "app-id:${app.idFile}"
+                  "private-key:${app.privateKeyFile}"
+                ];
+                RuntimeDirectory = baseNameOf tokenDirectory;
+                RuntimeDirectoryMode = "0750";
+                RuntimeDirectoryPreserve = "yes";
+                TimeoutStartSec = "1min";
+                UMask = "0077";
+                # A failed run leaves the unit "failed", which OnUnitInactiveSec
+                # never fires on again: retry until GitHub answers.
+                Restart = "on-failure";
+                RestartSec = "30s";
+              };
+              unitConfig.StartLimitIntervalSec = 0;
             };
-            unitConfig.StartLimitIntervalSec = 0;
+            # Start the first mint together with the API, without waiting for
+            # it: the controller reads the file per request and a request
+            # before the first token fails and is retried by the caller.
+            rworker-github-api.wants = [ "rworker-github-token.service" ];
+            rworker-github-reap.wants = [ "rworker-github-token.service" ];
           };
           timers.rworker-github-token = {
             wantedBy = [ "timers.target" ];
@@ -837,11 +844,6 @@ in
               OnUnitInactiveSec = app.refreshInterval;
             };
           };
-          # Start the first mint together with the API, without waiting for
-          # it: the controller reads the file per request and a request
-          # before the first token fails and is retried by the caller.
-          services.rworker-github-api.wants = [ "rworker-github-token.service" ];
-          services.rworker-github-reap.wants = [ "rworker-github-token.service" ];
         };
       }
     ))
@@ -896,10 +898,12 @@ in
         };
         services = {
           "rworker-builder@" = {
-            environment.RWORKER_BUILDER_LOG_LIMITS = builderLogLimits;
             description = "On-demand rworker Nix daemon connection";
-            environment.RWORKER_INVENTORY_DIRECTORY = inventoryDirectory;
-            environment.RWORKER_EVENT_DIRECTORY = eventDirectory;
+            environment = {
+              RWORKER_BUILDER_LOG_LIMITS = builderLogLimits;
+              RWORKER_INVENTORY_DIRECTORY = inventoryDirectory;
+              RWORKER_EVENT_DIRECTORY = eventDirectory;
+            };
             path = runtimeTools;
             serviceConfig = builderService // {
               ExecStart = builderCommand "stdio";
@@ -909,11 +913,13 @@ in
             };
           };
           rworker-builder-reap = {
-            environment.RWORKER_BUILDER_LOG_LIMITS = builderLogLimits;
             description = "Delete the idle rworker builder lease";
-            environment.RWORKER_INVENTORY_DIRECTORY = inventoryDirectory;
-            # Deletions note their reason for the worker-deleted event.
-            environment.RWORKER_EVENT_DIRECTORY = eventDirectory;
+            environment = {
+              RWORKER_BUILDER_LOG_LIMITS = builderLogLimits;
+              RWORKER_INVENTORY_DIRECTORY = inventoryDirectory;
+              # Deletions note their reason for the worker-deleted event.
+              RWORKER_EVENT_DIRECTORY = eventDirectory;
+            };
             path = runtimeTools;
             serviceConfig = builderService // {
               Type = "oneshot";
