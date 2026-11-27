@@ -2,6 +2,8 @@
 
 ## 0.1.0 (unreleased)
 
+- GitHub Actions and GitLab CI workers record the same creator metadata as OpenStack workers, including the Concord agent ID when supplied.
+
 - Double-clicking a row in the TUI's tables (workers, jobs, profiles) acts like pressing Enter.
 
 - The TUI's list of one worker's jobs includes finished jobs by default; the list of all workers' jobs still shows only active ones. `d` toggles both.

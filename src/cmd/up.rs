@@ -262,7 +262,7 @@ fn hosted_up(
     profile: &crate::github_profiles::Profile,
     ttl: &str,
     key_file: &str,
-    topic: &str,
+    meta: &[String],
     queue_timeout: Option<Duration>,
     progress: &mpsc::Sender<String>,
 ) -> R<Value> {
@@ -273,20 +273,10 @@ fn hosted_up(
     let owner = ctx.owner();
     let forge = profile.forge;
     let action = |command| format!("{}-{command}", forge.key());
-    let (code, raw) = proc::capture(
-        ctx,
-        &mut state::control_cmd::<&str>(
-            ctx,
-            &[
-                &action("up"),
-                profile.runner,
-                ttl,
-                key.trim(),
-                &owner,
-                topic,
-            ],
-        ),
-    )?;
+    let up = action("up");
+    let mut args = vec![up.as_str(), profile.runner, ttl, key.trim(), &owner, ""];
+    args.extend(meta.iter().map(String::as_str));
+    let (code, raw) = proc::capture(ctx, &mut state::control_cmd(ctx, &args))?;
     if code != 0 {
         return Err(Fail(if code == 255 { 255 } else { 1 }));
     }
@@ -362,6 +352,11 @@ fn hosted_up(
                         "expires_at": expires,
                         "created_at": lease["created_at"],
                         "topic": lease["topic"],
+                        "agent": lease["agent"],
+                        "agent_id": lease["agent_id"],
+                        "agent_pid": lease["agent_pid"],
+                        "agent_session": lease["agent_session"],
+                        "cwd": lease["cwd"],
                         "archive_logs": lease["archive_logs"],
                         "run_id": lease["run_id"],
                         "job_id": lease["job_id"],
@@ -633,6 +628,7 @@ fn up_attempt(
     if topic.is_empty() && !quiet_topic_warning {
         ctx.err(&format!("{} no topic provided", paint::warn_mark(ctx)));
     }
+    let meta = crate::creator::meta(&topic, &agent_id);
     let hosted_profile = rest
         .windows(2)
         .filter(|pair| pair[0] == "--profile")
@@ -654,7 +650,7 @@ fn up_attempt(
             let (tx, rx) = mpsc::channel();
             let no_color = ctx.no_color;
             scope.spawn(move || render_progress_lines(rx, no_color, emit_stages));
-            let result = hosted_up(ctx, profile, ttl, &key_file, &topic, queue_timeout, &tx);
+            let result = hosted_up(ctx, profile, ttl, &key_file, &meta, queue_timeout, &tx);
             drop(tx);
             result
         })?;
@@ -719,7 +715,6 @@ fn up_attempt(
         }
         return Ok(None);
     }
-    let meta = crate::creator::meta(&topic, &agent_id);
     let Ok(key) = std::fs::read_to_string(&key_file) else {
         ctx.err(&format!(
             "Public key {key_file} not readable (set RWORKER_KEY)"

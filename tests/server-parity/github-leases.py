@@ -49,6 +49,15 @@ def exercise(binary, root, provider, runner_pin=None, prebuilt=False):
         "signingKeyFile": str(jwt_key), "keyId": "fixture", "issuer": "fixture-issuer",
         "audience": "fixture-audience", "serverUrl": "https://cache.example.invalid",
     }
+    openstack_secret = root / "openstack.json"
+    openstack_secret.write_text(json.dumps({"fixture": {"data": {
+        "auth_url": "https://openstack.example.invalid", "region": "fixture",
+        "application_credential_id": "fixture", "application_credential_secret": "fixture",
+    }}}))
+    settings.update(adhocPrefix="fixture-", openstackSecretFile=str(openstack_secret), openstackSecretName="fixture")
+    openstack = root / "openstack"
+    openstack.write_text(f"#!{sys.executable}\nprint('[]')\n")
+    openstack.chmod(0o700)
     config.write_text(json.dumps(settings))
     key = root / "signing.pem"
     subprocess.run(
@@ -133,7 +142,13 @@ else:
         assert all("vcpus" not in row and row["image_tags"] == ["github-actions"] for row in profiles)
 
     public_key = "ssh-ed25519 " + base64.b64encode(bytes(32)).decode()
-    lease = control(f"{provider}-up", runner, "2m", public_key, "operator@fixture", "fixture")
+    creator = {
+        "agent": "codex", "agent_id": "codex:fixture", "agent_pid": "42",
+        "agent_session": "fixture-session", "topic": "fixture build", "cwd": "/a dir",
+    }
+    meta = [part for key, value in creator.items() for part in ("--meta", f"{key}={value}")]
+    lease = control(f"{provider}-up", runner, "2m", public_key, "operator@fixture", "", *meta)
+    assert {key: lease[key] for key in creator} == creator
     assert lease["run_id"] == 42 and lease["state"] == "queued"
     ident = lease["id"]
     assert len(ident) == 32
@@ -230,7 +245,10 @@ else:
             assert ready["job_url"].endswith("/77")
             assert ready["state"] == "ready" and ready["endpoint"] == endpoint and ready["kvm"]
             assert "token_hash" not in ready
+            assert {key: ready[key] for key in creator} == creator
             name = ("glci-" if gitlab else "gha-") + suffix
+            row = next(row for row in control("ls") if row["name"] == name)
+            assert {key: row[key] for key in creator} == creator
             issued = control("niks3-token", name, "--owner", "operator@fixture")["niks3_token"]
             assert issued["ok"] and issued["expires_at"] == ready["expires_at"]
             assert issued["server_url"] == "https://cache.example.invalid"
@@ -252,9 +270,11 @@ else:
             legacy_dir = state / legacy
             legacy_dir.mkdir()
             (legacy_dir / "lock").touch()
-            legacy_record = {key: value for key, value in ready.items() if key != "worker_suffix"}
+            legacy_record = {key: value for key, value in ready.items() if key != "worker_suffix" and (key not in creator or key == "topic")}
             (legacy_dir / "lease.json").write_text(json.dumps(dict(legacy_record, id=legacy)))
-            assert "worker_suffix" not in control(f"{provider}-status", legacy)
+            legacy_status = control(f"{provider}-status", legacy)
+            assert "worker_suffix" not in legacy_status and "agent_id" not in legacy_status
+            assert legacy_status["topic"] == creator["topic"]
             assert control(f"{provider}-down", suffix, "operator@fixture")["state"] == "cancelling"
             assert post("heartbeat", bearer, {})[0] == 403
             ended = control(f"{provider}-status", ident)
@@ -263,6 +283,7 @@ else:
             (root / "cancelled").unlink()
             (root / "started").unlink()
             queued = control(f"{provider}-up", runner, "2m", public_key, "operator@fixture", "queued")
+            assert queued["topic"] == "queued" and "agent_id" not in queued
             record = state / queued["id"] / "lease.json"
             queued["expires_at"] = 1
             record.write_text(json.dumps(queued))

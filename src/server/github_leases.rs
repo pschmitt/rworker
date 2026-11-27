@@ -9,10 +9,11 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use base64::{Engine, engine::general_purpose::STANDARD};
 use serde::{Deserialize, Serialize};
-use serde_json::{Value, json};
+use serde_json::{Map, Value, json};
 
 use super::github::{GitHub, RunStatus};
 use super::gitlab::GitLab;
+use super::metadata;
 use super::netbird::NetBird;
 use super::openstack::setting;
 use super::tailscale::Tailscale;
@@ -48,6 +49,8 @@ struct Lease {
     owner: String,
     #[serde(default)]
     topic: String,
+    #[serde(default, skip_serializing_if = "Map::is_empty")]
+    creator: Map<String, Value>,
     #[serde(default)]
     archive_logs: bool,
     #[serde(default)]
@@ -208,7 +211,19 @@ pub(super) fn run(
     }
 
     match (command, args) {
-        ("up", [profile, ttl, public_key, owner, topic]) => {
+        ("up", [profile, ttl, public_key, owner, topic, meta @ ..]) => {
+            let pairs = meta
+                .chunks(2)
+                .map(|chunk| match chunk {
+                    [flag, pair] if flag == "--meta" => Ok(pair.clone()),
+                    _ => Err("Expected --meta KEY=VALUE after TOPIC"),
+                })
+                .collect::<Result<Vec<_>, _>>()?;
+            let mut creator = metadata::creator_metadata(&pairs)?;
+            let topic = match creator.remove("topic") {
+                Some(Value::String(topic)) => topic,
+                _ => topic.clone(),
+            };
             if !forge.profiles().iter().any(|entry| entry.runner == profile) {
                 return Err("Unknown worker runner profile".into());
             }
@@ -248,7 +263,8 @@ pub(super) fn run(
                     endpoint: None,
                     kvm: false,
                     owner: owner.into(),
-                    topic: topic.into(),
+                    topic,
+                    creator,
                     archive_logs: settings["logCollectorOperator"].is_string(),
                     workflow: None,
                     disk: None,
@@ -593,7 +609,7 @@ fn provider_inventory(settings: &Value, forge: Forge) -> Result<Vec<Value>, Stri
         .map(|lease| {
             let name = format!("{}{}", forge.prefix(), lease.worker_suffix.as_deref().unwrap_or(&lease.id));
             let ready = lease.state == LeaseState::Ready;
-            with_provider_links(json!({
+            let row = json!({
                 "name": name,
                 "ip": ready.then_some(&name),
                 "provider": forge.key(),
@@ -615,7 +631,8 @@ fn provider_inventory(settings: &Value, forge: Forge) -> Result<Vec<Value>, Stri
                 "kvm": lease.kvm,
                 "run_id": lease.run_id,
                 "job_id": lease.job_id,
-            }), forge, config)
+            });
+            with_provider_links(with_creator(row, &lease.creator), forge, config)
         })
         .collect())
 }
@@ -779,7 +796,19 @@ fn state_directory(config: &Value) -> Option<&Path> {
 fn public_lease(mut lease: Lease) -> Value {
     lease.token_hash = None;
     lease.mesh_setup = None;
-    json!(lease)
+    let creator = std::mem::take(&mut lease.creator);
+    with_creator(json!(lease), &creator)
+}
+
+fn with_creator(mut row: Value, creator: &Map<String, Value>) -> Value {
+    for key in metadata::CREATOR_KEYS {
+        if key != "topic"
+            && let Some(value) = creator.get(key)
+        {
+            row[key] = value.clone();
+        }
+    }
+    row
 }
 
 fn with_provider_links(mut row: Value, forge: Forge, config: &Value) -> Value {
