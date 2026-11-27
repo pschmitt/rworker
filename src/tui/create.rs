@@ -13,33 +13,32 @@ pub(super) enum Field {
     Disk,
     AfterCreate,
     ExtraFlags,
-    SshKey,
+    SshKey(usize),
 }
 
 use Field::{AfterCreate, Disk, ExtraFlags, Flavor, Lifetime, Profile, SshKey, Topic};
 
-const FIELDS: [Field; 8] = [
+const FIELDS: [Field; 7] = [
     Topic,
     Profile,
     Lifetime,
     Flavor,
     Disk,
     AfterCreate,
-    SshKey,
     ExtraFlags,
 ];
 
 impl Field {
-    pub(super) fn label(self) -> &'static str {
+    pub(super) fn label(self) -> String {
         match self {
-            Topic => "Topic",
-            Profile => "Profile",
-            Lifetime => "Lifetime",
-            Flavor => "Flavor",
-            Disk => "Disk (GiB)",
-            AfterCreate => "After create",
-            ExtraFlags => "Extra flags",
-            SshKey => "SSH public key",
+            Topic => "Topic".into(),
+            Profile => "Profile".into(),
+            Lifetime => "Lifetime".into(),
+            Flavor => "Flavor".into(),
+            Disk => "Disk (GiB)".into(),
+            AfterCreate => "After create".into(),
+            ExtraFlags => "Extra flags".into(),
+            SshKey(index) => format!("SSH key {}", index + 1),
         }
     }
 }
@@ -112,7 +111,7 @@ pub(super) struct CreateWorker {
     flavor: Edit,
     disk: Edit,
     extra: Edit,
-    ssh_key: Edit,
+    ssh_keys: Vec<Edit>,
 }
 
 impl CreateWorker {
@@ -130,7 +129,7 @@ impl CreateWorker {
             flavor: Edit::default(),
             disk: Edit::default(),
             extra: Edit::default(),
-            ssh_key: Edit::default(),
+            ssh_keys: vec![Edit::default()],
         }
     }
 
@@ -154,6 +153,16 @@ impl CreateWorker {
         FIELDS
             .into_iter()
             .filter(|field| !self.forge().is_some() || !matches!(field, Flavor | Disk))
+            .flat_map(|field| {
+                if field == ExtraFlags {
+                    (0..self.ssh_keys.len())
+                        .map(SshKey)
+                        .chain(std::iter::once(ExtraFlags))
+                        .collect::<Vec<_>>()
+                } else {
+                    vec![field]
+                }
+            })
     }
 
     fn profile(&self) -> Option<&Value> {
@@ -243,7 +252,10 @@ impl CreateWorker {
                     .unwrap_or("Profile default"),
             )),
             Disk => Some((&self.disk, "Profile default")),
-            SshKey => Some((&self.ssh_key, "Optional: ssh-ed25519 or ssh-rsa")),
+            SshKey(index) => self
+                .ssh_keys
+                .get(index)
+                .map(|key| (key, "Paste a key; Tab for next")),
             ExtraFlags => Some((&self.extra, "Optional, e.g. --no-nix-auth")),
             _ => None,
         }
@@ -287,18 +299,31 @@ impl CreateWorker {
                     Flavor => &mut self.flavor,
                     Disk => &mut self.disk,
                     ExtraFlags => &mut self.extra,
-                    SshKey => &mut self.ssh_key,
+                    SshKey(index) => &mut self.ssh_keys[index],
                     _ => return,
                 };
                 edit(&mut input.text, &mut input.cursor, key);
+                if matches!(self.focus, SshKey(_))
+                    && self
+                        .ssh_keys
+                        .last()
+                        .is_some_and(|key| !key.text.trim().is_empty())
+                {
+                    self.ssh_keys.push(Edit::default());
+                }
             }
         }
     }
 
     pub(super) fn submission(&self) -> Result<(Vec<String>, After), String> {
-        let key = self.ssh_key.text.trim();
-        if !key.is_empty() && !crate::server::worker_ssh::valid_extra_public_key(key) {
-            return Err("Invalid SSH public key (expected Ed25519 or RSA).".into());
+        for (index, key) in self.ssh_keys.iter().enumerate() {
+            let key = key.text.trim();
+            if !key.is_empty() && !crate::server::worker_ssh::valid_extra_public_key(key) {
+                return Err(format!(
+                    "SSH key {} is invalid (expected Ed25519 or RSA).",
+                    index + 1
+                ));
+            }
         }
         let extra = split_words(self.extra.text.trim())?;
         let mut after = MODES[self.mode].0;
@@ -351,8 +376,11 @@ impl CreateWorker {
                 args.extend([flag.to_owned(), value.to_owned()]);
             }
         }
-        if !key.is_empty() {
-            args.extend(["--extra-ssh-key".into(), key.into()]);
+        for key in &self.ssh_keys {
+            let key = key.text.trim();
+            if !key.is_empty() {
+                args.extend(["--extra-ssh-key".into(), key.into()]);
+            }
         }
         args.push("--quiet-topic-warning".into());
         Ok((args, after))
@@ -364,16 +392,26 @@ mod tests {
     use super::*;
 
     #[test]
-    fn additional_key_is_validated_and_passed_intact() {
+    fn multiple_keys_have_separate_rows_and_are_all_validated() {
         let mut form = CreateWorker::new(1);
-        form.ssh_key.text = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEB example".into();
+        let first = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEB first";
+        let second = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgIC second";
+        form.focus = SshKey(0);
+        form.key(KeyEvent::from(KeyCode::Char('s')));
+        assert!(form.fields().any(|field| field == SshKey(1)));
+        form.ssh_keys[0].text = first.into();
+        form.key(KeyEvent::from(KeyCode::Tab));
+        assert!(form.focus == SshKey(1));
+        form.ssh_keys[1].text = second.into();
         let args = form.submission().unwrap().0;
-        assert!(
-            args.windows(2)
-                .any(|pair| pair[0] == "--extra-ssh-key" && pair[1] == form.ssh_key.text)
-        );
-        form.ssh_key.text = "ssh-ed25519 YWJj".into();
-        assert!(form.submission().is_err());
+        let keys: Vec<_> = args
+            .windows(2)
+            .filter(|pair| pair[0] == "--extra-ssh-key")
+            .map(|pair| pair[1].as_str())
+            .collect();
+        assert_eq!(keys, [first, second]);
+        form.ssh_keys[1].text = "ssh-ed25519 YWJj".into();
+        assert!(form.submission().unwrap_err().contains("SSH key 2"));
     }
 
     #[test]

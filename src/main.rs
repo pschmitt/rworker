@@ -633,6 +633,19 @@ mod tests {
                 &args.iter().map(|arg| (*arg).to_owned()).collect::<Vec<_>>(),
             )
         };
+        assert_eq!(
+            options(
+                "up",
+                &["--extra-ssh-key", "first key", "--extra-ssh-key=second key"]
+            )
+            .args,
+            [
+                "--extra-ssh-key",
+                "first key",
+                "--extra-ssh-key",
+                "second key"
+            ]
+        );
         assert_eq!(options("machines", &["-Aw"]).args, ["-A", "-w"]);
         assert_eq!(
             options("machines", &["-wAon"]).args,

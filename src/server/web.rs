@@ -810,11 +810,13 @@ impl Action {
                     }
                     args.extend(words(&["--agent-id", id]));
                 }
-                if let Some(key) = ssh_key.as_deref().filter(|key| !key.trim().is_empty()) {
-                    if !crate::server::worker_ssh::valid_extra_public_key(key.trim()) {
-                        return Err(BAD_REQUEST);
+                if let Some(keys) = ssh_key {
+                    for key in keys.lines().map(str::trim).filter(|key| !key.is_empty()) {
+                        if !crate::server::worker_ssh::valid_extra_public_key(key) {
+                            return Err(BAD_REQUEST);
+                        }
+                        args.extend(["--extra-ssh-key".into(), key.into()]);
                     }
-                    args.extend(["--extra-ssh-key".into(), key.trim().into()]);
                 }
                 return Ok((args, 900));
             }
@@ -949,21 +951,23 @@ mod tests {
     }
 
     #[test]
-    fn create_validates_and_forwards_extra_key_for_all_profiles() {
-        let key =
-            "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEB test";
+    fn create_validates_and_forwards_multiple_keys_for_all_profiles() {
+        let first = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEB first";
+        let second = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgIC second";
         for profile in ["standard", "gh-aarch64"] {
-            let input = json!({"action":"create", "profile":profile, "ttl":"2h", "topic":"", "ssh_key":key});
+            let input = json!({"action":"create", "profile":profile, "ttl":"2h", "topic":"", "ssh_key":format!("{first}\n\n{second}")});
             let args = serde_json::from_value::<Action>(input)
                 .unwrap()
                 .command()
                 .unwrap()
                 .0;
-            assert!(
-                args.windows(2)
-                    .any(|pair| pair[0] == "--extra-ssh-key" && pair[1] == key)
-            );
-            let bad = json!({"action":"create", "profile":profile, "ttl":"2h", "topic":"", "ssh_key":"ssh-ed25519 YWJj"});
+            let keys: Vec<_> = args
+                .windows(2)
+                .filter(|pair| pair[0] == "--extra-ssh-key")
+                .map(|pair| pair[1].as_str())
+                .collect();
+            assert_eq!(keys, [first, second]);
+            let bad = json!({"action":"create", "profile":profile, "ttl":"2h", "topic":"", "ssh_key":format!("{first}\nssh-ed25519 YWJj")});
             assert!(
                 serde_json::from_value::<Action>(bad)
                     .unwrap()
