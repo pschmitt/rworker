@@ -83,6 +83,58 @@ _rworker_values() {
   _rworker_rows values "${set%-re}" "${(@f)$(rworker __values "$set" 2>/dev/null)}"
 }
 
+# Structured worker search is available as a positional term on ls and logs.
+_rworker_search() {
+  case "$PREFIX" in
+    topic:*) compset -P 'topic:'; _rworker_values topic-re ;;
+    agent:*) compset -P 'agent:'; _rworker_values agent-re ;;
+    agent-id:*) compset -P 'agent-id:'; _rworker_values id-re ;;
+    *)
+      local -a filters
+      filters=(${=${${(M)_rworker_spec_cache:#values search-filter *}#values search-filter }})
+      compadd -S '' -- "${filters[@]}"
+      ;;
+  esac
+}
+
+_rworker_search_flags() {
+  local action="$1" line flag
+  local -a options
+  for line in "${_rworker_spec_cache[@]}"
+  do
+    if [[ "$line" == "flag $action "* ]]
+    then
+      flag="${line#flag $action }"
+      flag="${flag%% *}"
+      options+=("${flag%%=*}")
+    elif [[ "$line" == 'global '* ]]
+    then
+      flag="${line#global }"
+      options+=("${flag%% *}")
+    fi
+  done
+  options+=(--help)
+  compadd -- "${options[@]}"
+}
+
+_rworker_log_target() {
+  local w skipval=0
+  _rworker_job_worker=""
+  for w in "${(@)words[3,CURRENT-1]}"
+  do
+    if (( skipval ))
+    then
+      skipval=0
+      continue
+    fi
+    case "$w" in
+      --lines|--topic|--agent|--agent-id|--redact-regex|--filter|--grep|-g) skipval=1 ;;
+      topic:*|agent:*|agent-id:*|-*) ;;
+      *) _rworker_job_worker="$w"; break ;;
+    esac
+  done
+}
+
 _rworker_jobs() {
   local worker="${_rworker_job_worker:-}"
   local -a jobs
@@ -193,6 +245,34 @@ _rworker() {
       return
     fi
   fi
+  # Complete search filters before treating the first logs argument as a worker.
+  if [[ ( "$action" == machines || "$action" == logs ) && "$PREFIX" != -* ]]
+  then
+    local previous="${words[CURRENT-1]:-}" _rworker_job_worker=""
+    case "$previous" in
+      --lines|--topic|--agent|--agent-id|--redact-regex|--filter|--grep|-g|-o|-n|--interval) ;;
+      *)
+        if [[ "$action" == logs ]]
+        then
+          _rworker_log_target
+        fi
+        if [[ -z "$_rworker_job_worker" ]]
+        then
+          case "$PREFIX" in
+            topic:*|agent:*|agent-id:*) _rworker_search; return ;;
+          esac
+          _rworker_search
+          [[ "$action" == logs ]] && _rworker_workers
+          [[ -z "$PREFIX" ]] && _rworker_search_flags "$action"
+          return
+        elif [[ "$action" == logs ]]
+        then
+          _rworker_jobs
+          return
+        fi
+        ;;
+    esac
+  fi
   if (( ${takes_worker[(Ie)$action]} )) && (( CURRENT == 3 )) && [[ "$PREFIX" != -* ]]
   then
     _rworker_workers
@@ -227,23 +307,8 @@ _rworker() {
   local flag spec_flag values desc _rworker_job_worker="${words[3]:-}"
   if [[ "$action" == logs ]]
   then
-    # logs [FLAGS] [WORKER [JOB]]: flags may come before the worker, so find
-    # the worker as the first word that is neither a flag nor a flag's value.
-    local w skipval=0
-    _rworker_job_worker=""
-    for w in "${(@)words[3,CURRENT-1]}"
-    do
-      if (( skipval ))
-      then
-        skipval=0
-        continue
-      fi
-      case "$w" in
-        --lines|--topic|--agent|--agent-id|--redact-regex|--filter|--grep|-g) skipval=1 ;;
-        -*) ;;
-        *) _rworker_job_worker="$w"; break ;;
-      esac
-    done
+    # Search terms are not worker names; find the actual worker, if any.
+    _rworker_log_target
     flags+=('1::worker:_rworker_workers' '2::job:_rworker_jobs')
   fi
   for line in "${_rworker_spec_cache[@]}"

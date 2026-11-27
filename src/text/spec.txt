@@ -177,6 +177,7 @@ values system x86_64-linux aarch64-linux
 values features nixos-test,benchmark,big-parallel,kvm -
 values format json wide
 values topic
+values search-filter topic: agent: agent-id:
 values topic-re
 values id
 values id-re

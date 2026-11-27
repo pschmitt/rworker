@@ -2,6 +2,8 @@
 
 ## 0.1.0 (unreleased)
 
+- Complete structured log and worker-list filter names and cached values in Bash and Zsh.
+
 - Suggest filter names and current worker values when searching logs in the web UI.
 
 - Accept `topic:`, `agent:` and `agent-id:` search terms in `rworker ls` and its aliases.

@@ -18,6 +18,7 @@ busy, idle 12m (drained after 20m idle with nothing pending) or draining.
   topic:REGEX, agent:REGEX, agent-id:REGEX
                  shorthand for the same filters; quote values containing spaces.
                  Example: __ME__ ls topic:nixpp agent:codex
+                 Tab completes filter names and cached values in Bash and Zsh.
   -A, --all, --history
                  also include retired workers from history
   --fresh        wait for a fresh inventory snapshot

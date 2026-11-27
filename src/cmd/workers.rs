@@ -124,7 +124,11 @@ fn regex_escape(s: &str) -> String {
         }
         out.push(c);
     }
-    out
+    if let Some(tail) = out.strip_prefix('!') {
+        format!("\\x21{tail}")
+    } else {
+        out
+    }
 }
 
 /// `__values SET`: TSV value, description and icon from static profiles or
@@ -196,5 +200,6 @@ mod tests {
             "rbw \\(release\\) 1\\.2"
         );
         assert_eq!(super::regex_escape("plain words"), "plain words");
+        assert_eq!(super::regex_escape("!urgent"), "\\x21urgent");
     }
 }
