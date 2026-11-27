@@ -44,12 +44,13 @@ async fn validate_filters(State(dir): State<PathBuf>, uri: Uri, headers: HeaderM
     })
     .await;
     match snapshot {
-        Ok(Some(names)) => super::reply(
-            StatusCode::OK,
-            serde_json::json!({"matching_workers": names}),
-        ),
+        Ok(Some(names)) => super::reply(StatusCode::OK, matching_workers_response(names)),
         _ => failure((StatusCode::BAD_GATEWAY, "Worker inventory unavailable.")),
     }
+}
+
+fn matching_workers_response(names: Vec<String>) -> serde_json::Value {
+    serde_json::json!({"data": {"matching_workers": names}})
 }
 
 fn matching_workers(filters: &LogFilters, workers: &serde_json::Value) -> Option<Vec<String>> {
@@ -357,6 +358,15 @@ mod filter_tests {
         assert_eq!(
             matching_workers(&filters, &workers),
             Some(vec!["yes".into()])
+        );
+    }
+
+    #[test]
+    fn filter_check_uses_the_console_response_envelope() {
+        let response = matching_workers_response(vec!["worker-a".into()]);
+        assert_eq!(
+            response["data"]["matching_workers"],
+            serde_json::json!(["worker-a"])
         );
     }
 
