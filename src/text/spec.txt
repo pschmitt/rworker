@@ -151,9 +151,9 @@ flag claim --topic=topic what the worker is for now
 flag claim --agent-id=id your agent id (Concord)
 flag up --agent-id=id the creating agent's id (Concord)
 flag exec --agent-id=id the creating agent's id (Concord)
-flag machines --topic=topic-re only workers whose topic matches this regex (prefix with ! to invert)
-flag machines --agent=agent-re only workers whose creating agent matches this regex (prefix with ! to invert)
-flag machines --agent-id=id-re only workers whose agent id matches this regex (prefix with ! to invert)
+flag machines --topic=topic-re only workers whose topic matches (also topic:REGEX; ! inverts)
+flag machines --agent=agent-re only workers whose creating agent matches (also agent:REGEX; ! inverts)
+flag machines --agent-id=id-re only workers whose agent id matches (also agent-id:REGEX; ! inverts)
 flag logs --agent-id=id-re limit to workers whose agent id matches (also agent-id:REGEX; ! inverts)
 flag events --agent-id=id-re limit to workers whose agent id matches this regex (prefix with ! to invert)
 flag prune --yes do not ask

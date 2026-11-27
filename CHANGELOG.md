@@ -2,6 +2,8 @@
 
 ## 0.1.0 (unreleased)
 
+- Accept `topic:`, `agent:` and `agent-id:` search terms in `rworker ls` and its aliases.
+
 - Add highlighted `topic:`, `agent:` and `agent-id:` searches to the web log viewer, alongside line-text filtering.
 
 - Accept `topic:`, `agent:` and `agent-id:` search terms in `rworker logs`.

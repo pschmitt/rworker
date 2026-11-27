@@ -15,6 +15,9 @@ busy, idle 12m (drained after 20m idle with nothing pending) or draining.
   --topic REGEX, --agent REGEX, --agent-id REGEX
                  only workers whose topic, creating agent or agent id
                  matches (a leading ! inverts the match)
+  topic:REGEX, agent:REGEX, agent-id:REGEX
+                 shorthand for the same filters; quote values containing spaces.
+                 Example: __ME__ ls topic:nixpp agent:codex
   -A, --all, --history
                  also include retired workers from history
   --fresh        wait for a fresh inventory snapshot

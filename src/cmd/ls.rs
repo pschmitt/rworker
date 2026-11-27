@@ -53,6 +53,8 @@ pub fn filter_workers(ctx: &Ctx, workers: &str, topic: &str, agent: &str) -> R<S
 }
 
 pub fn cmd_ls(ctx: &Ctx, args: &[String]) -> R {
+    let expanded = super::jobs::expand_search_terms("machines", args);
+    let args = expanded.as_slice();
     let mut json = false;
     let mut watch = false;
     let mut fresh = false;
@@ -334,4 +336,56 @@ fn format_inventory(
         filter_workers(ctx, &inventory, topic, agent)
     })
     .map_err(|_| "jq: error: invalid JSON from the control host".to_string())
+}
+
+#[cfg(test)]
+mod structured_search_tests {
+    use super::*;
+
+    #[test]
+    fn search_terms_preserve_flag_values_and_filter_inventory() {
+        let args = [
+            "-w",
+            "topic:nixpp",
+            "agent:codex",
+            "agent-id:!old",
+            "-n",
+            "5",
+        ]
+        .map(str::to_owned);
+        assert_eq!(
+            super::super::jobs::expand_search_terms("machines", &args),
+            [
+                "-w",
+                "--topic",
+                "nixpp",
+                "--agent",
+                "codex",
+                "--agent-id",
+                "!old",
+                "-n",
+                "5"
+            ]
+        );
+        let literal = ["--topic", "agent:literal", "-o", "json"].map(str::to_owned);
+        assert_eq!(
+            super::super::jobs::expand_search_terms("machines", &literal),
+            literal
+        );
+        assert_eq!(
+            super::super::jobs::expand_search_terms("machines", &["topic:".into()]),
+            ["--topic", ""]
+        );
+        let ctx = Ctx::from_env();
+        ctx.filter_agent_id.replace("!old".into());
+        let workers = serde_json::json!([
+            {"name":"match", "topic":"nixpp upgrade", "agent":"codex", "agent_id":"codex:new"},
+            {"name":"other", "topic":"nixpp upgrade", "agent":"codex", "agent_id":"codex:old"},
+            {"name":"other-topic", "topic":"build", "agent":"codex", "agent_id":"codex:new"}
+        ]);
+        let result = filter_workers(&ctx, &workers.to_string(), "nixpp", "codex").unwrap();
+        let rows: Vec<Value> = serde_json::from_str(&result).unwrap();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0]["name"], "match");
+    }
 }

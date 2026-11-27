@@ -150,7 +150,7 @@ fn s(v: &[&str]) -> Vec<String> {
 }
 
 /// Expand search terms without interpreting values belonging to existing flags.
-fn expand_log_search(args: &[String]) -> Vec<String> {
+pub(super) fn expand_search_terms(action: &str, args: &[String]) -> Vec<String> {
     let mut expanded = Vec::with_capacity(args.len());
     let mut values = args.iter();
     while let Some(arg) = values.next() {
@@ -161,7 +161,7 @@ fn expand_log_search(args: &[String]) -> Vec<String> {
             expanded.extend([format!("--{key}"), value.to_owned()]);
         } else {
             expanded.push(arg.clone());
-            if crate::help::flags("logs").any(|(name, takes_value)| name == arg && takes_value)
+            if crate::help::flags(action).any(|(name, takes_value)| name == arg && takes_value)
                 && let Some(value) = values.next()
             {
                 expanded.push(value.clone());
@@ -172,7 +172,7 @@ fn expand_log_search(args: &[String]) -> Vec<String> {
 }
 
 pub fn cmd_logs(ctx: &Ctx, args: &[String]) -> R {
-    let expanded = expand_log_search(args);
+    let expanded = expand_search_terms("logs", args);
     let args = expanded.as_slice();
     // Following in a terminal, the TUI shows the same log without chrome and
     // lets the user switch views; --plain (and any pipe or --json) keeps the
@@ -1321,7 +1321,7 @@ mod tests {
         ]
         .map(str::to_owned);
         assert_eq!(
-            expand_log_search(&args),
+            expand_search_terms("logs", &args),
             [
                 "-f",
                 "--topic",
@@ -1334,9 +1334,12 @@ mod tests {
                 "topic:literal"
             ]
         );
-        assert_eq!(expand_log_search(&["topic:".into()]), ["--topic", ""]);
         assert_eq!(
-            expand_log_search(&["worker-name".into(), "job-name".into()]),
+            expand_search_terms("logs", &["topic:".into()]),
+            ["--topic", ""]
+        );
+        assert_eq!(
+            expand_search_terms("logs", &["worker-name".into(), "job-name".into()]),
             ["worker-name", "job-name"]
         );
     }
