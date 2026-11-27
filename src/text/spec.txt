@@ -44,8 +44,8 @@ flag logs -f short for --follow
 flag logs -q short for --quiet
 flag logs --no-events suppress lifecycle events while following
 flag logs --quiet suppress all status messages (timestamped, italic) while following
-flag logs --topic=topic-re limit to workers whose topic matches this regex (prefix with ! to invert)
-flag logs --agent=agent-re limit to workers whose creating agent matches this regex (prefix with ! to invert)
+flag logs --topic=topic-re limit to workers whose topic matches this regex (also topic:REGEX; ! inverts)
+flag logs --agent=agent-re limit to workers whose creating agent matches (also agent:REGEX; ! inverts)
 flag events --watch follow new lifecycle events after listing history
 flag events -w short for --watch
 flag events --since-now skip retained history while watching
@@ -154,7 +154,7 @@ flag exec --agent-id=id the creating agent's id (Concord)
 flag machines --topic=topic-re only workers whose topic matches this regex (prefix with ! to invert)
 flag machines --agent=agent-re only workers whose creating agent matches this regex (prefix with ! to invert)
 flag machines --agent-id=id-re only workers whose agent id matches this regex (prefix with ! to invert)
-flag logs --agent-id=id-re limit to workers whose agent id matches this regex (prefix with ! to invert)
+flag logs --agent-id=id-re limit to workers whose agent id matches (also agent-id:REGEX; ! inverts)
 flag events --agent-id=id-re limit to workers whose agent id matches this regex (prefix with ! to invert)
 flag prune --yes do not ask
 flag prune -y short for --yes

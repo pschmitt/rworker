@@ -149,7 +149,31 @@ fn s(v: &[&str]) -> Vec<String> {
     v.iter().map(|x| (*x).to_string()).collect()
 }
 
+/// Expand search terms without interpreting values belonging to existing flags.
+fn expand_log_search(args: &[String]) -> Vec<String> {
+    let mut expanded = Vec::with_capacity(args.len());
+    let mut values = args.iter();
+    while let Some(arg) = values.next() {
+        let flag = arg.split_once(':').and_then(|(key, value)| {
+            matches!(key, "topic" | "agent" | "agent-id").then_some((key, value))
+        });
+        if let Some((key, value)) = flag {
+            expanded.extend([format!("--{key}"), value.to_owned()]);
+        } else {
+            expanded.push(arg.clone());
+            if crate::help::flags("logs").any(|(name, takes_value)| name == arg && takes_value)
+                && let Some(value) = values.next()
+            {
+                expanded.push(value.clone());
+            }
+        }
+    }
+    expanded
+}
+
 pub fn cmd_logs(ctx: &Ctx, args: &[String]) -> R {
+    let expanded = expand_log_search(args);
+    let args = expanded.as_slice();
     // Following in a terminal, the TUI shows the same log without chrome and
     // lets the user switch views; --plain (and any pipe or --json) keeps the
     // stream. Snapshots print and exit as always.
@@ -1282,6 +1306,38 @@ mod tests {
         assert_eq!(
             collector_identity("operator", &pool, Some("console-key"), Some("operator")),
             Some(Some("console-key"))
+        );
+    }
+
+    #[test]
+    fn expands_log_search_terms_without_changing_flag_values() {
+        let args = [
+            "-f",
+            "topic:nixpp",
+            "agent:codex",
+            "agent-id:!old",
+            "-g",
+            "topic:literal",
+        ]
+        .map(str::to_owned);
+        assert_eq!(
+            expand_log_search(&args),
+            [
+                "-f",
+                "--topic",
+                "nixpp",
+                "--agent",
+                "codex",
+                "--agent-id",
+                "!old",
+                "-g",
+                "topic:literal"
+            ]
+        );
+        assert_eq!(expand_log_search(&["topic:".into()]), ["--topic", ""]);
+        assert_eq!(
+            expand_log_search(&["worker-name".into(), "job-name".into()]),
+            ["worker-name", "job-name"]
         );
     }
 

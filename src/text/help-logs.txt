@@ -9,6 +9,11 @@ toggles wrapping and n toggles the chrome. Quitting from the log prints it,
 so it stays in the terminal. --plain prints the plain stream instead, as
 logs always does into a pipe. Snapshots (without --follow) print and exit.
 
+For all-worker logs, `topic:REGEX`, `agent:REGEX` and `agent-id:REGEX`
+are equivalent to the corresponding flags. Combine them, quote values with
+spaces, and prefix a regex with ! to exclude matches. For example:
+  __ME__ logs -f topic:nixpp agent:codex
+
 For WORKER [JOB] snapshots, fall back to the archive when live logs are unavailable.
 Use --cached to read only the archive.
 

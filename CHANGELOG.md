@@ -2,6 +2,8 @@
 
 ## 0.1.0 (unreleased)
 
+- Accept `topic:`, `agent:` and `agent-id:` search terms in `rworker logs`.
+
 - Exclude worker and job prefixes when selecting log text in the web console.
 
 - Show jobs from the operator’s GitHub Actions and GitLab CI leases in the web UI and cached job list.
