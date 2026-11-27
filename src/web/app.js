@@ -1294,7 +1294,8 @@ function logSearchSuggestions(query, caret, workers) {
   typed = typed.toLowerCase();
   const values = [...new Set(workers.map((worker) => worker[field.property]).filter((value) => typeof value === "string" && value.trim()))];
   return values.filter((value) => value.toLowerCase().includes(typed)).sort((a, b) => a.localeCompare(b)).slice(0, 8).map((value) => {
-    const escaped = value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    let escaped = value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    if (escaped.startsWith("!")) escaped = "\\x21" + escaped.slice(1);
     const pattern = (exclude ? "!" : "") + escaped;
     const encoded = /[\s"\\]/.test(pattern) ? JSON.stringify(pattern) : pattern;
     return { ...token, insert: field.key + ":" + encoded, label: value, hint: field.label, isField: false };
