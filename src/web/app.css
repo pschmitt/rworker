@@ -209,6 +209,11 @@ main { display: flex; flex-direction: column; min-width: 0; min-height: 0; }
 .search-syntax .search-key { color: var(--acc); }
 .search-syntax .search-value { color: var(--grn); }
 .syntax-search input[aria-invalid="true"] { border-color: var(--red); }
+.log-search-suggestions { position: fixed; z-index: 40; display: grid; gap: 2px; max-height: min(45dvh, 320px); overflow-y: auto; padding: 5px; border: 1px solid var(--line2); border-radius: 10px; background: var(--s1); box-shadow: var(--shadow); }
+.log-search-option { display: flex; align-items: center; justify-content: space-between; gap: 16px; min-width: 0; padding: 8px 10px; border-radius: 6px; cursor: pointer; font-size: 13px; }
+.log-search-option[aria-selected="true"], .log-search-option:hover { background: var(--acc-soft); }
+.log-search-option-name { color: var(--ink); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.log-search-option-hint { color: var(--dim); font-size: 11.5px; white-space: nowrap; }
 .search input::placeholder { color: var(--dim); }
 .search kbd { position: absolute; right: 9px; pointer-events: none; }
 .search input:focus + kbd { display: none; }

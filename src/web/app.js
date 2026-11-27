@@ -203,6 +203,7 @@ function navigate() {
   const [requested, worker, job] = location.hash.slice(1).split("/");
   const view = Object.hasOwn(views, requested) ? requested : "workers";
   if (view !== state.view) {
+    closeLogSuggestions();
     if (state.logFullscreen) setLogFullscreen(false);
     state.limit = 200;
     $("search").value = "";
@@ -1234,19 +1235,141 @@ function renderProfiles(visible) {
 function parseLogSearch(query) {
   const filters = {};
   const tokens = [];
-  const pattern = /(^|\s)(topic|agent-id|agent):("(?:[^"\\]|\\.)*"|[^\s]*)/gi;
+  const pattern = /(^|\s)(topic|agent-id|agent):(!?"(?:[^"\\]|\\.)*(?:"|$)|[^\s]*)/gi;
   let text = "", end = 0, match;
   while ((match = pattern.exec(query))) {
     const start = match.index + match[1].length;
     text += query.slice(end, start);
     const raw = match[3];
-    const value = raw.startsWith('"') && raw.endsWith('"') ? raw.slice(1, -1).replace(/\\(["\\])/g, "$1") : raw;
+    const invertedQuote = raw.startsWith('!"');
+    const quoted = invertedQuote ? raw.slice(1) : raw;
+    const value = quoted.startsWith('"') ? (quoted.endsWith('"') && quoted.length > 1 ? (invertedQuote ? "!" : "") + quoted.slice(1, -1).replace(/\\(["\\])/g, "$1") : "") : raw;
     const key = match[2].toLowerCase().replace("-", "_");
     if (value) filters[key] = value;
     tokens.push({ start, keyEnd: start + match[2].length + 1, end: pattern.lastIndex });
     end = pattern.lastIndex;
   }
   return { filters, text: (text + query.slice(end)).replace(/\s+/g, " ").trim(), tokens };
+}
+
+const logSearchFields = [
+  { key: "topic", label: "Worker topic", property: "topic" },
+  { key: "agent", label: "Creating agent", property: "agent" },
+  { key: "agent-id", label: "Agent ID", property: "agent_id" },
+];
+let logSearchOptions = [];
+let logSearchOptionIndex = 0;
+let logSearchDismissed = false;
+
+function logSearchToken(query, caret) {
+  let start = 0, end = query.length, quoted = false, escaped = false;
+  for (let i = 0; i < query.length; i++) {
+    const char = query[i];
+    if (escaped) { escaped = false; continue; }
+    if (quoted && char === "\\") { escaped = true; continue; }
+    if (char === '"') { quoted = !quoted; continue; }
+    if (!quoted && /\s/.test(char)) {
+      if (i < caret) start = i + 1;
+      else { end = i; break; }
+    }
+  }
+  return { start, end, typed: query.slice(start, caret) };
+}
+
+function logSearchSuggestions(query, caret, workers) {
+  const token = logSearchToken(query, caret);
+  const separator = token.typed.indexOf(":");
+  if (separator < 0) {
+    const typed = token.typed.toLowerCase();
+    return logSearchFields.filter((field) => field.key.startsWith(typed))
+      .map((field) => ({ ...token, insert: field.key + ":", label: field.key + ":", hint: field.label, isField: true }));
+  }
+  const field = logSearchFields.find((entry) => entry.key === token.typed.slice(0, separator).toLowerCase());
+  if (!field) return [];
+  let typed = token.typed.slice(separator + 1);
+  if (typed.startsWith('"')) typed = typed.slice(1);
+  const exclude = typed.startsWith("!");
+  if (exclude) typed = typed.slice(1);
+  if (typed.startsWith('"')) typed = typed.slice(1);
+  typed = typed.toLowerCase();
+  const values = [...new Set(workers.map((worker) => worker[field.property]).filter((value) => typeof value === "string" && value.trim()))];
+  return values.filter((value) => value.toLowerCase().includes(typed)).sort((a, b) => a.localeCompare(b)).slice(0, 8).map((value) => {
+    const escaped = value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const pattern = (exclude ? "!" : "") + escaped;
+    const encoded = /[\s"\\]/.test(pattern) ? JSON.stringify(pattern) : pattern;
+    return { ...token, insert: field.key + ":" + encoded, label: value, hint: field.label, isField: false };
+  });
+}
+
+function closeLogSuggestions() {
+  $("log-search-suggestions")?.remove();
+  const input = $("search");
+  input.setAttribute("aria-expanded", "false");
+  input.removeAttribute("aria-activedescendant");
+  input.removeAttribute("aria-controls");
+  input.removeAttribute("aria-autocomplete");
+  input.removeAttribute("role");
+  logSearchOptions = [];
+}
+
+function placeLogSuggestions(panel) {
+  const box = $("search").getBoundingClientRect();
+  const width = Math.min(Math.max(box.width, 260), innerWidth - 16);
+  panel.style.width = width + "px";
+  panel.style.left = Math.min(Math.max(8, box.left), innerWidth - width - 8) + "px";
+  const below = box.bottom + 6;
+  const above = box.top - panel.offsetHeight - 6;
+  panel.style.top = (below + panel.offsetHeight <= innerHeight - 8 || above < 8 ? Math.min(below, innerHeight - 60) : above) + "px";
+}
+
+function showLogSuggestions() {
+  const input = $("search");
+  if (state.view !== "logs" || state.selected || document.activeElement !== input || logSearchDismissed) { closeLogSuggestions(); return; }
+  const options = logSearchSuggestions(input.value, input.selectionStart ?? input.value.length, state.rows.workers || []);
+  if (!options.length) { closeLogSuggestions(); return; }
+  let panel = $("log-search-suggestions");
+  if (!panel) {
+    panel = el("div", "log-search-suggestions");
+    panel.id = "log-search-suggestions";
+    panel.setAttribute("role", "listbox");
+    panel.setAttribute("aria-label", "Log search suggestions");
+    document.body.append(panel);
+  }
+  logSearchOptions = options;
+  logSearchOptionIndex = Math.min(logSearchOptionIndex, options.length - 1);
+  panel.replaceChildren();
+  options.forEach((option, index) => {
+    const row = el("div", "log-search-option", el("span", "log-search-option-name", option.label), el("span", "log-search-option-hint", option.hint));
+    row.id = "log-search-option-" + index;
+    row.setAttribute("role", "option");
+    row.setAttribute("aria-selected", String(index === logSearchOptionIndex));
+    const choose = () => { if (logSearchOptions[index] === option) chooseLogSuggestion(index); };
+    row.addEventListener("pointerdown", (event) => { event.preventDefault(); choose(); });
+    row.addEventListener("click", choose);
+    panel.append(row);
+  });
+  placeLogSuggestions(panel);
+  input.setAttribute("role", "combobox");
+  input.setAttribute("aria-autocomplete", "list");
+  input.setAttribute("aria-controls", panel.id);
+  input.setAttribute("aria-expanded", "true");
+  input.setAttribute("aria-activedescendant", "log-search-option-" + logSearchOptionIndex);
+  panel.children[logSearchOptionIndex]?.scrollIntoView({ block: "nearest" });
+}
+
+function chooseLogSuggestion(index) {
+  const option = logSearchOptions[index];
+  if (!option) return;
+  const input = $("search");
+  input.setRangeText(option.insert, option.start, option.end, "end");
+  if (!option.isField && (input.selectionEnd === input.value.length || !/\s/.test(input.value[input.selectionEnd]))) {
+    input.setRangeText(" ", input.selectionEnd, input.selectionEnd, "end");
+  }
+  logSearchDismissed = !option.isField;
+  logSearchOptionIndex = 0;
+  input.dispatchEvent(new Event("input", { bubbles: true }));
+  input.focus();
+  if (option.isField) showLogSuggestions(); else closeLogSuggestions();
 }
 
 function logSearchFilters() {
@@ -1270,8 +1393,7 @@ function updateLogSearchHighlight() {
   }
   overlay.append(input.value.slice(end));
   overlay.scrollLeft = input.scrollLeft;
-  input.removeAttribute("aria-invalid");
-  input.title = 'Worker filters: topic:, agent:, agent-id:. Use ! to exclude and quotes for spaces.';
+  if (input.getAttribute("aria-invalid") !== "true") input.title = 'Worker filters: topic:, agent:, agent-id:. Use ! to exclude and quotes for spaces.';
 }
 
 function workerMatchesLogFilters(worker, filters) {
@@ -1292,6 +1414,7 @@ function encodeLogFilters(filters) {
 
 function changeLogSearch(query) {
   state.logQuery = query;
+  $("search").removeAttribute("aria-invalid");
   updateLogSearchHighlight();
   setLog(state.logText, { keepEnd: false });
   clearTimeout(logSearchTimer);
@@ -3249,13 +3372,35 @@ function syncSearchOpen() {
   const input = $("search");
   $("toolbar").classList.toggle("search-open", document.activeElement === input || input.value !== "");
 }
-$("search").addEventListener("focus", syncSearchOpen);
-$("search").addEventListener("blur", syncSearchOpen);
+$("search").addEventListener("focus", () => { syncSearchOpen(); logSearchDismissed = false; showLogSuggestions(); });
+$("search").addEventListener("blur", () => { syncSearchOpen(); closeLogSuggestions(); });
+$("search").addEventListener("click", () => { logSearchDismissed = false; showLogSuggestions(); });
+$("search").addEventListener("keydown", (event) => {
+  if (!logSearchOptions.length) return;
+  if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+    event.preventDefault();
+    logSearchOptionIndex = (logSearchOptionIndex + (event.key === "ArrowDown" ? 1 : -1) + logSearchOptions.length) % logSearchOptions.length;
+    showLogSuggestions();
+  } else if (event.key === "Enter" || event.key === "Tab") {
+    event.preventDefault();
+    chooseLogSuggestion(logSearchOptionIndex);
+  } else if (event.key === "Escape") {
+    event.preventDefault();
+    logSearchDismissed = true;
+    closeLogSuggestions();
+  }
+});
+$("search").addEventListener("keyup", (event) => {
+  if (["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) { logSearchDismissed = false; showLogSuggestions(); }
+});
+window.addEventListener("resize", () => { const panel = $("log-search-suggestions"); if (panel) placeLogSuggestions(panel); });
 $("search").addEventListener("scroll", updateLogSearchHighlight, { passive: true });
 
-$("search").addEventListener("input", () => {
+$("search").addEventListener("input", (event) => {
   if (state.view === "logs" && !state.selected) {
+    if (event.isTrusted) logSearchDismissed = false;
     changeLogSearch($("search").value);
+    if (!logSearchDismissed) { logSearchOptionIndex = 0; showLogSuggestions(); }
     return;
   }
   state.limit = 200;
