@@ -2,6 +2,8 @@
 
 ## 0.1.0 (unreleased)
 
+- Add validated additional SSH public keys when creating workers from the CLI, TUI or web UI.
+
 - GitHub Actions and GitLab CI workers record the same creator metadata as OpenStack workers, including the Concord agent ID when supplied.
 
 - Double-clicking a row in the TUI's tables (workers, jobs, profiles) acts like pressing Enter.

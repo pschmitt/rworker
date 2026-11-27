@@ -15,6 +15,8 @@ Status messages go to stderr, the command's output to stdout.
   --keep-on-failure      keep it only when CMD fails (for debugging)
   --json                 print {name, exit_code, stdout, stderr} instead
 
+  --extra-ssh-key KEY  authorize an additional Ed25519 or RSA public key (repeatable)
+
 Examples:
   __ME__ exec --sync .:src -- 'cd src && nix develop -c cargo build --release'
   __ME__ exec --flavor s1.2xlarge --sync .:app --fetch app/out:./out -- 'cd app && ./build.sh'

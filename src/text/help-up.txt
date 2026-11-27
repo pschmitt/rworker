@@ -50,6 +50,8 @@ process (claude, codex, agy, opencode, ... and its PID), the agent id, the
 agent session id and the working directory. ls -o wide shows them; on the worker they are
 in /run/rworker/metadata.json.
 
+  --extra-ssh-key KEY  authorize an additional Ed25519 or RSA public key (repeatable)
+
 Example:
   w=$(__ME__ up --ttl 3h --flavor s1.2xlarge | jq -r .name)
 

@@ -2593,6 +2593,7 @@ async function form(action, worker, options = {}) {
     picker.append(list);
     fields.append(picker, lifetimeField(options.ttl || "2h", "Workers still in use when their lease ends get up to an hour of grace."),
       field("Topic", "topic", { value: options.topic || "", required: false, placeholder: "What is this worker for?", attrs: { maxlength: "255" } }),
+      field("Additional SSH public key", "ssh_key", { value: options.ssh_key || "", required: false, placeholder: "ssh-ed25519 AAAA…" }),
       toggleField("Open SSH when ready", "open_ssh", "The terminal opens once the host key is pinned.", true, "terminal"));
     const advanced = el("details", "advanced");
     const overrides = el("div", "grid2",
@@ -2671,7 +2672,7 @@ async function runAction(action, message) {
 async function createWorker(action) {
   const openSsh = action.open_ssh === "on";
   delete action.open_ssh;
-  for (const key of ["flavor", "disk", "agent_id"]) if (!action[key]) delete action[key];
+  for (const key of ["flavor", "disk", "agent_id", "ssh_key"]) if (!action[key]) delete action[key];
   if (action.disk) action.disk = Number(action.disk);
   for (const key of ["scratch", "no_niks3_token"]) action[key] = action[key] === "on";
   const started = Date.now();
@@ -2714,11 +2715,12 @@ $("action-form").addEventListener("submit", async (event) => {
   const action = collectForm(event.target);
   const missing = [...event.target.querySelectorAll("[required]")].find((node) => !node.disabled && !node.closest("[hidden]") && !node.value.trim());
   const problem = missing ? `Fill in ${missing.labels?.[0]?.textContent || missing.name}.` :
-    ["create", "extend"].includes(action.action) && !/^\d[\dhm]{0,15}$/.test(action.ttl || "") ? "Enter a lifetime such as 90m, 2h or 1h30m." : "";
+    ["create", "extend"].includes(action.action) && !/^\d[\dhm]{0,15}$/.test(action.ttl || "") ? "Enter a lifetime such as 90m, 2h or 1h30m." :
+    action.action === "create" && action.ssh_key && !/^(ssh-ed25519|ssh-rsa) [A-Za-z0-9+/]+={0,2}(?:\s+[^\r\n]*)?$/.test(action.ssh_key) ? "Enter a valid Ed25519 or RSA SSH public key." : "";
   if (problem) {
     $("form-error").textContent = problem;
     $("form-error").hidden = false;
-    (missing || $("field-ttl-custom"))?.focus();
+    (missing || (action.ssh_key && problem.includes("SSH public key") ? $("field-ssh_key") : $("field-ttl-custom")))?.focus();
     return;
   }
   if (action.action === "create") {

@@ -24,7 +24,7 @@ mod tailscale;
 mod up;
 #[cfg(feature = "web")]
 mod web;
-mod worker_ssh;
+pub(crate) mod worker_ssh;
 
 use std::collections::HashMap;
 use std::fs::File;

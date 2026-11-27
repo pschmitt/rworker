@@ -682,6 +682,8 @@ enum Action {
         no_niks3_token: bool,
         #[serde(default)]
         agent_id: Option<String>,
+        #[serde(default)]
+        ssh_key: Option<String>,
     },
     Extend {
         worker: String,
@@ -757,6 +759,7 @@ impl Action {
                 scratch,
                 no_niks3_token,
                 agent_id,
+                ssh_key,
             } => {
                 let ci = crate::github_profiles::from_name(profile).is_some();
                 if ci
@@ -806,6 +809,12 @@ impl Action {
                         return Err(BAD_REQUEST);
                     }
                     args.extend(words(&["--agent-id", id]));
+                }
+                if let Some(key) = ssh_key.as_deref().filter(|key| !key.trim().is_empty()) {
+                    if !crate::server::worker_ssh::valid_extra_public_key(key.trim()) {
+                        return Err(BAD_REQUEST);
+                    }
+                    args.extend(["--extra-ssh-key".into(), key.trim().into()]);
                 }
                 return Ok((args, 900));
             }
@@ -937,6 +946,31 @@ mod tests {
         );
         assert!(command_detail(&b"x".repeat(1000)).ends_with('\u{2026}'));
         assert_eq!(command_detail(b"\n \n"), "");
+    }
+
+    #[test]
+    fn create_validates_and_forwards_extra_key_for_all_profiles() {
+        let key =
+            "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEB test";
+        for profile in ["standard", "gh-aarch64"] {
+            let input = json!({"action":"create", "profile":profile, "ttl":"2h", "topic":"", "ssh_key":key});
+            let args = serde_json::from_value::<Action>(input)
+                .unwrap()
+                .command()
+                .unwrap()
+                .0;
+            assert!(
+                args.windows(2)
+                    .any(|pair| pair[0] == "--extra-ssh-key" && pair[1] == key)
+            );
+            let bad = json!({"action":"create", "profile":profile, "ttl":"2h", "topic":"", "ssh_key":"ssh-ed25519 YWJj"});
+            assert!(
+                serde_json::from_value::<Action>(bad)
+                    .unwrap()
+                    .command()
+                    .is_err()
+            );
+        }
     }
 
     #[test]

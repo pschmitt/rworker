@@ -261,15 +261,20 @@ fn hosted_up(
     ctx: &Ctx,
     profile: &crate::github_profiles::Profile,
     ttl: &str,
-    key_file: &str,
+    keys: (&str, &[String]),
     meta: &[String],
     queue_timeout: Option<Duration>,
     progress: &mpsc::Sender<String>,
 ) -> R<Value> {
+    let (key_file, extra_keys) = keys;
     let key = std::fs::read_to_string(key_file).map_err(|error| {
         ctx.err(&format!("Read SSH public key {key_file}: {error}"));
         Fail(2)
     })?;
+    let key = std::iter::once(key.trim())
+        .chain(extra_keys.iter().map(String::as_str))
+        .collect::<Vec<_>>()
+        .join("\n");
     let owner = ctx.owner();
     let forge = profile.forge;
     let action = |command| format!("{}-{command}", forge.key());
@@ -455,6 +460,7 @@ fn up_inner(
                 | "--queue-timeout"
                 | "--topic"
                 | "--agent-id"
+                | "--extra-ssh-key"
                 | "-l"
         ) {
             explicit_profile |= arg == "--profile";
@@ -572,6 +578,7 @@ fn up_attempt(
     let mut nix_auth: Option<bool> = None;
     let mut queue_timeout = None;
     let mut quiet_topic_warning = false;
+    let mut extra_keys = Vec::new();
     let mut rest: Vec<String> = Vec::new();
     let mut i = 0;
     while i < args.len() && !args[i].is_empty() {
@@ -620,6 +627,18 @@ fn up_attempt(
                 }
                 i += 1;
             }
+            "--extra-ssh-key" => {
+                let Some(key) = args.get(i + 1) else {
+                    ctx.err("--extra-ssh-key needs a public key");
+                    return Err(Fail(2));
+                };
+                if !crate::server::worker_ssh::valid_extra_public_key(key.trim()) {
+                    ctx.err("Invalid SSH public key (expected Ed25519 or RSA)");
+                    return Err(Fail(2));
+                }
+                extra_keys.push(key.trim().to_owned());
+                i += 1;
+            }
             "--quiet-topic-warning" => quiet_topic_warning = true,
             other => rest.push(other.to_string()),
         }
@@ -650,7 +669,15 @@ fn up_attempt(
             let (tx, rx) = mpsc::channel();
             let no_color = ctx.no_color;
             scope.spawn(move || render_progress_lines(rx, no_color, emit_stages));
-            let result = hosted_up(ctx, profile, ttl, &key_file, &meta, queue_timeout, &tx);
+            let result = hosted_up(
+                ctx,
+                profile,
+                ttl,
+                (&key_file, &extra_keys),
+                &meta,
+                queue_timeout,
+                &tx,
+            );
             drop(tx);
             result
         })?;
@@ -730,6 +757,9 @@ fn up_attempt(
         "--owner".into(),
         ctx.owner(),
     ];
+    for key in &extra_keys {
+        remote_args.extend(["--ssh-key".into(), key.clone()]);
+    }
     remote_args.extend(meta);
     remote_args.extend(rest);
     let mut cmd = state::control_cmd(ctx, &remote_args);

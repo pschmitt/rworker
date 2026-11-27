@@ -66,7 +66,8 @@ pub fn cmd_exec(ctx: &Ctx, args: &[String]) -> R {
     while i < args.len() && !args[i].is_empty() {
         let a = args[i].as_str();
         match a {
-            "--ttl" | "--flavor" | "--disk" | "--profile" | "--arch" | "--queue-timeout" => {
+            "--ttl" | "--flavor" | "--disk" | "--profile" | "--arch" | "--queue-timeout"
+            | "--extra-ssh-key" => {
                 let v = args.get(i + 1).cloned().unwrap_or_default();
                 if v.is_empty() {
                     ctx.err(&format!("{a} needs a value"));

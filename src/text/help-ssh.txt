@@ -23,6 +23,8 @@ new worker when SSH exits, including after an unsuccessful login.
 The session shows up as an `ssh` job with the worker's topic, like exec's
 job, and is recorded in the job's log where the worker has script(1).
 
+  --extra-ssh-key KEY  authorize an additional Ed25519 or RSA public key (repeatable)
+
 Examples:
   __ME__ ssh --create --ttl 4h
   __ME__ ssh --create --rm --profile gh-aarch64

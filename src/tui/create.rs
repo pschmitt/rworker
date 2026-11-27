@@ -13,17 +13,19 @@ pub(super) enum Field {
     Disk,
     AfterCreate,
     ExtraFlags,
+    SshKey,
 }
 
-use Field::{AfterCreate, Disk, ExtraFlags, Flavor, Lifetime, Profile, Topic};
+use Field::{AfterCreate, Disk, ExtraFlags, Flavor, Lifetime, Profile, SshKey, Topic};
 
-const FIELDS: [Field; 7] = [
+const FIELDS: [Field; 8] = [
     Topic,
     Profile,
     Lifetime,
     Flavor,
     Disk,
     AfterCreate,
+    SshKey,
     ExtraFlags,
 ];
 
@@ -37,6 +39,7 @@ impl Field {
             Disk => "Disk (GiB)",
             AfterCreate => "After create",
             ExtraFlags => "Extra flags",
+            SshKey => "SSH public key",
         }
     }
 }
@@ -109,6 +112,7 @@ pub(super) struct CreateWorker {
     flavor: Edit,
     disk: Edit,
     extra: Edit,
+    ssh_key: Edit,
 }
 
 impl CreateWorker {
@@ -126,6 +130,7 @@ impl CreateWorker {
             flavor: Edit::default(),
             disk: Edit::default(),
             extra: Edit::default(),
+            ssh_key: Edit::default(),
         }
     }
 
@@ -238,6 +243,7 @@ impl CreateWorker {
                     .unwrap_or("Profile default"),
             )),
             Disk => Some((&self.disk, "Profile default")),
+            SshKey => Some((&self.ssh_key, "Optional: ssh-ed25519 or ssh-rsa")),
             ExtraFlags => Some((&self.extra, "Optional, e.g. --no-nix-auth")),
             _ => None,
         }
@@ -281,6 +287,7 @@ impl CreateWorker {
                     Flavor => &mut self.flavor,
                     Disk => &mut self.disk,
                     ExtraFlags => &mut self.extra,
+                    SshKey => &mut self.ssh_key,
                     _ => return,
                 };
                 edit(&mut input.text, &mut input.cursor, key);
@@ -289,6 +296,10 @@ impl CreateWorker {
     }
 
     pub(super) fn submission(&self) -> Result<(Vec<String>, After), String> {
+        let key = self.ssh_key.text.trim();
+        if !key.is_empty() && !crate::server::worker_ssh::valid_extra_public_key(key) {
+            return Err("Invalid SSH public key (expected Ed25519 or RSA).".into());
+        }
         let extra = split_words(self.extra.text.trim())?;
         let mut after = MODES[self.mode].0;
         if after == After::Create {
@@ -340,6 +351,9 @@ impl CreateWorker {
                 args.extend([flag.to_owned(), value.to_owned()]);
             }
         }
+        if !key.is_empty() {
+            args.extend(["--extra-ssh-key".into(), key.into()]);
+        }
         args.push("--quiet-topic-warning".into());
         Ok((args, after))
     }
@@ -348,6 +362,19 @@ impl CreateWorker {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn additional_key_is_validated_and_passed_intact() {
+        let mut form = CreateWorker::new(1);
+        form.ssh_key.text = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEB example".into();
+        let args = form.submission().unwrap().0;
+        assert!(
+            args.windows(2)
+                .any(|pair| pair[0] == "--extra-ssh-key" && pair[1] == form.ssh_key.text)
+        );
+        form.ssh_key.text = "ssh-ed25519 YWJj".into();
+        assert!(form.submission().is_err());
+    }
 
     #[test]
     fn create_from_profiles_keeps_the_selected_profile() {

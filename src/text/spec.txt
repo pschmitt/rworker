@@ -69,6 +69,9 @@ values job
 values count 50 200 1000
 values interval 1 2 5 10
 values arch x86_64 aarch64
+flag up --extra-ssh-key=key add an SSH public key (repeatable)
+flag exec --extra-ssh-key=key add an SSH public key (repeatable)
+flag ssh --extra-ssh-key=key add an SSH public key when creating (repeatable)
 flag up --ttl=duration lifetime, e.g. 90m or 2h
 flag up --flavor=flavor OpenStack flavor
 flag up --disk=size volume size in GiB

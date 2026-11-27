@@ -230,12 +230,23 @@ pub(super) fn run(
             let ttl = super::duration_seconds(ttl)
                 .filter(|seconds| (1..=MAX_LEASE_SECONDS).contains(seconds))
                 .ok_or("Worker lease must be between 1 second and 2 hours")?;
-            if !super::worker_ssh::valid_public_key(public_key) {
+            if !public_key
+                .lines()
+                .next()
+                .is_some_and(super::worker_ssh::valid_public_key)
+                || !public_key
+                    .lines()
+                    .skip(1)
+                    .all(super::worker_ssh::valid_extra_public_key)
+            {
                 return Err("Expected an Ed25519 or RSA SSH public key".into());
             }
             // The runner writes this string as authorized_keys. A second
             // line works with existing runner agents and stored leases.
-            let mut keys = match super::worker_ssh::web_worker_key(owner, &[public_key])? {
+            let mut keys = match super::worker_ssh::web_worker_key(
+                owner,
+                &public_key.lines().collect::<Vec<_>>(),
+            )? {
                 Some(key) => format!("{public_key}\n{key}"),
                 None => public_key.clone(),
             };

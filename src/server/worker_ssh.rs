@@ -24,6 +24,39 @@ pub(super) fn valid_public_key(key: &str) -> bool {
             .is_some_and(|encoded| STANDARD.decode(encoded).is_ok_and(|key| !key.is_empty()))
 }
 
+pub(crate) fn valid_extra_public_key(key: &str) -> bool {
+    if key.len() > 4096 || key.contains(['\r', '\n', '\0']) {
+        return false;
+    }
+    let mut fields = key.split_ascii_whitespace();
+    let Some(kind @ ("ssh-ed25519" | "ssh-rsa")) = fields.next() else {
+        return false;
+    };
+    let Some(mut data) = fields.next().and_then(|s| STANDARD.decode(s).ok()) else {
+        return false;
+    };
+    fn part(data: &mut Vec<u8>) -> Option<Vec<u8>> {
+        let length = u32::from_be_bytes(data.get(..4)?.try_into().ok()?) as usize;
+        if length > data.len().checked_sub(4)? {
+            return None;
+        }
+        data.drain(..4);
+        Some(data.drain(..length).collect())
+    }
+    if part(&mut data).as_deref() != Some(kind.as_bytes()) {
+        return false;
+    }
+    let valid = match kind {
+        "ssh-ed25519" => part(&mut data).is_some_and(|key| key.len() == 32),
+        "ssh-rsa" => {
+            part(&mut data).is_some_and(|e| !e.is_empty())
+                && part(&mut data).is_some_and(|n| !n.is_empty())
+        }
+        _ => false,
+    };
+    valid && data.is_empty()
+}
+
 fn restrict_web_key(key: &str, existing: &[&str]) -> Result<Option<String>, String> {
     let key = key.trim();
     if !valid_public_key(key) {
@@ -442,6 +475,20 @@ mod route_tests {
 #[cfg(test)]
 mod operator_key_tests {
     use super::*;
+
+    #[test]
+    fn validates_key_wire_format() {
+        assert!(super::valid_extra_public_key(
+            "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEB comment"
+        ));
+        assert!(!super::valid_extra_public_key("ssh-ed25519 YWJj"));
+        assert!(!super::valid_extra_public_key(
+            "ssh-rsa AAAAC3NzaC1lZDI1NTE5AAAAIAEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEB"
+        ));
+        assert!(!super::valid_extra_public_key(
+            "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEB\nssh-rsa YWJj"
+        ));
+    }
 
     const PHONE: &str = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEB pschmitt@p11";
     const DESK: &str = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgIC pschmitt@fnuc";
