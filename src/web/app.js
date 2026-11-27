@@ -1946,7 +1946,18 @@ function ansiInto(target, text, st) {
   };
   const flush = (chunk) => {
     if (!chunk) return;
-    const cls = [st.bold ? "b" : "", st.dim ? "d" : "", st.italic ? "it" : "", st.underline ? "u" : "", st.fg != null ? "f" + st.fg : ""].filter(Boolean).join(" ");
+    if (st.prefixSpace) {
+      st.prefixSpace = false;
+      if (chunk.startsWith(" ")) {
+        fragment.append(el("span", "log-prefix", " "));
+        chunk = chunk.slice(1);
+        if (!chunk) return;
+      }
+    }
+    const isPrefix = st.lineStart !== false && st.bold && st.fg != null && /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(chunk);
+    st.lineStart = chunk.endsWith("\n");
+    if (isPrefix) st.prefixSpace = true;
+    const cls = [st.bold ? "b" : "", st.dim ? "d" : "", st.italic ? "it" : "", st.underline ? "u" : "", st.fg != null ? "f" + st.fg : "", isPrefix ? "log-prefix" : ""].filter(Boolean).join(" ");
     if (!cls && !st.color) { appendMarked(fragment, chunk); return; }
     const span = document.createElement("span");
     if (cls) span.className = cls;
