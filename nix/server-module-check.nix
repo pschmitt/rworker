@@ -101,6 +101,8 @@ assert
   services.nixbot-autoscaler.serviceConfig.LoadCredential == [
     "rworker-web-worker-public-key:/run/secrets/web-key.pub"
   ];
+assert services.rworker-job-events.environment.RWORKER_LOCAL_RELAY == "1";
+assert services.rworker-job-events.environment.RWORKER_WEB_WORKER_OWNER == "operator";
 assert services.rworker-job-events.serviceConfig.User == "operator";
 assert services.rworker-job-events.serviceConfig.SupplementaryGroups == [ "rworker" ];
 assert services."rworker-control@".environment.RWORKER_EVENT_DIRECTORY == "/var/lib/rworker-events";

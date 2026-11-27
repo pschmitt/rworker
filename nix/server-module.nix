@@ -1098,11 +1098,12 @@ in
             // logReaderEnvironment
             // {
               XDG_STATE_HOME = "/var/lib/rworker-job-events";
+              RWORKER_LOCAL_RELAY = "1";
             }
-            # The console's key reaches pool workers, whose jobs the
-            # collector's own key may not see.
+            # The console key reaches pool workers and the operator's hosted leases.
             // lib.optionalAttrs webWorkerAccess {
               RWORKER_POOL_IDENTITY = cfg.web.identityFile;
+              RWORKER_WEB_WORKER_OWNER = cfg.web.operator;
             };
           serviceConfig = {
             User = cfg.logCache.operator;

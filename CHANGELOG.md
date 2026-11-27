@@ -2,6 +2,8 @@
 
 ## 0.1.0 (unreleased)
 
+- Show jobs from the operator’s GitHub Actions and GitLab CI leases in the web UI and cached job list.
+
 - Authorize the web console on pool workers created by the legacy autoscaler, so their jobs appear in the web UI.
 
 - Add multiple SSH public keys in the TUI and web worker creation forms.

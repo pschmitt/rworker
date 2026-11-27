@@ -412,6 +412,32 @@ fn collector_reaches(user: &str, worker: &Value) -> bool {
         && jq::raw(get(worker, "owner")).split('@').next() == Some(user)
 }
 
+/// Choose only a key known to be authorized on this worker. The console key
+/// is installed on the operator's hosted leases and on opted-in pool workers.
+fn collector_identity<'a>(
+    user: &str,
+    worker: &Value,
+    console: Option<&'a str>,
+    console_owner: Option<&str>,
+) -> Option<Option<&'a str>> {
+    let name = get(worker, "name").as_str().unwrap_or_default();
+    if crate::state::hosted_id(name).is_some() {
+        return console_owner
+            .filter(|owner| collector_reaches(owner, worker))
+            .and(console.map(Some));
+    }
+    if collector_reaches(user, worker) {
+        return Some(None);
+    }
+    if matches!(
+        get(worker, "kind").as_str(),
+        None | Some("" | "adhoc" | "unknown")
+    ) {
+        return None;
+    }
+    console.map(Some)
+}
+
 /// The states and the topics of the jobs on the workers of INVENTORY.
 /// The polled workers' job states and topics, and each worker's raw job
 /// lines (for the job cache).
@@ -429,41 +455,31 @@ pub(super) fn observed_jobs(ctx: &Ctx, inventory: &Value) -> Observed {
     // The collector polls every few seconds. Its own key is only on its
     // operator's ad-hoc workers, and logging in with a key a worker refuses
     // makes sshd penalize the controller's address for everyone. Other
-    // workers (pools) are polled with RWORKER_POOL_IDENTITY, the console's
-    // key, when given, and skipped otherwise.
+    // Pool workers and hosted leases owned by the console operator use
+    // RWORKER_POOL_IDENTITY, when configured, and are skipped otherwise.
     let mut identities: Vec<Option<String>> = vec![None; names.len()];
     if std::env::var_os("RWORKER_LOG_CACHE_IDENTITY").is_some() {
-        let reachable: Vec<String> = jq::items(inventory)
-            .unwrap_or_default()
-            .into_iter()
-            .filter(|worker| collector_reaches(&ctx.user, worker))
-            .map(|worker| jq::raw(get(worker, "name")))
-            .collect();
-        let pool = std::env::var("RWORKER_POOL_IDENTITY")
+        let console = std::env::var("RWORKER_POOL_IDENTITY")
             .ok()
             .filter(|path| !path.is_empty());
-        // The console's key is only on pool workers (their autoscalers add
-        // it); other operators' ad-hoc workers have neither key.
-        let pools: Vec<String> = jq::items(inventory)
-            .unwrap_or_default()
-            .into_iter()
-            .filter(|worker| {
-                !matches!(
-                    get(worker, "kind").as_str(),
-                    None | Some("" | "adhoc" | "unknown")
-                )
-            })
-            .map(|worker| jq::raw(get(worker, "name")))
-            .collect();
+        let console_owner = std::env::var("RWORKER_WEB_WORKER_OWNER").ok();
+        let workers = jq::items(inventory).unwrap_or_default();
         let mut kept = Vec::new();
         identities.clear();
         for name in names {
-            if reachable.contains(&name) {
+            let worker = workers
+                .iter()
+                .find(|worker| get(worker, "name").as_str() == Some(&name));
+            if let Some(identity) = worker.and_then(|worker| {
+                collector_identity(
+                    &ctx.user,
+                    worker,
+                    console.as_deref(),
+                    console_owner.as_deref(),
+                )
+            }) {
                 kept.push(name);
-                identities.push(None);
-            } else if let Some(pool) = pool.as_ref().filter(|_| pools.contains(&name)) {
-                kept.push(name);
-                identities.push(Some(pool.clone()));
+                identities.push(identity.map(str::to_owned));
             }
         }
         names = kept;
@@ -1240,6 +1256,33 @@ mod tests {
         assert!(!collector_reaches("pschmitt", &other));
         assert!(!collector_reaches("pschmitt", &pool));
         assert!(!collector_reaches("circus", &pool));
+    }
+
+    #[test]
+    fn collector_uses_console_key_for_own_hosted_leases() {
+        let hosted = json!({"name":"gha-15d6fb35", "kind":"adhoc", "owner":"operator@phone"});
+        assert_eq!(
+            collector_identity("operator", &hosted, Some("console-key"), Some("operator")),
+            Some(Some("console-key"))
+        );
+        assert_eq!(
+            collector_identity("operator", &hosted, None, Some("operator")),
+            None
+        );
+        assert_eq!(
+            collector_identity("operator", &hosted, Some("console-key"), Some("other")),
+            None
+        );
+        let vm = json!({"name":"adhoc-12345678", "kind":"adhoc", "owner":"operator@phone"});
+        assert_eq!(
+            collector_identity("operator", &vm, Some("console-key"), Some("operator")),
+            Some(None)
+        );
+        let pool = json!({"name":"circus-12345678", "kind":"circus", "owner":"circus@control"});
+        assert_eq!(
+            collector_identity("operator", &pool, Some("console-key"), Some("operator")),
+            Some(Some("console-key"))
+        );
     }
 
     #[test]
