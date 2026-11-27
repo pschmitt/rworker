@@ -55,6 +55,9 @@ let
             web = {
               enable = true;
               tokenFile = "/run/secrets/web-token";
+              operator = "operator";
+              identityFile = "/run/secrets/web-key";
+              publicKeyFile = "/run/secrets/web-key.pub";
             };
             logCache.workerUser = "rworker";
             api.https = {
@@ -94,6 +97,10 @@ assert
   (builtins.head config.services.nginx.virtualHosts."control.example.com".listen).addr == "127.0.0.1";
 assert timers.rworker-reaper.timerConfig.OnUnitActiveSec == "1m";
 assert services.rworker-log-cache.serviceConfig.User == "operator";
+assert
+  services.nixbot-autoscaler.serviceConfig.LoadCredential == [
+    "rworker-web-worker-public-key:/run/secrets/web-key.pub"
+  ];
 assert services.rworker-job-events.serviceConfig.User == "operator";
 assert services.rworker-job-events.serviceConfig.SupplementaryGroups == [ "rworker" ];
 assert services."rworker-control@".environment.RWORKER_EVENT_DIRECTORY == "/var/lib/rworker-events";

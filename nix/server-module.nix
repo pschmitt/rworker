@@ -441,6 +441,11 @@ in
         default = "Autoscale the nixbot worker pool";
         description = "Description of the autoscaler unit.";
       };
+      webConsoleAccess = lib.mkOption {
+        type = lib.types.bool;
+        default = true;
+        description = "Authorize the web console SSH key on new pool workers.";
+      };
     };
     autoscalers = lib.mkOption {
       type = lib.types.attrsOf (
@@ -1154,6 +1159,9 @@ in
         serviceConfig = {
           User = cfg.autoscaler.user;
           Group = cfg.autoscaler.group;
+          LoadCredential = lib.optional (
+            webWorkerAccess && cfg.autoscaler.webConsoleAccess
+          ) "rworker-web-worker-public-key:${cfg.web.publicKeyFile}";
           ExecStart = command [
             "server"
             cfg.autoscaler.settingsFile

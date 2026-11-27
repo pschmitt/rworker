@@ -2,6 +2,8 @@
 
 ## 0.1.0 (unreleased)
 
+- Authorize the web console on pool workers created by the legacy autoscaler, so their jobs appear in the web UI.
+
 - Add multiple SSH public keys in the TUI and web worker creation forms.
 
 - Add validated additional SSH public keys when creating workers from the CLI, TUI or web UI.
