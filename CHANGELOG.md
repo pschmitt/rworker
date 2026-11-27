@@ -2,6 +2,8 @@
 
 ## 0.1.0 (unreleased)
 
+- Add highlighted `topic:`, `agent:` and `agent-id:` searches to the web log viewer, alongside line-text filtering.
+
 - Accept `topic:`, `agent:` and `agent-id:` search terms in `rworker logs`.
 
 - Exclude worker and job prefixes when selecting log text in the web console.

@@ -1,11 +1,13 @@
 use super::{Failure, authorized, failure, run, same_origin, worker_command};
 use axum::Router;
 use axum::body::Bytes;
-use axum::extract::Path;
 use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
-use axum::http::{HeaderMap, HeaderValue, StatusCode, header};
+use axum::extract::{Path, State};
+use axum::http::{HeaderMap, HeaderValue, StatusCode, Uri, header};
 use axum::response::{IntoResponse, Response};
 use axum::routing::get;
+use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
+use serde::Deserialize;
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
 use std::time::Duration;
@@ -18,21 +20,113 @@ static STREAMS: Semaphore = Semaphore::const_new(8);
 
 pub(super) fn routes() -> Router<PathBuf> {
     Router::new()
+        .route("/v1/ui/log-filter-check", get(validate_filters))
         .route("/v1/ui/follow/{view}", get(all))
         .route("/v1/ui/follow/{view}/{worker}", get(worker))
         .route("/v1/ui/follow/{view}/{worker}/{job}", get(job))
 }
 
-/// Every job on every worker, like `rworker logs -f`.
-async fn all(Path(view): Path<String>, headers: HeaderMap, upgrade: WebSocketUpgrade) -> Response {
-    if !matches!(view.as_str(), "logs" | "raw-logs") {
-        return failure(super::NOT_FOUND);
+async fn validate_filters(State(dir): State<PathBuf>, uri: Uri, headers: HeaderMap) -> Response {
+    if let Err(error) = authorized(&headers) {
+        return failure(error);
     }
+    if let Err(error) = all_args("logs", uri.query()) {
+        return failure(error);
+    }
+    let Ok(filters) = decode_filters(uri.query()) else {
+        return failure(super::BAD_REQUEST);
+    };
+    let snapshot = tokio::task::spawn_blocking(move || {
+        let workers = super::super::inventory_cache::read(&dir, false)
+            .map(|(workers, _)| workers)
+            .or_else(|| super::super::inventory_cache::read_last(&dir))?;
+        matching_workers(&filters, &workers)
+    })
+    .await;
+    match snapshot {
+        Ok(Some(names)) => super::reply(
+            StatusCode::OK,
+            serde_json::json!({"matching_workers": names}),
+        ),
+        _ => failure((StatusCode::BAD_GATEWAY, "Worker inventory unavailable.")),
+    }
+}
+
+fn matching_workers(filters: &LogFilters, workers: &serde_json::Value) -> Option<Vec<String>> {
+    let ctx = crate::ctx::Ctx::from_env();
+    ctx.filter_agent_id.replace(filters.agent_id.clone());
+    let filtered =
+        crate::cmd::ls::filter_workers(&ctx, &workers.to_string(), &filters.topic, &filters.agent)
+            .ok()?;
+    let rows: Vec<serde_json::Value> = serde_json::from_str(&filtered).ok()?;
+    Some(
+        rows.into_iter()
+            .filter_map(|row| row["name"].as_str().map(str::to_owned))
+            .collect(),
+    )
+}
+
+/// Every job on every worker, like `rworker logs -f`.
+async fn all(
+    Path(view): Path<String>,
+    uri: Uri,
+    headers: HeaderMap,
+    upgrade: WebSocketUpgrade,
+) -> Response {
+    match all_args(&view, uri.query()) {
+        Ok(args) => serve(&headers, upgrade, args, None),
+        Err(error) => failure(error),
+    }
+}
+
+#[derive(Default, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+struct LogFilters {
+    topic: String,
+    agent: String,
+    agent_id: String,
+}
+
+fn all_args(view: &str, query: Option<&str>) -> Result<Vec<String>, Failure> {
+    if !matches!(view, "logs" | "raw-logs") {
+        return Err(super::NOT_FOUND);
+    }
+    let filters = decode_filters(query)?;
     let mut args = super::words(&["logs", "--follow", "--no-events", "--lines", "50"]);
+    for (flag, pattern) in [
+        ("--topic", filters.topic),
+        ("--agent", filters.agent),
+        ("--agent-id", filters.agent_id),
+    ] {
+        if !pattern.is_empty() {
+            if pattern.len() > 256
+                || regex::Regex::new(pattern.strip_prefix('!').unwrap_or(&pattern)).is_err()
+            {
+                return Err(super::BAD_REQUEST);
+            }
+            args.extend([flag.to_string(), pattern]);
+        }
+    }
     if view == "logs" {
         args.push("--redact".into());
     }
-    serve(&headers, upgrade, args, None)
+    Ok(args)
+}
+
+fn decode_filters(query: Option<&str>) -> Result<LogFilters, Failure> {
+    match query {
+        None => Ok(LogFilters::default()),
+        Some(query) => {
+            let encoded = query
+                .strip_prefix("filters=")
+                .filter(|s| s.len() <= 4096)
+                .ok_or(super::BAD_REQUEST)?;
+            let data = URL_SAFE_NO_PAD
+                .decode(encoded)
+                .map_err(|_| super::BAD_REQUEST)?;
+            serde_json::from_slice(&data).map_err(|_| super::BAD_REQUEST)
+        }
+    }
 }
 
 async fn worker(
@@ -242,5 +336,46 @@ async fn cached(socket: &mut WebSocket, args: Vec<String>) {
                 }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod filter_tests {
+    use super::*;
+    #[test]
+    fn matching_uses_the_same_worker_filters_as_the_cli() {
+        let filters = LogFilters {
+            topic: "(?i)nixpp".into(),
+            agent: "!circus".into(),
+            agent_id: String::new(),
+        };
+        let workers = serde_json::json!([
+            {"name":"yes", "topic":"NIXPP upgrade", "agent":"codex"},
+            {"name":"wrong-topic", "topic":"build", "agent":"codex"},
+            {"name":"wrong-agent", "topic":"nixpp", "agent":"circus"}
+        ]);
+        assert_eq!(
+            matching_workers(&filters, &workers),
+            Some(vec!["yes".into()])
+        );
+    }
+
+    #[test]
+    fn global_log_filters_become_cli_arguments() {
+        let query = format!(
+            "filters={}",
+            URL_SAFE_NO_PAD.encode(r#"{"topic":"nixpp","agent":"!other","agent_id":"codex:.*"}"#)
+        );
+        let args = all_args("logs", Some(&query)).unwrap();
+        assert!(args.windows(2).any(|pair| pair == ["--topic", "nixpp"]));
+        assert!(args.windows(2).any(|pair| pair == ["--agent", "!other"]));
+        assert!(
+            args.windows(2)
+                .any(|pair| pair == ["--agent-id", "codex:.*"])
+        );
+        assert!(args.contains(&"--redact".to_string()));
+        let invalid = format!("filters={}", URL_SAFE_NO_PAD.encode(r#"{"topic":"["}"#));
+        assert!(all_args("logs", Some(&invalid)).is_err());
+        assert!(all_args("logs", Some("filters=???")).is_err());
     }
 }

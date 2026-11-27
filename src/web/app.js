@@ -55,6 +55,11 @@ const state = {
 let stream;
 let logSocket;
 let logRetryAt = 0;
+let logSearchTimer;
+let logSearchPending = false;
+let logStreamFilters = "{}";
+let logValidatedFilters = "{}";
+let logMatchingWorkers = new Set();
 let loading = false;
 let detailRequest = 0;
 let detailLoading = false;
@@ -202,6 +207,8 @@ function navigate() {
     state.limit = 200;
     $("search").value = "";
     state.logQuery = "";
+    clearTimeout(logSearchTimer);
+    logSearchPending = false;
     syncSearchOpen();
   }
   state.view = view;
@@ -209,10 +216,12 @@ function navigate() {
     if (link.dataset.view === state.view) link.setAttribute("aria-current", "page");
     else link.removeAttribute("aria-current");
   });
-  $("search").placeholder = { workers: "Filter workers", jobs: "Filter jobs", logs: "Filter lines", events: "Filter events", profiles: "Filter profiles" }[view];
+  $("search").placeholder = { workers: "Filter workers", jobs: "Filter jobs", logs: "Search logs · topic: agent: agent-id:", events: "Filter events", profiles: "Filter profiles" }[view];
+  updateLogSearchHighlight();
   if (view === "logs") {
     state.logsWorker = worker ? decodeURIComponent(worker) : "";
     state.logsJob = worker && job ? decodeURIComponent(job) : "";
+    updateLogSearchHighlight();
   }
   if (state.authenticated && detailViews.has(view) && worker) {
     openWorker(workerFor(decodeURIComponent(worker)), job ? decodeURIComponent(job) : null);
@@ -1221,18 +1230,115 @@ function renderProfiles(visible) {
   $("results").replaceChildren(grid);
 }
 
+// Structured filters select workers like `logs -f`; remaining text filters lines.
+function parseLogSearch(query) {
+  const filters = {};
+  const tokens = [];
+  const pattern = /(^|\s)(topic|agent-id|agent):("(?:[^"\\]|\\.)*"|[^\s]*)/gi;
+  let text = "", end = 0, match;
+  while ((match = pattern.exec(query))) {
+    const start = match.index + match[1].length;
+    text += query.slice(end, start);
+    const raw = match[3];
+    const value = raw.startsWith('"') && raw.endsWith('"') ? raw.slice(1, -1).replace(/\\(["\\])/g, "$1") : raw;
+    const key = match[2].toLowerCase().replace("-", "_");
+    if (value) filters[key] = value;
+    tokens.push({ start, keyEnd: start + match[2].length + 1, end: pattern.lastIndex });
+    end = pattern.lastIndex;
+  }
+  return { filters, text: (text + query.slice(end)).replace(/\s+/g, " ").trim(), tokens };
+}
+
+function logSearchFilters() {
+  return state.view === "logs" && !state.selected ? parseLogSearch(state.logQuery).filters : {};
+}
+
+function updateLogSearchHighlight() {
+  const input = $("search");
+  const box = $("search-box");
+  const active = state.view === "logs" && !state.selected;
+  let overlay = box.querySelector(".search-syntax");
+  if (!overlay) { overlay = el("span", "search-syntax"); overlay.setAttribute("aria-hidden", "true"); box.insertBefore(overlay, input); }
+  box.classList.toggle("syntax-search", active);
+  if (!active) { overlay.replaceChildren(); input.removeAttribute("aria-invalid"); input.removeAttribute("title"); return; }
+  const parsed = parseLogSearch(input.value);
+  overlay.replaceChildren();
+  let end = 0;
+  for (const token of parsed.tokens) {
+    overlay.append(input.value.slice(end, token.start), el("span", "search-key", input.value.slice(token.start, token.keyEnd)), el("span", "search-value", input.value.slice(token.keyEnd, token.end)));
+    end = token.end;
+  }
+  overlay.append(input.value.slice(end));
+  overlay.scrollLeft = input.scrollLeft;
+  input.removeAttribute("aria-invalid");
+  input.title = 'Worker filters: topic:, agent:, agent-id:. Use ! to exclude and quotes for spaces.';
+}
+
+function workerMatchesLogFilters(worker, filters) {
+  if (!Object.keys(filters).length) return true;
+  return JSON.stringify(filters) === logValidatedFilters && Boolean(worker && logMatchingWorkers.has(worker.name));
+}
+
+function logWorkerMatchesFilters() {
+  if (!state.logsWorker) return true;
+  const worker = (state.rows.workers || []).find((row) => row.name === state.logsWorker);
+  return workerMatchesLogFilters(worker, logSearchFilters());
+}
+
+function encodeLogFilters(filters) {
+  const bytes = new TextEncoder().encode(JSON.stringify(filters));
+  return btoa(String.fromCharCode(...bytes)).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+}
+
+function changeLogSearch(query) {
+  state.logQuery = query;
+  updateLogSearchHighlight();
+  setLog(state.logText, { keepEnd: false });
+  clearTimeout(logSearchTimer);
+  const filters = logSearchFilters();
+  const serialized = JSON.stringify(filters);
+  if (serialized === logStreamFilters && logSocket) { logSearchPending = false; return; }
+  logSearchPending = true;
+  logSearchTimer = setTimeout(async () => {
+    try {
+      const result = Object.keys(filters).length ? await request("log-filter-check?filters=" + encodeLogFilters(filters)) : { matching_workers: [] };
+      if (serialized !== JSON.stringify(logSearchFilters())) return;
+      logValidatedFilters = serialized;
+      logMatchingWorkers = new Set(result.matching_workers);
+      logSearchPending = false;
+      $("search").removeAttribute("aria-invalid");
+      if (!state.follow) { setLog(state.logText, { keepEnd: false }); return; }
+      logRetryAt = 0;
+      startLogsStream();
+    } catch (error) {
+      if (serialized !== JSON.stringify(logSearchFilters())) return;
+      logSearchPending = false;
+      closeLogStream();
+      $("search").setAttribute("aria-invalid", "true");
+      $("search").title = "Invalid filter regex or search unavailable";
+      liveIndicator("Invalid filter regex or search unavailable", "wait");
+    }
+  }, 400);
+}
+
 // Logs view: all jobs on all workers (like `rworker logs -f`), or one
 // worker's or job's, with a line filter.
 function logsPath() {
   const view = state.redact ? "logs" : "raw-logs";
-  if (!state.logsWorker) return view;
+  if (!state.logsWorker) {
+    const filters = logSearchFilters();
+    if (!Object.keys(filters).length) return view;
+    return view + "?filters=" + encodeLogFilters(filters);
+  }
   return view + "/" + encodeURIComponent(state.logsWorker) + (state.logsJob ? "/" + encodeURIComponent(state.logsJob) : "");
 }
 
 function startLogsStream(reset = true) {
   closeLogStream();
   if (reset) setLog("");
-  if (state.follow) followLogs(logsPath());
+  logStreamFilters = JSON.stringify(logSearchFilters());
+  if (!logWorkerMatchesFilters()) liveIndicator("Worker does not match search", "wait");
+  else if (state.follow) followLogs(logsPath());
   else liveIndicator("Paused");
 }
 
@@ -1979,18 +2085,27 @@ function setLog(text, { keepEnd = true } = {}) {
   const { pre, jump } = logElements();
   if (!pre) return;
   const atEnd = pre.scrollHeight - pre.clientHeight - pre.scrollTop < 12;
-  const query = state.logQuery.toLowerCase();
+  const structured = state.view === "logs" && !state.selected ? parseLogSearch(state.logQuery) : null;
+  const query = (structured ? structured.text : state.logQuery).toLowerCase();
+  const pausedFilters = structured && !state.follow && !state.logsWorker ? structured.filters : {};
   // Hold back an escape sequence cut off at the end of a chunk.
   const safe = text.replace(/\x1b(\[[0-9;?]*[ -/]*)?$/, "");
   if (!safe) {
     pre.textContent = query ? "No lines match “" + state.logQuery + "”." : "No output yet.";
     pre.dataset.mode = "";
-  } else if (query) {
-    const lines = safe.split("\n").filter((line) => stripAnsi(line).toLowerCase().includes(query));
+  } else if (query || Object.keys(pausedFilters).length) {
+    const workers = new Map((state.rows.workers || []).map((row) => [row.name, row]));
+    const lines = safe.split("\n").filter((line) => {
+      const plain = stripAnsi(line);
+      if (query && !plain.toLowerCase().includes(query)) return false;
+      if (!Object.keys(pausedFilters).length) return true;
+      const name = plain.match(/^([^/\s]+)\//)?.[1];
+      return workerMatchesLogFilters(workers.get(name), pausedFilters);
+    });
     pre.replaceChildren();
     logHighlight = query;
     if (lines.length) ansiInto(pre, lines.join("\n"), {});
-    else pre.textContent = "No lines match “" + state.logQuery + "”.";
+    else pre.textContent = "No logs match “" + state.logQuery + "”.";
     logHighlight = "";
     pre.dataset.mode = "filter";
   } else if (pre.dataset.mode === "full" && safe.startsWith(state.logRendered)) {
@@ -2108,7 +2223,7 @@ function setFollow(enabled) {
 }
 
 function followLogs(path) {
-  if (logSocket || Date.now() < logRetryAt) return;
+  if (logSocket || Date.now() < logRetryAt || (state.view === "logs" && !state.selected && (logSearchPending || $("search").getAttribute("aria-invalid") === "true" || !logWorkerMatchesFilters()))) return;
   liveIndicator("Connecting…", "wait");
   const url = new URL("/v1/ui/follow/" + path, location.href);
   url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
@@ -3136,11 +3251,11 @@ function syncSearchOpen() {
 }
 $("search").addEventListener("focus", syncSearchOpen);
 $("search").addEventListener("blur", syncSearchOpen);
+$("search").addEventListener("scroll", updateLogSearchHighlight, { passive: true });
 
 $("search").addEventListener("input", () => {
   if (state.view === "logs" && !state.selected) {
-    state.logQuery = $("search").value;
-    setLog(state.logText, { keepEnd: false });
+    changeLogSearch($("search").value);
     return;
   }
   state.limit = 200;
